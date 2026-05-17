@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WildCare Bot — Platform Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Instrument+Serif&family=Geist+Mono&display=swap" rel="stylesheet">
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --color-umber: #3D2B1F;
+      --color-parchment: #F6F1EB;
+      --color-sage: #6B7F5E;
+      --color-ochre: #C4883A;
+      --color-slate-creek: #4A6670;
+      --color-field-white: #FDFCFA;
+      --color-dried-grass: #D4C9B5;
+      --color-urgent-red: #B44233;
+      --color-canopy: #2D5A3D;
+      --color-storm: #8B7E74;
+      --font-display: 'Instrument Serif', serif;
+      --font-body: 'DM Sans', sans-serif;
+      --font-mono: 'Geist Mono', 'SF Mono', monospace;
+      --radius-sm: 4px;
+      --radius-md: 8px;
+      --radius-lg: 12px;
+      --radius-full: 9999px;
+    }
+
+    body {
+      font-family: var(--font-body);
+      color: var(--color-umber);
+      background: var(--color-parchment);
+      min-height: 100vh;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    /* ── Login ──────────────────────────────────────────────────────── */
+    .login-view {
+      max-width: 400px; margin: 0 auto;
+      padding: 160px 24px 0;
+      text-align: center;
+    }
+    .login-view h1 {
+      font-family: var(--font-display); font-weight: 400;
+      font-size: 2rem; color: var(--color-umber); margin-bottom: 8px;
+    }
+    .login-view p { color: var(--color-storm); margin-bottom: 28px; font-size: 0.95rem; }
+    .login-card {
+      background: var(--color-field-white); border: 1px solid var(--color-dried-grass);
+      border-radius: var(--radius-lg); padding: 32px;
+    }
+    .login-card label {
+      display: block; text-align: left; font-size: 0.85rem;
+      font-weight: 600; margin-bottom: 6px; color: var(--color-umber);
+    }
+    .login-card input {
+      width: 100%; padding: 10px 14px;
+      border: 1px solid var(--color-dried-grass);
+      border-radius: var(--radius-sm);
+      font-size: 0.95rem; font-family: var(--font-mono);
+      background: var(--color-parchment); color: var(--color-umber);
+      margin-bottom: 16px;
+    }
+    .login-card input:focus {
+      outline: none; border-color: var(--color-sage);
+      box-shadow: 0 0 0 2px rgba(107, 127, 94, 0.15);
+    }
+    .login-card button {
+      width: 100%; padding: 12px; background: var(--color-sage);
+      color: var(--color-field-white); border: none;
+      border-radius: var(--radius-sm); font-size: 0.95rem;
+      font-weight: 600; font-family: var(--font-body); cursor: pointer;
+      transition: background 150ms ease-out;
+    }
+    .login-card button:hover { background: #5a6e4f; }
+    .login-error {
+      color: var(--color-urgent-red); font-size: 0.85rem;
+      margin-top: 12px; display: none;
+    }
+
+    /* ── Admin Shell ────────────────────────────────────────────────── */
+    .admin-view { display: none; }
+    .admin-header {
+      background: var(--color-field-white);
+      border-bottom: 1px solid var(--color-dried-grass);
+      padding: 16px 32px;
+      display: flex; align-items: center; justify-content: space-between;
+    }
+    .admin-header h1 {
+      font-family: var(--font-display); font-weight: 400;
+      font-size: 1.4rem; color: var(--color-umber);
+    }
+    .btn-logout {
+      padding: 6px 16px; background: transparent;
+      border: 1px solid var(--color-dried-grass);
+      border-radius: var(--radius-sm); font-size: 0.85rem;
+      font-family: var(--font-body); color: var(--color-storm);
+      cursor: pointer; transition: all 150ms ease-out;
+    }
+    .btn-logout:hover { border-color: var(--color-umber); color: var(--color-umber); }
+
+    .admin-tabs {
+      display: flex; gap: 0;
+      background: var(--color-field-white);
+      border-bottom: 1px solid var(--color-dried-grass);
+      padding: 0 32px;
+    }
+    .admin-tabs button {
+      padding: 12px 24px; background: transparent; border: none;
+      font-family: var(--font-body); font-size: 0.9rem; font-weight: 500;
+      color: var(--color-storm); cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 150ms ease-out;
+    }
+    .admin-tabs button:hover { color: var(--color-umber); }
+    .admin-tabs button.active {
+      color: var(--color-sage); border-bottom-color: var(--color-sage);
+    }
+
+    .admin-content { padding: 32px; max-width: 1100px; margin: 0 auto; }
+
+    .panel { display: none; }
+    .panel.active { display: block; }
+
+    /* ── Table ──────────────────────────────────────────────────────── */
+    table {
+      width: 100%; border-collapse: collapse;
+      background: var(--color-field-white);
+      border: 1px solid var(--color-dried-grass);
+      border-radius: var(--radius-md); overflow: hidden;
+    }
+    th, td {
+      padding: 12px 16px; text-align: left;
+      border-bottom: 1px solid var(--color-dried-grass);
+      font-size: 0.9rem;
+    }
+    th {
+      background: var(--color-parchment);
+      font-size: 0.75rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.06em; color: var(--color-storm);
+    }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: rgba(107, 127, 94, 0.03); }
+
+    /* ── Badges ─────────────────────────────────────────────────────── */
+    .badge {
+      display: inline-block; padding: 2px 10px;
+      border-radius: var(--radius-full);
+      font-size: 0.72rem; font-weight: 600; text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+    .badge.pending { background: #FFF3E0; color: var(--color-ochre); }
+    .badge.approved { background: #E8F5E9; color: var(--color-canopy); }
+    .badge.rejected { background: #FCEAE7; color: var(--color-urgent-red); }
+
+    /* ── Buttons ────────────────────────────────────────────────────── */
+    .btn {
+      padding: 6px 14px; border: none; border-radius: var(--radius-sm);
+      font-size: 0.8rem; font-weight: 600; font-family: var(--font-body);
+      cursor: pointer; transition: all 150ms ease-out;
+    }
+    .btn-primary { background: var(--color-sage); color: var(--color-field-white); }
+    .btn-primary:hover { background: #5a6e4f; }
+    .btn-view { background: var(--color-slate-creek); color: var(--color-field-white); }
+    .btn-view:hover { background: #3d5760; }
+    .btn-danger {
+      background: transparent; border: 1px solid var(--color-dried-grass);
+      color: var(--color-storm);
+    }
+    .btn-danger:hover { color: var(--color-urgent-red); border-color: var(--color-urgent-red); }
+    .actions { display: flex; gap: 6px; }
+
+    /* ── Empty state ────────────────────────────────────────────────── */
+    .empty {
+      text-align: center; padding: 48px;
+      color: var(--color-storm); font-style: italic;
+    }
+
+    /* ── Modal / Overlay ────────────────────────────────────────────── */
+    .overlay {
+      position: fixed; inset: 0; background: rgba(61, 43, 31, 0.3);
+      backdrop-filter: blur(4px); z-index: 100; display: none;
+    }
+    .modal {
+      position: fixed; top: 50%; left: 50%;
+      transform: translate(-50%, -50%);
+      background: var(--color-field-white);
+      border-radius: var(--radius-lg); padding: 36px;
+      max-width: 620px; width: 90%; max-height: 85vh; overflow-y: auto;
+      z-index: 101; display: none;
+      border: 1px solid var(--color-dried-grass);
+    }
+    .modal h2 {
+      font-family: var(--font-display); font-weight: 400;
+      font-size: 1.5rem; color: var(--color-umber); margin-bottom: 20px;
+    }
+    .modal dl {
+      display: grid; grid-template-columns: 140px 1fr;
+      gap: 10px 16px;
+    }
+    .modal dt {
+      font-size: 0.8rem; font-weight: 600; color: var(--color-storm);
+      text-transform: uppercase; letter-spacing: 0.04em;
+    }
+    .modal dd { font-size: 0.9rem; color: var(--color-umber); }
+    .modal-actions {
+      margin-top: 28px; display: flex; gap: 8px;
+      align-items: center; flex-wrap: wrap;
+    }
+    .slug-input {
+      padding: 8px 12px; border: 1px solid var(--color-dried-grass);
+      border-radius: var(--radius-sm); font-size: 0.9rem;
+      font-family: var(--font-mono); background: var(--color-parchment);
+      width: 200px;
+    }
+    .slug-input:focus {
+      outline: none; border-color: var(--color-sage);
+    }
+    .modal-close {
+      position: absolute; top: 16px; right: 16px;
+      background: none; border: none; font-size: 1.3rem;
+      color: var(--color-storm); cursor: pointer;
+      padding: 4px 8px; border-radius: var(--radius-sm);
+    }
+    .modal-close:hover { color: var(--color-umber); background: var(--color-parchment); }
+
+    /* ── Inline Result Box ──────────────────────────────────────────── */
+    .result-box {
+      margin-top: 20px; padding: 20px;
+      border-radius: var(--radius-md);
+      background: rgba(45, 90, 61, 0.06);
+      border: 1px solid rgba(45, 90, 61, 0.15);
+    }
+    .result-box h4 {
+      font-family: var(--font-display); font-weight: 400;
+      color: var(--color-canopy); font-size: 1.1rem; margin-bottom: 12px;
+    }
+    .result-box p { font-size: 0.9rem; margin-bottom: 6px; }
+    .result-box code {
+      display: block; background: var(--color-field-white);
+      padding: 8px 12px; border-radius: var(--radius-sm);
+      font-family: var(--font-mono); font-size: 0.8rem;
+      word-break: break-all; margin-top: 4px;
+      border: 1px solid var(--color-dried-grass);
+    }
+    .result-box .cred-note {
+      margin-top: 12px; font-size: 0.85rem; color: var(--color-storm); font-style: italic;
+    }
+
+    /* ── Inline messages ────────────────────────────────────────────── */
+    .inline-msg {
+      padding: 12px 16px; border-radius: var(--radius-md);
+      font-size: 0.9rem; margin-top: 12px; display: none;
+    }
+    .inline-msg.success {
+      background: rgba(45, 90, 61, 0.08); color: var(--color-canopy);
+      border: 1px solid rgba(45, 90, 61, 0.15); display: block;
+    }
+    .inline-msg.error {
+      background: rgba(180, 66, 51, 0.08); color: var(--color-urgent-red);
+      border: 1px solid rgba(180, 66, 51, 0.15); display: block;
+    }
+
+    /* ── Confirmation inline ────────────────────────────────────────── */
+    .confirm-inline {
+      display: inline-flex; align-items: center; gap: 8px;
+      padding: 8px 12px; background: rgba(180, 66, 51, 0.06);
+      border: 1px solid rgba(180, 66, 51, 0.15);
+      border-radius: var(--radius-md); font-size: 0.85rem;
+    }
+    .confirm-inline span { color: var(--color-umber); }
+
+    /* ── Tenant link ────────────────────────────────────────────────── */
+    .tenant-link {
+      color: var(--color-sage); font-weight: 500; text-decoration: none;
+    }
+    .tenant-link:hover { text-decoration: underline; }
+    .tenant-slug {
+      font-family: var(--font-mono); font-size: 0.8rem; color: var(--color-storm);
+    }
+
+    /* ── Responsive ─────────────────────────────────────────────────── */
+    @media (max-width: 768px) {
+      .admin-content { padding: 16px; }
+      .admin-header { padding: 12px 16px; }
+      .admin-tabs { padding: 0 16px; }
+      .modal { padding: 24px; }
+      .modal dl { grid-template-columns: 1fr; gap: 4px 0; }
+      .modal dt { margin-top: 8px; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- This page is served by the Worker only when a valid wc_platform session
+     cookie is present (see workers/src/index.ts auth gate). The legacy
+     "Admin Token" password form is gone — auth is magic-link only now. -->
+
+<div class="admin-view" id="adminView" style="display:block">
+  <header class="admin-header">
+    <h1>WildCare Platform</h1>
+    <button class="btn-logout" onclick="doLogout()">Logout</button>
+  </header>
+
+  <div class="admin-tabs" id="adminTabs">
+    <button class="active" data-tab="apps">Applications</button>
+    <button data-tab="tenants">Tenants</button>
+  </div>
+
+  <div class="admin-content">
+    <div class="panel active" id="appsPanel"></div>
+    <div class="panel" id="tenantsPanel"></div>
+  </div>
+</div>
+
+<div class="overlay" id="overlay"></div>
+<div class="modal" id="modal"></div>
+
+<script>
+// Auth is via the wc_platform_token session cookie set by /api/auth/verify
+// after a magic-link sign-in. The browser sends the cookie automatically on
+// /platform/* fetches (same-origin), so we don't need an Authorization
+// header — just JSON content-type for POSTs.
+function headers() { return { 'Content-Type': 'application/json' } }
+
+async function doLogout() {
+  // Clear the session cookies we own, then bounce to login.
+  for (const c of ['wc_platform_token', 'wc_platform_auth']) {
+    document.cookie = c + '=; Path=/; Max-Age=0; SameSite=Lax'
+  }
+  location.href = '/'
+}
+
+// ── Tab switching ────────────────────────────────────────────────────
+
+document.getElementById('adminTabs').addEventListener('click', (e) => {
+  const btn = e.target.closest('button')
+  if (!btn) return
+  const tab = btn.dataset.tab
+  document.querySelectorAll('#adminTabs button').forEach(b => b.classList.remove('active'))
+  btn.classList.add('active')
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'))
+  document.getElementById(tab + 'Panel').classList.add('active')
+  if (tab === 'apps') loadApps()
+  else loadTenants()
+})
+
+// ── Applications ─────────────────────────────────────────────────────
+
+async function loadApps() {
+  const panel = document.getElementById('appsPanel')
+  panel.innerHTML = '<div class="empty">Loading...</div>'
+  try {
+    const [pending, approved, rejected] = await Promise.all([
+      fetch('/platform/applications?status=pending', { headers: headers() }).then(r => r.json()),
+      fetch('/platform/applications?status=approved', { headers: headers() }).then(r => r.json()),
+      fetch('/platform/applications?status=rejected', { headers: headers() }).then(r => r.json()),
+    ])
+    const all = [...(pending.applications||[]), ...(approved.applications||[]), ...(rejected.applications||[])]
+    if (!all.length) { panel.innerHTML = '<div class="empty">No applications yet</div>'; return }
+
+    panel.innerHTML = '<table><thead><tr><th>Organization</th><th>Contact</th><th>Status</th><th>Applied</th><th></th></tr></thead><tbody>' +
+      all.map(a => `<tr>
+        <td><strong>${esc(a.org_name)}</strong><br><span class="tenant-slug">${esc(a.service_area||a.location_state||'')}</span></td>
+        <td>${esc(a.contact_name)}<br><span class="tenant-slug">${esc(a.contact_email)}</span></td>
+        <td><span class="badge ${a.status}">${a.status}</span></td>
+        <td><span class="tenant-slug">${new Date(a.created_at).toLocaleDateString()}</span></td>
+        <td><div class="actions">
+          <button class="btn btn-view" onclick="viewApp('${a.id}')">View</button>
+          ${a.status === 'pending' ? `<button class="btn btn-primary" onclick="approveApp('${a.id}', this)">Approve</button>
+          <button class="btn btn-danger" onclick="confirmReject('${a.id}', this)">Reject</button>` : ''}
+        </div></td>
+      </tr>`).join('') + '</tbody></table>'
+  } catch { panel.innerHTML = '<div class="empty">Failed to load applications</div>' }
+}
+
+async function viewApp(id) {
+  try {
+    const [p, ap, rj] = await Promise.all([
+      fetch('/platform/applications?status=pending', { headers: headers() }).then(r => r.json()),
+      fetch('/platform/applications?status=approved', { headers: headers() }).then(r => r.json()),
+      fetch('/platform/applications?status=rejected', { headers: headers() }).then(r => r.json()),
+    ])
+    const all = [...(p.applications||[]), ...(ap.applications||[]), ...(rj.applications||[])]
+    const app = all.find(a => a.id === id)
+    if (!app) return
+
+    const modal = document.getElementById('modal')
+    modal.innerHTML = `
+      <button class="modal-close" onclick="closeModal()">&times;</button>
+      <h2>${esc(app.org_name)}</h2>
+      <dl>
+        <dt>Contact</dt><dd>${esc(app.contact_name)} &lt;${esc(app.contact_email)}&gt;</dd>
+        <dt>Phone</dt><dd>${esc(app.contact_phone||'\u2014')}</dd>
+        <dt>Website</dt><dd>${esc(app.website||'\u2014')}</dd>
+        <dt>Location</dt><dd>${esc([app.location_county, app.location_state].filter(Boolean).join(', ')||'\u2014')}</dd>
+        <dt>Service Area</dt><dd>${esc(app.service_area||'\u2014')}</dd>
+        <dt>Animals</dt><dd>${esc(app.animal_types||'\u2014')}</dd>
+        <dt>Use Case</dt><dd>${esc(app.use_case||'\u2014')}</dd>
+        <dt>Hosting Domain</dt><dd>${esc(app.hosting_domain||'\u2014')}</dd>
+        <dt>Status</dt><dd><span class="badge ${app.status}">${app.status}</span></dd>
+        <dt>Applied</dt><dd>${new Date(app.created_at).toLocaleString()}</dd>
+      </dl>
+      ${app.status === 'pending' ? `
+        <div class="modal-actions">
+          <input class="slug-input" id="approveSlug" placeholder="tenant-slug" value="${slugify(app.org_name)}" spellcheck="false">
+          <button class="btn btn-primary" onclick="approveFromModal('${app.id}')">Approve</button>
+          <button class="btn btn-danger" onclick="rejectFromModal('${app.id}')">Reject</button>
+        </div>` : ''}
+      <div id="modalResult"></div>
+      <div id="modalMsg"></div>
+    `
+    modal.style.display = 'block'
+    document.getElementById('overlay').style.display = 'block'
+  } catch {}
+}
+
+function closeModal() {
+  document.getElementById('modal').style.display = 'none'
+  document.getElementById('overlay').style.display = 'none'
+}
+
+document.getElementById('overlay').addEventListener('click', closeModal)
+
+async function approveApp(id, btn) {
+  // Quick approve from table — show inline slug input
+  const cell = btn.closest('td')
+  const existing = cell.querySelector('.approve-inline')
+  if (existing) { existing.remove(); return }
+
+  const div = document.createElement('div')
+  div.className = 'approve-inline'
+  div.style.marginTop = '8px'
+  div.innerHTML = `
+    <div style="display:flex;gap:6px;align-items:center">
+      <input class="slug-input" placeholder="tenant-slug" style="width:160px" spellcheck="false">
+      <button class="btn btn-primary" onclick="doApprove('${id}', this)">Confirm</button>
+    </div>
+    <div class="approve-result"></div>
+  `
+  cell.appendChild(div)
+  const input = div.querySelector('input')
+  // Try to get org name from table row
+  const row = btn.closest('tr')
+  const orgName = row?.querySelector('strong')?.textContent || ''
+  input.value = slugify(orgName)
+  input.focus()
+}
+
+async function doApprove(id, btn) {
+  const container = btn.closest('.approve-inline')
+  const slug = container.querySelector('input').value.trim()
+  const resultEl = container.querySelector('.approve-result')
+  btn.disabled = true
+  btn.textContent = 'Approving...'
+
+  try {
+    const res = await fetch('/platform/applications/' + id + '/approve', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify(slug ? { slug } : {}),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      resultEl.innerHTML = `<div class="inline-msg error">${esc(data.error || 'Failed')}</div>`
+      btn.disabled = false; btn.textContent = 'Confirm'
+      return
+    }
+    showApprovalResult(resultEl, data)
+    setTimeout(() => loadApps(), 3000)
+  } catch {
+    resultEl.innerHTML = '<div class="inline-msg error">Network error</div>'
+    btn.disabled = false; btn.textContent = 'Confirm'
+  }
+}
+
+async function approveFromModal(id) {
+  const slugInput = document.getElementById('approveSlug')
+  const slug = slugInput ? slugInput.value.trim() : ''
+  const resultEl = document.getElementById('modalResult')
+  const msgEl = document.getElementById('modalMsg')
+
+  try {
+    const res = await fetch('/platform/applications/' + id + '/approve', {
+      method: 'POST', headers: headers(),
+      body: JSON.stringify(slug ? { slug } : {}),
+    })
+    const data = await res.json()
+    if (!res.ok) {
+      msgEl.innerHTML = `<div class="inline-msg error">${esc(data.error || 'Approval failed')}</div>`
+      return
+    }
+    showApprovalResult(resultEl, data)
+    // Hide the action buttons
+    const actions = document.querySelector('.modal-actions')
+    if (actions) actions.style.display = 'none'
+    loadApps()
+  } catch {
+    msgEl.innerHTML = '<div class="inline-msg error">Network error</div>'
+  }
+}
+
+function showApprovalResult(el, data) {
+  const isLocal = location.hostname === 'localhost'
+  const slug = data.tenant?.slug || ''
+  const portalUrl = isLocal ? location.origin + '/?tenant=' + slug : 'https://' + slug + '.rescue.bluesnoop.com'
+  el.innerHTML = `
+    <div class="result-box">
+      <h4>Tenant Created</h4>
+      <p><strong>Slug:</strong> ${slug}</p>
+      <p><strong>Password:</strong></p><code>${esc(data.password || '')}</code>
+      <p><strong>Admin Portal:</strong> <a href="${portalUrl}" target="_blank" class="tenant-link">${portalUrl}</a></p>
+      <p class="cred-note">Send these credentials to ${esc(data.contact_email || '')}</p>
+    </div>`
+}
+
+function confirmReject(id, btn) {
+  const cell = btn.closest('td')
+  // If confirm is already showing, remove it
+  const existing = cell.querySelector('.confirm-inline')
+  if (existing) { existing.remove(); return }
+
+  const div = document.createElement('div')
+  div.className = 'confirm-inline'
+  div.style.marginTop = '8px'
+  div.innerHTML = `
+    <span>Reject this application?</span>
+    <button class="btn btn-danger" onclick="doReject('${id}', this)" style="border-color:var(--color-urgent-red);color:var(--color-urgent-red)">Yes, Reject</button>
+    <button class="btn btn-danger" onclick="this.closest('.confirm-inline').remove()">Cancel</button>
+  `
+  cell.appendChild(div)
+}
+
+async function doReject(id, btn) {
+  btn.disabled = true
+  try {
+    await fetch('/platform/applications/' + id + '/reject', {
+      method: 'POST', headers: headers(), body: '{}',
+    })
+    loadApps()
+  } catch {
+    btn.disabled = false
+  }
+}
+
+async function rejectFromModal(id) {
+  const msgEl = document.getElementById('modalMsg')
+  // Show inline confirm in modal
+  const existing = msgEl.querySelector('.confirm-inline')
+  if (existing) { existing.remove(); return }
+
+  msgEl.innerHTML = `
+    <div class="confirm-inline" style="margin-top:16px">
+      <span>Reject this application?</span>
+      <button class="btn btn-danger" style="border-color:var(--color-urgent-red);color:var(--color-urgent-red)" onclick="doRejectFromModal('${id}')">Yes, Reject</button>
+      <button class="btn btn-danger" onclick="this.closest('.confirm-inline').remove()">Cancel</button>
+    </div>`
+}
+
+async function doRejectFromModal(id) {
+  try {
+    await fetch('/platform/applications/' + id + '/reject', {
+      method: 'POST', headers: headers(), body: '{}',
+    })
+    closeModal()
+    loadApps()
+  } catch {}
+}
+
+// ── Tenants ──────────────────────────────────────────────────────────
+
+async function loadTenants() {
+  const panel = document.getElementById('tenantsPanel')
+  panel.innerHTML = '<div class="empty">Loading...</div>'
+  try {
+    const res = await fetch('/platform/dashboard', { headers: headers() })
+    const data = await res.json()
+    const tenants = data.tenants || []
+    if (!tenants.length) { panel.innerHTML = '<div class="empty">No tenants yet</div>'; return }
+
+    const isLocal = location.hostname === 'localhost'
+    panel.innerHTML = '<table><thead><tr><th>Tenant</th><th>Email</th><th>Sessions</th><th>Messages</th><th>Usage (30d)</th><th>Created</th></tr></thead><tbody>' +
+      tenants.map(t => {
+        const portalUrl = isLocal ? location.origin + '/?tenant=' + t.slug : 'https://' + t.slug + '.rescue.bluesnoop.com'
+        const usage = t.usage_30d || {}
+        return `<tr>
+          <td><a class="tenant-link" href="${portalUrl}" target="_blank">${esc(t.name)}</a><br><span class="tenant-slug">${t.slug}</span></td>
+          <td><span class="tenant-slug">${esc(t.email||'\u2014')}</span></td>
+          <td style="font-family:var(--font-mono);font-size:0.85rem">${t.session_count}</td>
+          <td style="font-family:var(--font-mono);font-size:0.85rem">${t.message_count}</td>
+          <td><span class="tenant-slug">${((usage.prompt_tokens||0)+(usage.completion_tokens||0)).toLocaleString()} tok / ${usage.request_count||0} req</span></td>
+          <td><span class="tenant-slug">${new Date(t.created_at).toLocaleDateString()}</span></td>
+        </tr>`
+      }).join('') + '</tbody></table>'
+  } catch { panel.innerHTML = '<div class="empty">Failed to load tenants</div>' }
+}
+
+// ── Helpers ──────────────────────────────────────────────────────────
+
+function slugify(s) { return s.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50) }
+function esc(s) { const d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML }
+
+// Worker has already gated this page — start by loading the default tab.
+loadApps()
+</script>
+</body>
+</html>

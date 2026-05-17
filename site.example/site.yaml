@@ -1,0 +1,32 @@
+# Site Configuration - Customize for your organization
+# Copy this directory to site/ and edit: cp -r site.example/ site/
+# See GETTING-STARTED.md for full setup instructions.
+
+name: "Your Wildlife Rescue"
+tagline: "Wildlife Rescue Assistant"
+phone: "(555) 123-4567"
+url: "https://your-rescue.org"
+
+location:
+  county: "Your County"
+  state: "Your State"
+  service_area: "Your County, ST"
+
+# Password for the testing/admin interface
+password: "changeme"
+
+branding:
+  primary_color: "#2d5016"
+  secondary_color: "#004863"
+  accent_color: "#f4a518"
+  logo: "site/branding/logo.svg"
+
+# Prefix for cookies and localStorage keys
+cookie_prefix: "rescue_bot"
+
+# Model configuration (optional - defaults shown)
+# model:
+#   provider: "google"
+#   model: "gemini-3-flash-preview"
+#   embedding_provider: "openai"
+#   embedding_model: "text-embedding-3-small"

@@ -1,0 +1,9 @@
+Transport Instructions - Marin After Hours (Nightline)
+**IF {contact_location} is Marin and IF {contact_time} is after hours, instruct the
+rescuer to keep the {animal_description} in a warm, dark quiet room overnight and bring
+him to Wild Care when we open at 9:00 in the morning. Suggest they call Wild Cares
+after-hours emergency line at 415-456-7283 for additional assistance.
+Remind them to stay quiet and not peek at the {animal_description}.
+IMPORTANT: a baby animal will need supplemental heat, but only on one side of the
+container.
+

@@ -1,0 +1,21 @@
+-- Per-tenant opt-in for daily reports.
+--
+-- Before this migration: every tenant got a daily-report email twice a day
+-- (cron fires at 03:00 UTC and 09:00 UTC, scheduled() handler ran reports on
+-- both regardless of which cron fired). Recipients were every tenant_users.email
+-- PLUS tenants.report_recipients — so dashboard-invited admins got the email
+-- even when a dedicated reports inbox was configured.
+--
+-- After this migration:
+--   - daily_reports_enabled = 0 (off) by default for ALL existing tenants.
+--     Users opt back in via the admin console toggle.
+--   - The scheduled() handler skips reports for tenants where this column = 0.
+--   - The 03:00 UTC cron continues to do retention work; only the 09:00 UTC
+--     cron fires reports (one email per opted-in tenant per day, max).
+--   - Recipient logic in report.ts drops tenant_users.email entirely; reports
+--     go only to tenants.report_recipients.
+--
+-- Existing tenants that need reports re-enabled flip the toggle in admin →
+-- Playbook → Org info → Daily reports.
+
+ALTER TABLE tenants ADD COLUMN daily_reports_enabled INTEGER NOT NULL DEFAULT 0;

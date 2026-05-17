@@ -1,0 +1,8 @@
+Transport Instructions - SFBay Overnight
+**IF {contact_location} is SFBay and IF {contact_time} is overnight, instruct the
+rescuer to keep the {animal_description} in a warm, dark quiet room overnight and use
+Animal Help Nowhttps://ahnow.org/to find their closest wildlife care center.
+Remind them to stay quiet and not disturb or peek at the {animal_description}.
+IMPORTANT: A baby animal will need supplemental heat, but only on one side of the
+container.
+

@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Sign in</title>
+  <script src="https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onTurnstileReady" async defer></script>
+  <style>
+    :root {
+      --primary: #6B7F5E;
+      --bg: #fafaf7;
+      --card-bg: #ffffff;
+      --text: #2d2d2d;
+      --muted: #6b6b6b;
+      --border: #e5e5e0;
+      --error: #b54040;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      max-width: 420px;
+      width: 100%;
+      padding: 40px 32px;
+      box-shadow: 0 1px 3px rgba(0,0,0,.04);
+    }
+    .brand {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      margin-bottom: 24px;
+    }
+    .brand img { max-height: 64px; max-width: 220px; margin-bottom: 12px; }
+    h1 {
+      font-size: 22px;
+      margin: 0 0 6px;
+      text-align: center;
+    }
+    .subtitle {
+      color: var(--muted);
+      font-size: 14px;
+      text-align: center;
+      margin: 0 0 28px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 6px;
+      color: var(--text);
+    }
+    input[type=email] {
+      width: 100%;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      font-size: 15px;
+      font-family: inherit;
+    }
+    input[type=email]:focus {
+      outline: 2px solid var(--primary);
+      outline-offset: -1px;
+      border-color: var(--primary);
+    }
+    button {
+      width: 100%;
+      padding: 12px 16px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 8px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      margin-top: 18px;
+      font-family: inherit;
+    }
+    button:disabled { opacity: 0.55; cursor: not-allowed; }
+    button:not(:disabled):hover { filter: brightness(0.95); }
+    .turnstile-mount { margin-top: 16px; min-height: 65px; display: flex; justify-content: center; }
+    .error {
+      background: #fff5f5;
+      color: var(--error);
+      padding: 10px 12px;
+      border-radius: 6px;
+      font-size: 13px;
+      margin-top: 12px;
+      display: none;
+    }
+    .success {
+      text-align: center;
+      padding: 20px 0;
+    }
+    .success h2 { margin: 8px 0 6px; font-size: 18px; }
+    .success p { color: var(--muted); font-size: 14px; margin: 0; }
+    .footer {
+      text-align: center;
+      color: var(--muted);
+      font-size: 12px;
+      margin-top: 24px;
+    }
+  </style>
+</head>
+<body>
+  <div class="card" id="card">
+    <div class="brand" id="brand">
+      <h1 id="title">Sign in</h1>
+      <p class="subtitle" id="subtitle">Enter your email to receive a sign-in link.</p>
+    </div>
+
+    <form id="loginForm">
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" required autocomplete="email" autofocus />
+      <div class="turnstile-mount" id="turnstileMount"></div>
+      <button type="submit" id="submitBtn" disabled>Send sign-in link</button>
+      <div class="error" id="error"></div>
+    </form>
+
+    <div class="success" id="success" style="display:none">
+      <h2>Check your email</h2>
+      <p id="successMsg">If that email has access, a sign-in link is on its way.</p>
+    </div>
+
+    <div class="footer">
+      <span id="footerText"></span>
+    </div>
+  </div>
+
+<script>
+  let turnstileWidgetId = null
+  let turnstileToken = null
+  let config = null
+
+  // Loaded when Turnstile JS is ready (data-cb attr in script tag).
+  window.onTurnstileReady = function () {
+    if (!config) return  // /api/config still loading; will render after
+    renderTurnstile()
+  }
+
+  function renderTurnstile() {
+    if (!window.turnstile || !config) return
+    if (turnstileWidgetId !== null) return
+    if (config.dev_auth_bypass) {
+      // Local dev with bypass on — skip the widget entirely.
+      document.getElementById('submitBtn').disabled = false
+      return
+    }
+    if (!config.turnstile_site_key) {
+      // Misconfigured; surface but allow submit (server will reject anyway).
+      document.getElementById('error').textContent = 'CAPTCHA misconfigured. Contact platform admin.'
+      document.getElementById('error').style.display = 'block'
+      return
+    }
+    turnstileWidgetId = window.turnstile.render('#turnstileMount', {
+      sitekey: config.turnstile_site_key,
+      // Hide the widget unless CF determines an interactive challenge is
+      // needed. Real humans on a clean session should never see it.
+      appearance: 'interaction-only',
+      callback: (token) => {
+        turnstileToken = token
+        document.getElementById('submitBtn').disabled = false
+      },
+      'expired-callback': () => {
+        turnstileToken = null
+        document.getElementById('submitBtn').disabled = true
+      },
+      'error-callback': () => {
+        turnstileToken = null
+        document.getElementById('submitBtn').disabled = true
+      },
+    })
+  }
+
+  // Forward the page's ?tenant=<slug> param to API calls so the worker's
+  // tenant-resolution middleware can scope /api/config and /api/auth/request
+  // to the right tenant. Without this, /api/config returns the platform
+  // (admin) shape even on tenant URLs, branding the login as "Platform Admin".
+  function withTenant(path) {
+    const tenantParam = new URLSearchParams(window.location.search).get('tenant')
+    if (!tenantParam) return path
+    const sep = path.includes('?') ? '&' : '?'
+    return path + sep + 'tenant=' + encodeURIComponent(tenantParam)
+  }
+
+  async function init() {
+    try {
+      const res = await fetch(withTenant('/api/config'))
+      if (!res.ok) throw new Error('config failed: ' + res.status)
+      config = await res.json()
+    } catch (e) {
+      document.getElementById('error').textContent = 'Could not load page configuration.'
+      document.getElementById('error').style.display = 'block'
+      return
+    }
+
+    // Brand the page based on tenant or platform context.
+    const platformName = config.platform_name || 'rescue-bot'
+    if (config.platform) {
+      document.getElementById('title').textContent = 'Platform Admin'
+      document.getElementById('subtitle').textContent = 'Sign in to manage ' + platformName + ' tenants.'
+      document.getElementById('footerText').textContent = platformName + ' · platform admin'
+    } else {
+      document.getElementById('title').textContent = 'Sign in to ' + (config.name || platformName)
+      document.getElementById('subtitle').textContent = 'Enter your email to receive a sign-in link.'
+      document.getElementById('footerText').textContent = (config.name || platformName) + ' admin portal'
+      // Apply tenant brand color to the primary button + focus.
+      const primary = config.branding?.primary_color
+      if (primary) document.documentElement.style.setProperty('--primary', primary)
+      // Tenant logo (if present in R2)
+      if (config.logo_url) {
+        const brand = document.getElementById('brand')
+        const img = document.createElement('img')
+        img.src = config.logo_url
+        img.alt = config.name || ''
+        brand.insertBefore(img, brand.firstChild)
+      }
+    }
+
+    renderTurnstile()
+  }
+
+  document.getElementById('loginForm').addEventListener('submit', async (e) => {
+    e.preventDefault()
+    const errorEl = document.getElementById('error')
+    errorEl.style.display = 'none'
+    const btn = document.getElementById('submitBtn')
+    btn.disabled = true
+    btn.textContent = 'Sending…'
+
+    const email = /** @type {HTMLInputElement} */ (document.getElementById('email')).value.trim()
+
+    try {
+      const res = await fetch(withTenant('/api/auth/request'), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, turnstile_token: turnstileToken }),
+      })
+      const body = await res.json()
+      if (!res.ok) {
+        errorEl.textContent = body.error || 'Could not send sign-in link.'
+        errorEl.style.display = 'block'
+        btn.disabled = false
+        btn.textContent = 'Send sign-in link'
+        // Reset Turnstile so the user can try again with a fresh token.
+        if (window.turnstile && turnstileWidgetId !== null) {
+          window.turnstile.reset(turnstileWidgetId)
+          turnstileToken = null
+        }
+        return
+      }
+      document.getElementById('loginForm').style.display = 'none'
+      document.getElementById('success').style.display = 'block'
+      // Dev-mode response includes the magic link inline for one-click sign-in.
+      if (body.dev_login_url) {
+        const p = document.getElementById('successMsg')
+        p.innerHTML = 'Development mode: <a href="' + body.dev_login_url + '">click here to sign in</a>.'
+      }
+    } catch (ex) {
+      errorEl.textContent = 'Network error. Please try again.'
+      errorEl.style.display = 'block'
+      btn.disabled = false
+      btn.textContent = 'Send sign-in link'
+    }
+  })
+
+  init()
+</script>
+</body>
+</html>

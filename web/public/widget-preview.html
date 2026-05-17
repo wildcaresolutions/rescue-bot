@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Widget Preview</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f8f9fa; min-height: 100vh; color: #333; }
+    .site-header { background: #fff; border-bottom: 1px solid #e0e0e0; padding: 16px 32px; display: flex; align-items: center; justify-content: space-between; }
+    .site-header h1 { font-size: 1.2rem; font-weight: 600; }
+    .site-header nav { display: flex; gap: 24px; }
+    .site-header nav a { color: #666; text-decoration: none; font-size: 0.9rem; }
+    .site-content { max-width: 800px; margin: 48px auto; padding: 0 32px; }
+    .site-content h2 { font-size: 1.8rem; margin-bottom: 16px; }
+    .site-content p { color: #555; line-height: 1.7; margin-bottom: 16px; }
+    .site-content .card { background: #fff; border: 1px solid #e0e0e0; border-radius: 8px; padding: 24px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <header class="site-header">
+    <h1 id="siteName">Your Organization</h1>
+    <nav>
+      <a href="#">About</a>
+      <a href="#">Programs</a>
+      <a href="#">Contact</a>
+      <a href="#">Donate</a>
+    </nav>
+  </header>
+  <main class="site-content">
+    <h2>Welcome</h2>
+    <p>This is a preview of how the chat widget appears on your website. Click the chat button in the bottom-right corner to test your rescue bot.</p>
+    <div class="card">
+      <p>The widget works exactly as it would on your real site. Try asking about an injured animal to see how the bot responds with your custom protocols and branding.</p>
+    </div>
+  </main>
+  <script>
+    const params = new URLSearchParams(window.location.search)
+    const tenant = params.get('tenant')
+    const editorMode = params.get('editor') === 'true'
+
+    if (tenant) {
+      // Fetch tenant config to show org name in the fake site header
+      fetch('/api/config', { headers: { 'X-Tenant-Slug': tenant } })
+        .then(r => r.json())
+        .then(config => {
+          if (config.name) document.getElementById('siteName').textContent = config.name
+        })
+        .catch(() => {})
+
+      // Load the real widget. Cache-bust on every load — admins iterate on
+      // the widget script and we don't want a stale cached copy in the
+      // preview iframe to mask their changes.
+      const s = document.createElement('script')
+      s.src = '/widget.js?v=' + Date.now()
+      s.setAttribute('data-tenant', tenant)
+      document.body.appendChild(s)
+
+      // Editor mode: handle auto-open toggle from admin editor
+      if (editorMode) {
+        window.addEventListener('message', (event) => {
+          if (event.data?.type !== 'wildcare-preview-config') return
+          // Theme/position/customCSS are handled by widget.js's own message listener.
+          // Auto-open needs special handling: toggle the widget open/closed.
+          if (event.data.autoOpen !== undefined) {
+            const btn = document.getElementById('rbot-widget-button')
+            const pane = document.querySelector('.rbot-widget-pane')
+            if (event.data.autoOpen && btn && (!pane || pane.style.display === 'none')) {
+              btn.click()
+            }
+          }
+        })
+      }
+    } else {
+      document.querySelector('.site-content').innerHTML = '<p style="color:#999;text-align:center;padding:48px">No tenant specified. Add ?tenant=your-slug to the URL.</p>'
+    }
+  </script>
+</body>
+</html>

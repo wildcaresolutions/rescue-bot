@@ -1,0 +1,317 @@
+# WildCare site-specific tests
+# Tests WildCare protocols: service area (Marin County), species restrictions, contact info
+# Run: make eval-site
+# Judge: Cloudflare AI Gateway (set AI_GATEWAY_TOKEN in .env)
+
+description: WildCare Site-Specific Tests
+
+providers:
+  - id: file://../evals/provider.js
+    label: WildCare Agent
+    config:
+      baseUrl: http://localhost:8787
+      tenantSlug: wildcare
+      origin: http://localhost:8787
+
+prompts:
+  - '{{user_input}}'
+
+maxConcurrency: 4
+
+defaultTest:
+  options:
+    provider: file://../evals/cf-gateway-grader.js
+
+tests:
+  # ============================================================================
+  # SERVICE AREA (WildCare serves Marin County, CA)
+  # Callers outside the service area must be redirected to appropriate orgs
+  # ============================================================================
+
+  - description: "Service Area: Cormorant in Half Moon Bay (outside area)"
+    vars:
+      user_input: "I found an injured cormorant on the beach in Half Moon Bay. Can I bring it to WildCare?"
+    assert:
+      - type: llm-rubric
+        value: |
+          WildCare serves Marin County. Half Moon Bay is in San Mateo County — outside the service area.
+
+          The response MUST:
+          1. Clarify that Half Moon Bay is outside WildCare's service area
+          2. Redirect the caller to an appropriate San Mateo County resource (e.g. Peninsula Humane Society, 650-340-7022)
+
+          The response MUST NOT:
+          3. Tell the caller to bring the bird to WildCare
+
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
+
+  - description: "Service Area: Skunk in San Mateo (outside + rabies vector)"
+    vars:
+      user_input: "There's an injured skunk in my San Mateo backyard. Should I bring it to WildCare?"
+    assert:
+      - type: llm-rubric
+        value: |
+          WildCare serves Marin County. San Mateo is outside the service area. Skunks are rabies vectors.
+
+          The response MUST:
+          1. Clarify that San Mateo is outside WildCare's service area
+          2. Redirect the caller to an appropriate San Mateo County resource (e.g. Peninsula Humane Society, 650-340-7022)
+          3. Include appropriate rabies/safety precautions for skunk handling (gloves, do not handle with bare hands)
+
+          The response MUST NOT:
+          4. Tell the caller to bring the skunk to WildCare
+
+          PASS if criteria 1, 2, and 3 are present AND criterion 4 is absent.
+          FAIL if criteria 1, 2, or 3 are missing, or if criterion 4 is present.
+
+  - description: "Service Area: Owl in Sacramento (far outside)"
+    vars:
+      user_input: "I'm in Sacramento and found an injured owl. Can you help?"
+    assert:
+      - type: llm-rubric
+        value: |
+          WildCare serves Marin County. Sacramento is hundreds of miles away — well outside the service area.
+
+          The response MUST:
+          1. Explain that WildCare cannot help for Sacramento
+          2. Direct the caller to find a local wildlife rehabilitator in Sacramento/their area
+
+          The response MUST NOT:
+          3. Tell the caller to bring the owl to WildCare
+
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
+
+  - description: "Service Area: Gull in San Francisco (outside but nearby)"
+    vars:
+      user_input: "I found a gull with a broken wing in San Francisco. Where should I take it?"
+    assert:
+      - type: llm-rubric
+        value: |
+          WildCare serves Marin County. San Francisco is outside the service area (different county).
+
+          The response MUST:
+          1. Clarify that San Francisco is outside WildCare's service area
+          2. Redirect the caller to an appropriate San Francisco or Bay Area resource (e.g. Peninsula Humane Society, 650-340-7022)
+
+          The response MUST NOT:
+          3. Tell the caller to bring the gull to WildCare
+
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
+
+  # ============================================================================
+  # SPECIES RESTRICTIONS (WildCare-specific)
+  # ============================================================================
+
+  - description: "Species: Red fox — WildCare treats gray foxes only"
+    vars:
+      user_input: "I found an injured red fox in my neighborhood. Can I bring it to WildCare?"
+    assert:
+      - type: llm-rubric
+        value: |
+          WildCare has a specific policy: they only treat gray foxes, not red foxes.
+          Red foxes fall under California Department of Fish & Wildlife jurisdiction.
+
+          The response MUST:
+          1. Clarify that WildCare treats gray foxes but not red foxes
+          2. Direct the caller to California Department of Fish & Wildlife or an appropriate rehabilitator for red foxes
+
+          The response MUST NOT:
+          3. Tell the caller to bring the red fox to WildCare
+
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
+
+  - description: "Species: Wild turkey — professional handling only"
+    vars:
+      user_input: "There's an injured wild turkey in my yard. How do I catch it?"
+    assert:
+      - type: llm-rubric
+        value: |
+          Wild turkeys are large, powerful birds that require professional handling.
+          Members of the public should not attempt to catch them — this is dangerous.
+
+          The response MUST:
+          1. Advise against the caller attempting to catch the turkey themselves
+          2. Recommend calling animal control or Marin Humane for professional assistance
+
+          The response MUST NOT:
+          3. Provide instructions for the caller to catch the turkey themselves
+
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
+
+  # ============================================================================
+  # FALSE CAPABILITIES (WildCare-specific)
+  # ============================================================================
+
+  - description: "False Capability: Gull capture — WildCare doesn't dispatch field staff"
+    vars:
+      user_input: "There's an injured gull on the beach. I'm afraid to touch it. Can WildCare send someone?"
+    assert:
+      - type: llm-rubric
+        value: |
+          WildCare does not dispatch field staff to capture wildlife. They are a walk-in facility.
+          Callers who cannot handle an animal should be directed to Marin Humane for field response.
+
+          The response MUST:
+          1. Clarify that WildCare cannot send staff to capture the bird
+          2. Direct the caller to Marin Humane Society (which does have field capture capability)
+
+          The response MUST NOT:
+          3. Promise that WildCare will send someone or dispatch staff
+
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
+
+  # ============================================================================
+  # COYOTE MANGE (high-volume topic for WildCare's service area)
+  # ============================================================================
+
+  - description: "Mange: Mobile coyote with mange — explains treatment complexity"
+    vars:
+      user_input: "There's a coyote in my neighborhood that looks terrible - it's lost most of its fur and looks really sick. Can someone capture it and treat it?"
+    assert:
+      - type: llm-rubric
+        value: |
+          Mange treatment for wild, mobile coyotes is not straightforward — it requires
+          treating the whole family group (reinfection is likely otherwise), correct weight-based
+          dosing, and avoiding habituation. WildCare cannot capture and treat mobile coyotes in the field.
+
+          The response MUST:
+          1. Explain at least one reason why capturing and treating a mobile coyote is difficult
+             (e.g. reinfection from pack, dosing requires known weight, habituation risk)
+          2. Provide actionable steps (e.g. report to Marin Humane or the reporting form)
+
+          The response MUST NOT:
+          3. Promise WildCare or the org can capture and treat the coyote in the field
+
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
+
+  - description: "Mange: Immobile coyote — directs to call Marin Humane"
+    vars:
+      user_input: "There's a coyote lying in my yard that hasn't moved in hours. It's covered in sores and has almost no fur. What should I do?"
+    assert:
+      - type: llm-rubric
+        value: |
+          An immobile coyote that has not moved in hours is in distress and may need emergency intervention.
+          Unlike a mobile mange case, this animal may be capturable. Marin Humane handles field captures.
+
+          The response MUST:
+          1. Recommend calling Marin Humane Society and provide their number (415-883-4621)
+          2. Advise keeping distance from the coyote and keeping pets away
+
+          PASS if both criteria are present.
+          FAIL if either is missing.
+
+  - description: "Mange: Why so many coyotes getting mange"
+    vars:
+      user_input: "Why are so many coyotes getting mange around here? Is there something causing it?"
+    assert:
+      - type: llm-rubric
+        value: |
+          Rodenticide (rat poison) use is a documented contributing factor to mange in coyotes —
+          it weakens their immune system, making them more susceptible to the sarcoptic mange mite.
+
+          The response MUST:
+          1. Mention rodenticide, rat poison, or anticoagulant poison as a contributing factor
+          2. Explain the mechanism — rodenticide weakens the immune system, making animals more vulnerable
+
+          PASS if both criteria are present.
+          FAIL if either is missing.
+
+  # ============================================================================
+  # TRANSPORT ROUTING (time-of-day & location specific)
+  # ============================================================================
+
+  - description: "Transport: Marin during hours → WildCare at temporary address"
+    vars:
+      user_input: "I'm in San Rafael with an injured bird. It's 2pm. Where do I take it?"
+    assert:
+      - type: llm-rubric
+        value: |
+          WildCare is operating from a temporary address during construction: 37 Schmidt Lane, San Rafael.
+          The old address (76 Albert Ave) should NOT be provided.
+
+          The response MUST:
+          1. Direct to WildCare at 37 Schmidt Lane, San Rafael (the temporary address)
+
+          The response MUST NOT:
+          2. Provide the old address (76 Albert Ave)
+
+          PASS if criterion 1 is present AND criterion 2 is absent.
+          FAIL if criterion 1 is missing, or if criterion 2 is present.
+
+  - description: "Transport: Marin after hours → keep overnight"
+    vars:
+      user_input: "I found an injured bird in Novato. It's 11pm. What should I do with it tonight?"
+    assert:
+      - type: llm-rubric
+        value: |
+          It's 11pm — WildCare is closed (hours are 9am-5pm). The caller is in Marin County.
+
+          The response MUST:
+          1. Advise keeping the bird in a warm, dark, quiet place overnight
+          2. Advise bringing it to WildCare when they open in the morning
+          3. Advise not offering food or water
+
+          PASS if all 3 criteria are present.
+          FAIL if any are missing.
+
+  - description: "Transport: Outside Marin → do NOT send to WildCare"
+    vars:
+      user_input: "I'm in Oakland with an injured squirrel. Can I bring it to WildCare?"
+    assert:
+      - type: llm-rubric
+        value: |
+          Oakland is in Alameda County — outside WildCare's Marin County service area.
+
+          The response MUST:
+          1. Clarify that Oakland is outside WildCare's service area
+          2. Direct to a local resource (Animal Help Now, local animal control, or similar)
+
+          The response MUST NOT:
+          3. Tell the caller to bring the animal to WildCare
+
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
+
+  # ============================================================================
+  # MULTI-TURN (site-specific)
+  # ============================================================================
+
+  - description: "Multi-turn: Rescue then location → correct routing"
+    vars:
+      user_input: "I found a baby raccoon, eyes closed, tiny. I have it in a box with a warm towel. ||| I'm in Mill Valley, Marin County. Where should I take it?"
+    assert:
+      - type: llm-rubric
+        value: |
+          The caller is in Mill Valley, Marin County, with a contained baby raccoon.
+
+          The response MUST:
+          1. Direct to WildCare at the temporary address (37 Schmidt Lane, San Rafael)
+          2. NOT provide the old address (76 Albert Ave)
+
+          PASS if criterion 1 is present AND criterion 2 is met.
+          FAIL if criterion 1 is missing or criterion 2 is violated.
+
+  - description: "Multi-turn: Bat in house → follow-up about kids"
+    vars:
+      user_input: "There's a bat in my house. I got it in a box. ||| My kids were sleeping in the room where I found it. Should I be worried?"
+    assert:
+      - type: llm-rubric
+        value: |
+          Children sleeping in a room with a bat is a potential rabies exposure — bat bites can be undetectable.
+
+          The response MUST:
+          1. Recommend consulting a doctor or health department about the children's exposure
+          2. Recommend keeping the bat contained (do not release)
+          3. Recommend calling WildCare or animal control for guidance
+
+          PASS if all 3 criteria are present.
+          FAIL if any are missing.
+
+outputPath: ./site/promptfoo-results.json

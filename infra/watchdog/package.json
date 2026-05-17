@@ -1,0 +1,20 @@
+{
+  "name": "wildcare-bot-watchdog",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "description": "Cron Worker that probes the main rescue-bot /health endpoint every 5 minutes and emails the operator on outage. Independent failure domain — does not share runtime with the main worker. Worker name (wildcare-bot-watchdog) intentionally retains the deployment-specific prefix; rename via task #10 when worker names are parameterized.",
+  "scripts": {
+    "deploy": "wrangler deploy",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "types": "wrangler types"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260418.1",
+    "@types/node": "25.6.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.4",
+    "wrangler": "4.83.0"
+  }
+}

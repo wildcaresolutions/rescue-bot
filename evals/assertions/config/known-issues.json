@@ -1,0 +1,7 @@
+{
+  "WildCare will send staff": "wildcare.*(will send|dispatch|come|pick.*up)",
+  "Suggests giving water": "water.*(lid|small|offer)",
+  "DIY turkey capture": "(catch|grab|contain).*turkey",
+  "Red fox treatment": "red fox.*wildcare.*treat",
+  "Force pelican bill closed": "(close|shut).*(bill|beak)"
+}

@@ -1,0 +1,8 @@
+Transport Instructions - Else During Hours
+**IF {contact_location} is Else and IF {contact_time} is during hours, instruct the
+rescuer to use Animal Help Nowhttps://ahnow.org/to find their closest wildlife care
+center.
+Do not suggest they bring the animal to Wild Care.
+Suggest they call Wild Cares Hotline at 415-456-7283 for assistance and advice.
+Remind them to stay quiet and not disturb or peek at the {animal_description}.
+

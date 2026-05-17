@@ -1,0 +1,552 @@
+import { Hono } from 'hono'
+import type { Env, Tenant, Variables } from '../lib/types'
+import { hashPassword, generateToken, verifyToken, isDevAuthBypass, resolveSession, tenantCookiePrefix } from '../lib/auth'
+import { invalidateTenantCache } from '../lib/cache'
+import { clamp } from '../lib/utils'
+import { compileInstruction } from '../lib/compile-instruction'
+import { verifyTurnstile } from '../lib/turnstile'
+import { sanitizeCustomCss } from '../lib/css-sanitize'
+import { parseOrgConfig, loadTenantBySlug, loadTenantById } from '../lib/tenant-loader'
+import { dbError } from '../lib/errors'
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const SLUG_PATTERN = /^[a-z0-9][a-z0-9-]{1,48}[a-z0-9]$/
+const RESERVED_SLUGS = new Set([
+  'admin', 'api', 'platform', 'www', 'app', 'mail', 'ftp', 'cdn',
+  'static', 'assets', 'health', 'status', 'default',
+])
+
+const MAX_LOGO_SIZE = 2 * 1024 * 1024   // 2 MB
+const MAX_DOC_SIZE = 1 * 1024 * 1024     // 1 MB
+const MAX_DOC_COUNT = 20
+// Audit ralph-2 C1: SVG dropped from the allowlist. Operator-uploaded SVGs
+// served as `image/svg+xml` from the platform origin execute arbitrary
+// inline <script> on viewer load — cross-tenant XSS when a platform admin
+// previews a tenant's logo, and admin-console XSS when the tenant admin
+// loads their own console. The minimum-disruption fix is "no SVG"; if any
+// operator needs vector logos in the future, re-add behind a real
+// sanitizer (DOMPurify on the SVG namespace, or an inline-script-stripping
+// pre-write filter). Raster formats cover every use case today.
+const ALLOWED_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp'])
+
+/** Sanitize a filename to prevent path traversal. */
+function sanitizeFilename(name: string): string {
+  return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128)
+}
+
+/** Derive safe content type from file extension. SVG intentionally absent
+ *  (see ALLOWED_IMAGE_EXTS) — the upload validator refuses it upstream so
+ *  the map never sees an svg extension; falls through to octet-stream
+ *  defensively. */
+function safeContentType(ext: string): string {
+  const map: Record<string, string> = {
+    jpg: 'image/jpeg', jpeg: 'image/jpeg', png: 'image/png', webp: 'image/webp',
+  }
+  return map[ext] || 'application/octet-stream'
+}
+
+function validSlug(slug: string): boolean {
+  return SLUG_PATTERN.test(slug) && !RESERVED_SLUGS.has(slug)
+}
+
+function chunkText(text: string, maxTokens: number): string[] {
+  const chunks: string[] = []
+  const paragraphs = text.split(/\n\n+/)
+  let current = ''
+  for (const para of paragraphs) {
+    if (current && (current.length + para.length) / 4 > maxTokens) {
+      chunks.push(current.trim())
+      current = ''
+    }
+    current += (current ? '\n\n' : '') + para
+  }
+  if (current.trim()) chunks.push(current.trim())
+  return chunks
+}
+
+// ── Hono sub-app ──────────────────────────────────────────────────────────────
+
+const platform = new Hono<{ Bindings: Env; Variables: Variables }>()
+
+/** Submit an application to join the platform (public, no auth). */
+platform.post('/platform/apply', async (c) => {
+  let body: Record<string, unknown>
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+
+  // Turnstile (this endpoint is reachable from the public-internet marketing
+  // site — the only other auth in front of it is the bot challenge).
+  if (!isDevAuthBypass(c.env)) {
+    const ip = c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For') ?? null
+    const tt = typeof body.turnstile_token === 'string' ? body.turnstile_token : null
+    const tr = await verifyTurnstile(tt, ip, c.env.TURNSTILE_SECRET_KEY)
+    if (!tr.ok) {
+      // Always log — site/secret mismatches and timeout-or-duplicate rejections
+      // were silent before, which made the form's "Captcha verification failed"
+      // banner impossible to root-cause.
+      console.error('[platform/apply] turnstile rejected:', tr)
+      if (tr.reason === 'missing_secret' || tr.reason === 'network') {
+        return c.json({ error: 'Captcha service unavailable' }, 503)
+      }
+      return c.json({ error: 'Captcha verification failed', reason: tr.reason, details: tr.details }, 400)
+    }
+  }
+
+  const orgName = typeof body.org_name === 'string' ? body.org_name.trim() : ''
+  const contactName = typeof body.contact_name === 'string' ? body.contact_name.trim() : ''
+  const contactEmail = typeof body.contact_email === 'string' ? body.contact_email.trim() : ''
+
+  if (!orgName) return c.json({ error: 'Organization name is required' }, 400)
+  if (!contactName) return c.json({ error: 'Contact name is required' }, 400)
+  if (!contactEmail || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(contactEmail)) {
+    return c.json({ error: 'Valid contact email is required' }, 400)
+  }
+
+  const id = crypto.randomUUID()
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO applications (id, org_name, contact_name, contact_email, contact_phone,
+         website, use_case, animal_types, service_area, location_county, location_state, hosting_domain,
+         source, ref)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      id, orgName, contactName, contactEmail,
+      clamp(body.contact_phone as string, 32),
+      clamp(body.website as string, 512),
+      clamp(body.use_case as string, 2000),
+      clamp(body.animal_types as string, 1000),
+      clamp(body.service_area as string, 512),
+      clamp(body.location_county as string, 128),
+      clamp(body.location_state as string, 64),
+      clamp(body.hosting_domain as string, 256),
+      clamp(body.source as string, 128),
+      clamp(body.ref as string, 128),
+    ).run()
+
+    return c.json({ success: true, id }, 201)
+  } catch (e) {
+    return dbError(c, 'platform/apply', 'DB error', e)
+  }
+})
+
+/** Create a tenant directly (platform admin only). */
+platform.post('/platform/signup', async (c) => {
+  // Auth is enforced by the /platform/* middleware in index.ts.
+
+  let body: Record<string, unknown>
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+
+  const slug = typeof body.slug === 'string' ? body.slug.toLowerCase().trim() : ''
+  const name = typeof body.name === 'string' ? body.name.trim() : ''
+  const password = typeof body.password === 'string' ? body.password : ''
+  const phone = clamp(body.phone as string, 32)
+  const email = clamp(body.email as string, 256)
+  const url = clamp(body.url as string, 512)
+  const locationCounty = clamp(body.location_county as string, 128)
+  const locationState = clamp(body.location_state as string, 64)
+  const locationServiceArea = clamp(body.location_service_area as string, 512)
+  const colorPrimary = clamp(body.color_primary as string, 7) ?? '#2d7a3c'
+  const colorSecondary = clamp(body.color_secondary as string, 7) ?? '#1a4a24'
+  const colorAccent = clamp(body.color_accent as string, 7) ?? '#5cb85c'
+
+  if (!name) return c.json({ error: 'name is required' }, 400)
+  if (!slug) return c.json({ error: 'slug is required' }, 400)
+  if (!validSlug(slug)) {
+    return c.json({ error: 'Invalid slug. Use 3-50 lowercase letters, numbers, and hyphens.' }, 400)
+  }
+  if (!password || password.length < 6) {
+    return c.json({ error: 'Password must be at least 6 characters' }, 400)
+  }
+
+  const id = crypto.randomUUID()
+  const passwordHash = await hashPassword(password)
+
+  try {
+    await c.env.DB.prepare(
+      `INSERT INTO tenants (id, slug, name, phone, email, url,
+         location_county, location_state, location_service_area,
+         color_primary, color_secondary, color_accent, password_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      id, slug, name, phone, email, url,
+      locationCounty, locationState, locationServiceArea,
+      colorPrimary, colorSecondary, colorAccent, passwordHash,
+    ).run()
+
+    const adminToken = await generateToken(id, true, c.env)
+    return c.json({ success: true, tenant: { id, slug, name }, admin_token: adminToken }, 201)
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : String(e)
+    if (errMsg.includes('UNIQUE constraint failed') || errMsg.includes('tenants.slug')) {
+      return c.json({ error: 'Slug already taken' }, 409)
+    }
+    return dbError(c, 'platform/signup', 'DB error', e)
+  }
+})
+
+platform.post('/platform/setup/:slug', async (c) => {
+  const slug = c.req.param('slug')
+
+  // Accept either a Bearer token (legacy admin password flow) or the
+  // magic-link session cookie (the standard path for tenant operators).
+  // Without the cookie fallback, every cookie-authed publish failed with
+  // 401 because Authorization wasn't set — silently breaking the editor
+  // for any tenant signed in via magic link.
+  const authHeader = c.req.header('Authorization')
+  let verified: { tenantId: string; isAdmin: boolean } | null = null
+  if (authHeader?.startsWith('Bearer ')) {
+    verified = await verifyToken(authHeader.slice(7), c.env)
+  }
+  if (!verified) {
+    verified = await resolveSession(c.req.raw, tenantCookiePrefix(slug), c.env)
+  }
+  if (!verified?.isAdmin) return c.json({ error: 'Unauthorized' }, 401)
+
+  const tenant = await loadTenantBySlug(c.env, slug)
+  if (!tenant) return c.json({ error: 'Tenant not found' }, 404)
+  if (verified.tenantId !== tenant.id) return c.json({ error: 'Unauthorized' }, 401)
+
+  const contentType = c.req.header('Content-Type') ?? ''
+
+  if (contentType.includes('multipart/form-data')) {
+    const formData = await c.req.formData()
+    const results: Record<string, unknown> = {}
+
+    const logoRaw = formData.get('logo')
+    const logo = logoRaw && typeof logoRaw !== 'string' ? logoRaw as unknown as File : null
+    if (logo) {
+      if (logo.size > MAX_LOGO_SIZE) return c.json({ error: 'Logo too large (max 2MB)' }, 413)
+      const ext = logo.name.split('.').pop()?.toLowerCase() ?? 'png'
+      if (!ALLOWED_IMAGE_EXTS.has(ext)) return c.json({ error: `Invalid logo format. Allowed: ${[...ALLOWED_IMAGE_EXTS].join(', ')}` }, 400)
+      // P1-18: key on tenant.id, not slug — slug is a display alias and
+      // could be renamed/reused; tenant_id is immutable identity.
+      const r2Key = `tenants/${tenant.id}/logo.${ext}`
+      await c.env.R2.put(r2Key, logo.stream(), {
+        httpMetadata: { contentType: safeContentType(ext) },
+      })
+      await c.env.DB.prepare("UPDATE tenants SET logo_r2_key = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(r2Key, tenant.id).run()
+      results.logo = { key: r2Key, url: `/assets/${r2Key}` }
+    }
+
+    const docsRaw = formData.getAll('docs')
+    const indexedDocs: string[] = []
+    for (const docRaw of docsRaw) {
+      if (typeof docRaw === 'string') continue
+      const doc = docRaw as unknown as File
+      if (doc.size > MAX_DOC_SIZE) continue
+      if (indexedDocs.length >= MAX_DOC_COUNT) break
+
+      const safeName = sanitizeFilename(doc.name)
+      // P1-18: tenant_id-keyed R2 path + Vectorize ID prefix (see logo above).
+      const r2Key = `tenants/${tenant.id}/docs/${safeName}`
+      const content = await doc.text()
+      await c.env.R2.put(r2Key, content, {
+        httpMetadata: { contentType: doc.type || 'text/plain' },
+      })
+
+      try {
+        const chunks = chunkText(content, 512)
+        for (let i = 0; i < chunks.length; i++) {
+          const embResult = await c.env.AI.run('@cf/baai/bge-base-en-v1.5', { text: chunks[i] }) as { data: number[][] }
+          await c.env.VECTORIZE.upsert([{
+            // P1-18: ID prefixed with tenant.id so two tenants' chunks of
+            // the same filename never collide; the metadata.tenant_id is the
+            // query-time filter, but the ID itself also disambiguates so
+            // re-indexing one tenant doesn't overwrite another's vectors.
+            id: `${tenant.id}-${safeName}-${i}`,
+            values: embResult.data[0],
+            metadata: { text: chunks[i], source: safeName, tenant_id: tenant.id },
+          }])
+        }
+        indexedDocs.push(safeName)
+      } catch (e) {
+        console.error(`[setup] Failed to index doc ${doc.name}:`, e)
+      }
+    }
+    if (indexedDocs.length) results.docs = indexedDocs
+
+    invalidateTenantCache(slug)
+    return c.json({ success: true, ...results })
+  }
+
+  // JSON body: update tenant fields
+  let body: Record<string, unknown>
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+
+  const updates: string[] = []
+  const values: (string | number | null)[] = []
+
+  if (typeof body.custom_instruction === 'string') {
+    updates.push('custom_instruction = ?')
+    values.push(body.custom_instruction.slice(0, 10_000))
+  }
+  if (typeof body.phone === 'string') { updates.push('phone = ?'); values.push(clamp(body.phone, 32)) }
+  if (typeof body.email === 'string') { updates.push('email = ?'); values.push(clamp(body.email, 256)) }
+  if (typeof body.url === 'string') { updates.push('url = ?'); values.push(clamp(body.url, 512)) }
+  if (typeof body.location_county === 'string') { updates.push('location_county = ?'); values.push(clamp(body.location_county, 128)) }
+  if (typeof body.location_state === 'string') { updates.push('location_state = ?'); values.push(clamp(body.location_state, 64)) }
+  if (typeof body.location_service_area === 'string') { updates.push('location_service_area = ?'); values.push(clamp(body.location_service_area, 512)) }
+  if (typeof body.color_primary === 'string') { updates.push('color_primary = ?'); values.push(clamp(body.color_primary, 7)) }
+  if (typeof body.color_secondary === 'string') { updates.push('color_secondary = ?'); values.push(clamp(body.color_secondary, 7)) }
+  if (typeof body.color_accent === 'string') { updates.push('color_accent = ?'); values.push(clamp(body.color_accent, 7)) }
+  if (typeof body.widget_theme === 'object' && body.widget_theme !== null) {
+    updates.push('widget_theme = ?')
+    values.push(JSON.stringify(body.widget_theme))
+  }
+  if (typeof body.widget_custom_css === 'string' || body.widget_custom_css === null) {
+    updates.push('widget_custom_css = ?')
+    // Sanitize before storage (audit P1-21). This is the second write path
+    // for widget_custom_css — agent.ts:update_custom_css is the other.
+    // Both must call sanitizeCustomCss or operator-authored CSS could
+    // smuggle url() exfil, @import chains, expression(), or </style>
+    // angle-bracket HTML injection through. Null bypasses sanitization
+    // (used to clear the field).
+    const raw = body.widget_custom_css as string | null
+    values.push(raw === null ? null : sanitizeCustomCss(raw).css)
+  }
+  if (body.widget_published === true) {
+    // Both fields parameterized. The previous shape mixed a literal
+    // `onboarded = 1` fragment with a values.push(1), leaving the bind
+    // count one ahead of the ? count and causing D1 to reject the query
+    // with "Wrong number of parameter bindings" — silently breaking
+    // first-publish for every tenant.
+    updates.push('widget_published_at = ?')
+    values.push(new Date().toISOString())
+    updates.push('onboarded = ?')
+    values.push(1)
+  }
+  if (typeof body.org_config === 'object' && body.org_config !== null) {
+    updates.push('org_config = ?')
+    values.push(JSON.stringify(body.org_config))
+  }
+  if (typeof body.bot_overrides === 'object' && body.bot_overrides !== null) {
+    updates.push('bot_overrides = ?')
+    values.push(JSON.stringify(body.bot_overrides))
+  }
+  if (typeof body.report_recipients === 'string' || body.report_recipients === null) {
+    const raw = (body.report_recipients ?? '') as string
+    const cleaned = raw
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+      .join(',')
+    updates.push('report_recipients = ?')
+    values.push(cleaned ? clamp(cleaned, 1024) : null)
+  }
+  if (typeof body.daily_reports_enabled === 'boolean') {
+    updates.push('daily_reports_enabled = ?')
+    values.push(body.daily_reports_enabled ? 1 : 0)
+  }
+
+  // House rules — append-only operator-pinned text. Always overwrites.
+  // 10000-char cap matches custom_instruction. Raised from 5000 alongside
+  // migration 0030 (Lock-1) so operators migrating off the lock flag don't
+  // lose hand-edited prompt content.
+  if (typeof body.house_rules === 'string' || body.house_rules === null) {
+    updates.push('house_rules = ?')
+    values.push((body.house_rules as string | null)?.slice(0, 10000) ?? null)
+  }
+
+  // Lock flag: when set true, custom_instruction edits are treated as raw
+  // operator-edited text — species_config / org_config changes will NOT
+  // recompile and overwrite. Setting back to false re-enables auto-compile
+  // on the next config change.
+  if (typeof body.custom_instruction_locked === 'boolean') {
+    updates.push('custom_instruction_locked = ?')
+    values.push(body.custom_instruction_locked ? 1 : 0)
+    updates.push('custom_instruction_locked_at = ?')
+    values.push(body.custom_instruction_locked ? new Date().toISOString() : null)
+  }
+
+  // If structured KB fields OR house_rules changed, recompile —
+  // unless the operator has locked custom_instruction.
+  const fieldChangedThatTriggersRecompile = body.org_config || body.bot_overrides || body.house_rules !== undefined
+  const explicitlyEditingRawPrompt = typeof body.custom_instruction === 'string'
+  if (fieldChangedThatTriggersRecompile && !explicitlyEditingRawPrompt) {
+    const fresh = await loadTenantById(c.env.DB, tenant.id)
+    if (fresh) {
+      // If the operator is currently writing custom_instruction_locked=true
+      // in this same call, respect it (use the new value, not the stale row).
+      const lockedNow = typeof body.custom_instruction_locked === 'boolean'
+        ? body.custom_instruction_locked
+        : fresh.custom_instruction_locked === 1
+      if (!lockedNow) {
+        const oc = body.org_config || (parseOrgConfig(fresh.org_config))
+        const bo = body.bot_overrides || (parseOrgConfig<Record<string, unknown>>(fresh.bot_overrides))
+        const houseRules = (typeof body.house_rules === 'string' ? body.house_rules : fresh.house_rules) || ''
+        const baseCompiled = compileInstruction(fresh, oc, bo)
+        const compiled = (baseCompiled + (houseRules.trim() ? `\n\n## House Rules (operator-defined)\n${houseRules.trim()}` : '')).trim()
+        if (compiled) {
+          updates.push('custom_instruction = ?')
+          values.push(compiled.slice(0, 10_000))
+        }
+      }
+    }
+  }
+
+  if (updates.length) {
+    updates.push("updated_at = datetime('now')")
+    try {
+      await c.env.DB.prepare(`UPDATE tenants SET ${updates.join(', ')} WHERE id = ?`)
+        .bind(...values, tenant.id).run()
+      invalidateTenantCache(slug)
+    } catch (e) {
+      // Log the technical detail to Workers observability — operators don't
+      // see it but on-call does. Client receives a generic "couldn't save"
+      // so internal SQL/binding errors never leak into the admin UI.
+      console.error('[platform/setup] D1 UPDATE failed:', e, {
+        slug,
+        update_count: updates.length,
+        // Don't log values verbatim (may contain prompt content); log shape only.
+        update_keys: updates.map(u => u.split(' = ')[0]),
+        published_flag: body.widget_published === true,
+      })
+      return c.json({ error: 'Couldn’t save your changes. Try again in a moment — if this keeps happening, contact support.' }, 500)
+    }
+  }
+
+  return c.json({ success: true })
+})
+
+platform.get('/platform/dashboard', async (c) => {
+  // Auth is enforced by the /platform/* middleware in index.ts.
+
+  try {
+    const { results: tenants } = await c.env.DB.prepare(`
+      SELECT t.id, t.slug, t.name, t.email, t.created_at,
+        (SELECT COUNT(DISTINCT session_id) FROM messages WHERE tenant_id = t.id AND message_type = 'chat') AS session_count,
+        (SELECT COUNT(*) FROM messages WHERE tenant_id = t.id AND message_type = 'chat') AS message_count
+      FROM tenants t ORDER BY t.created_at DESC
+    `).all()
+
+    const thirtyDaysAgo = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10)
+    const { results: usage } = await c.env.DB.prepare(`
+      SELECT tenant_id, SUM(prompt_tokens) as prompt_tokens, SUM(completion_tokens) as completion_tokens,
+             SUM(request_count) as request_count
+      FROM usage_log WHERE date >= ?
+      GROUP BY tenant_id
+    `).bind(thirtyDaysAgo).all()
+
+    const usageMap = new Map(usage.map(u => [u.tenant_id, u]))
+
+    return c.json({
+      tenants: tenants.map(t => ({
+        ...t,
+        usage_30d: usageMap.get(t.id as string) ?? { prompt_tokens: 0, completion_tokens: 0, request_count: 0 },
+      })),
+    })
+  } catch (e) {
+    return dbError(c, 'platform/dashboard', 'DB error', e)
+  }
+})
+
+platform.get('/platform/applications', async (c) => {
+  // Auth is enforced by the /platform/* middleware in index.ts.
+
+  const status = c.req.query('status') ?? 'pending'
+  try {
+    const { results } = await c.env.DB.prepare(
+      'SELECT * FROM applications WHERE status = ? ORDER BY created_at DESC',
+    ).bind(status).all()
+    return c.json({ applications: results })
+  } catch (e) {
+    return dbError(c, 'platform/applications', 'DB error', e)
+  }
+})
+
+platform.post('/platform/applications/:id/approve', async (c) => {
+  // Auth is enforced by the /platform/* middleware in index.ts.
+
+  const appId = c.req.param('id')
+
+  let body: { slug?: string; password?: string } = {}
+  try { body = await c.req.json() } catch { /* optional body */ }
+
+  try {
+    const application = await c.env.DB.prepare(
+      'SELECT * FROM applications WHERE id = ?',
+    ).bind(appId).first<Record<string, string>>()
+    if (!application) return c.json({ error: 'Application not found' }, 404)
+    if (application.status !== 'pending') return c.json({ error: 'Application already processed' }, 400)
+
+    const slug = (typeof body.slug === 'string' && body.slug)
+      ? body.slug.toLowerCase().trim()
+      : application.org_name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '').slice(0, 50)
+
+    if (!validSlug(slug)) return c.json({ error: `Invalid slug: ${slug}` }, 400)
+
+    const password = (typeof body.password === 'string' && body.password.length >= 6)
+      ? body.password
+      : [...crypto.getRandomValues(new Uint8Array(12))].map(b => b.toString(36).slice(-1)).join('')
+
+    const tenantId = crypto.randomUUID()
+    const passwordHash = await hashPassword(password)
+
+    await c.env.DB.prepare(
+      `INSERT INTO tenants (id, slug, name, phone, email, url,
+         location_county, location_state, location_service_area,
+         hosting_domain, password_hash)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    ).bind(
+      tenantId, slug, application.org_name,
+      application.contact_phone, application.contact_email,
+      application.website,
+      application.location_county, application.location_state,
+      application.service_area, application.hosting_domain,
+      passwordHash,
+    ).run()
+
+    if (application.hosting_domain) {
+      await c.env.DB.prepare(
+        'INSERT OR IGNORE INTO allowed_domains (tenant_id, domain) VALUES (?, ?)',
+      ).bind(tenantId, application.hosting_domain).run()
+    }
+
+    await c.env.DB.prepare(
+      "UPDATE applications SET status = 'approved', tenant_id = ?, reviewed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
+    ).bind(tenantId, appId).run()
+
+    // Audit ralph-2 H6: bake the contact email into the v2 token so the
+    // first sign-in already has email identity, not a v1 fallback that
+    // would require re-auth.
+    const adminToken = await generateToken(tenantId, true, c.env, application.contact_email)
+
+    return c.json({
+      success: true,
+      tenant: { id: tenantId, slug, name: application.org_name },
+      password,
+      admin_token: adminToken,
+      contact_email: application.contact_email,
+    })
+  } catch (e: unknown) {
+    const errMsg = e instanceof Error ? e.message : String(e)
+    if (errMsg.includes('UNIQUE constraint failed') && errMsg.includes('tenants.slug')) {
+      return c.json({ error: 'Slug already taken — provide a different slug' }, 409)
+    }
+    return dbError(c, 'platform/approve', 'DB error', e)
+  }
+})
+
+platform.post('/platform/applications/:id/reject', async (c) => {
+  // Auth is enforced by the /platform/* middleware in index.ts.
+
+  const appId = c.req.param('id')
+
+  let body: { notes?: string } = {}
+  try { body = await c.req.json() } catch { /* optional body */ }
+
+  try {
+    const result = await c.env.DB.prepare(
+      "UPDATE applications SET status = 'rejected', notes = ?, reviewed_at = datetime('now'), updated_at = datetime('now') WHERE id = ? AND status = 'pending'",
+    ).bind(clamp(body.notes as string, 1000), appId).run()
+
+    if (result.meta.changes === 0) return c.json({ error: 'Application not found or already processed' }, 404)
+    return c.json({ success: true })
+  } catch (e) {
+    return dbError(c, 'platform/reject', 'DB error', e)
+  }
+})
+
+export default platform

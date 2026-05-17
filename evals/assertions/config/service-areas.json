@@ -1,0 +1,53 @@
+{
+  "marinCounty": [
+    "san rafael",
+    "novato",
+    "mill valley",
+    "sausalito",
+    "tiburon",
+    "marin",
+    "fairfax",
+    "ross",
+    "san anselmo",
+    "larkspur",
+    "corte madera"
+  ],
+  "outsideAreas": {
+    "san francisco": {
+      "alternative": "Peninsula Humane Society",
+      "phone": "650-340-7022"
+    },
+    "half moon bay": {
+      "alternative": "Peninsula Humane Society",
+      "phone": "650-340-7022"
+    },
+    "san mateo": {
+      "alternative": "Peninsula Humane Society",
+      "phone": "650-340-7022"
+    },
+    "pacifica": {
+      "alternative": "Peninsula Humane Society",
+      "phone": "650-340-7022"
+    },
+    "daly city": {
+      "alternative": "Peninsula Humane Society",
+      "phone": "650-340-7022"
+    },
+    "sacramento": {
+      "alternative": "California Wildlife Hotline",
+      "phone": null
+    },
+    "oakland": {
+      "alternative": "local wildlife rehabilitator",
+      "phone": null
+    },
+    "berkeley": {
+      "alternative": "local wildlife rehabilitator",
+      "phone": null
+    },
+    "richmond": {
+      "alternative": "local wildlife rehabilitator",
+      "phone": null
+    }
+  }
+}

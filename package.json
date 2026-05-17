@@ -1,0 +1,24 @@
+{
+  "name": "rescue-bot",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "Open-source AI-powered wildlife rescue chatbot platform. The engine behind WildCare Solutions; any rehab org can deploy their own instance.",
+  "private": true,
+  "scripts": {
+    "build": "cd web && npm run build",
+    "eval": "make eval",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "e2e": "playwright test",
+    "e2e:ui": "playwright test --ui"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@playwright/test": "^1.59.1",
+    "eslint": "^10.2.1"
+  },
+  "overrides": {
+    "@anthropic-ai/sdk": "^0.92.0",
+    "uuid": "^14.0.0"
+  }
+}

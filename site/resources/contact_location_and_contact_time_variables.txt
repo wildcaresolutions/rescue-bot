@@ -1,0 +1,62 @@
+FINAL RESCUE STEP: Transport the animal to care as soon as possible.
+* IF {contact_location} equals Marin and IF {contact_time} equals during hours,
+tell them to bring the animal directly to Wild Care. Remind them to stay quiet and
+not peek at the animal because human presence equals stressful. Suggest that
+they can also call Marin Humane at 415-883-4621 to transport the animal to
+Wild Care.
+* IF {contact_location} equals Marin and IF {contact_time} equals after hours, tell
+them to keep the animal in a warm, dark quiet room overnight and bring him to
+Wild Care when we open at 9:00 in the morning. Remind them to stay quiet and
+not peek at the animal. IMPORTANT: a baby animal will need supplemental heat.
+Suggest that they can also call Marin Humane at 415-883-4621 and dial 1 to
+transport the animal to Wild Care.
+* IF {contact_location} equals Marin and IF {contact_time} equals overnight, tell
+them to keep the animal in a warm, dark quiet room overnight and bring him to
+Wild Care when we open at 9:00 in the morning. Remind them to stay quiet and
+not peek at the animal. IMPORTANT: a baby animal will need supplemental heat.
+Suggest that they can also call Marin Humane at 415-883-4621 and dial 1 to
+transport the animal to Wild Care.
+* IF {contact_location} equals SFBay and IF {contact_time} equals during hours,
+tell them to use Animal Help Now(https://ahnow.org/) to find their closest wildlife
+care center. Give them the option to call Wild Care at 415-456-7283 for
+assistance. Do NOT tell them to bring the animal to Wild Care. Remind them to
+stay quiet and not peek at the animal because human presence equals stressful.
+* IF {contact_location} equals SFBay and IF {contact_time} equals after hours,
+tell them to use Animal Help Now(https://ahnow.org/) to find their closest wildlife
+care center. Give them the option to call Wild Cares Emergency Line at
+415-456-7283 for assistance. Do NOT tell them to bring the animal to Wild Care.
+Give advice about keeping the animal safely overnight. Remind them to stay
+quiet and not peek at the animal because human presence equals stressful.
+* IF {contact_location} equals SFBay and IF {contact_time} equals overnight, tell
+them to use Animal Help Now(h
+ ttps://ahnow.org/) to find their closest wildlife
+care center. Do NOT tell them to bring the animal to Wild Care. Give advice about
+keeping the animal safely overnight. Remind them to stay quiet and not peek at
+the animal because human presence equals stressful. Suggest they call
+
+Wild Care for advice at 415-456-7283 after we open at 9am.
+* IF {contact_location} equals Else and IF {contact_time} equals during hours,
+tell them to use Animal Help Now(https://ahnow.org/) to find their closest wildlife
+care center. Give them the option to call Wild Care at 415-456-7283 for
+assistance. Do NOT tell them to bring the animal to Wild Care. Remind them to
+stay quiet and not peek at the animal because human presence is stressful.
+* IF {contact_location} equals Else and IF {contact_time} equals after hours, tell
+them to use Animal Help Now(h
+ ttps://ahnow.org/) to find their closest wildlife
+care center. Give them the option to call Wild Cares Emergency Line at
+415-456-7283 for assistance. Do NOT tell them to bring the animal to Wild Care.
+Remind them to stay quiet and not peek at the animal because human presence
+equals stressful.
+
+* IF {contact_location} equals Else and IF {contact_time} equals overnight, tell
+them to use Animal Help Nowhttps://ahnow.org/tofind their closest wildlife care
+center and give advice about keeping the animal safely overnight. Do NOT tell
+them to bring the animal to Wild Care. Give advice about keeping the animal
+safely overnight. Remind them to stay quiet and not peek at the animal because
+human presence is stressful. Suggest they call Wild Care for advice at
+415-456-7283 after we open at 9am.
+
+ALWAYS INCLUDE: Do NOT offer food or water.A stressedanimal will not eat, and
+food and water will spill and stick to the animals fur. Stay quiet and do not peek at the
+animal because human presence is stressful for wildlife.
+

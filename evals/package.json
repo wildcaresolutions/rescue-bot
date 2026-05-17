@@ -1,0 +1,18 @@
+{
+  "name": "rescue-bot-evals",
+  "version": "1.0.0",
+  "description": "Evaluation tools for rescue-bot",
+  "type": "module",
+  "dependencies": {
+    "dotenv": "^16.3.1",
+    "promptfoo": "^0.121.9"
+  },
+  "overrides": {
+    "@anthropic-ai/sdk": "^0.92.0",
+    "uuid": "^14.0.0",
+    "hono": ">=4.12.18",
+    "fast-uri": ">=3.1.2",
+    "fast-xml-builder": ">=1.1.7",
+    "ip-address": ">=10.1.1"
+  }
+}

@@ -1,0 +1,771 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>WildCare Solutions — California's wildlife rehabs, sharing what works.</title>
+  <meta name="description" content="WildCare Solutions. A coalition of California wildlife rehabilitation organizations sharing the AI tools, protocols, and expertise it takes to answer the hotline correctly. Hosted free for community members.">
+
+  <!-- Cloudflare Web Analytics — page-view-level attribution. Placeholder token below;
+       replace with the real CF Web Analytics beacon token once provisioned in CF dash. -->
+  <!-- <script defer src='https://static.cloudflareinsights.com/beacon.min.js'
+          data-cf-beacon='{"token": "REPLACE_WITH_REAL_CF_ANALYTICS_TOKEN"}'></script> -->
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600;1,9..40,400&family=Instrument+Serif&family=Geist+Mono:wght@400&display=swap" rel="stylesheet">
+
+  <!-- Critical-path inline CSS — keeps page legible if /styles/field-notes.css fails to load. -->
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --color-umber: #3D2B1F; --color-parchment: #F6F1EB; --color-sage: #6B7F5E;
+      --color-storm: #8B7E74; --color-field-white: #FDFCFA; --color-dried-grass: #D4C9B5;
+      --font-display: 'Instrument Serif', serif; --font-body: 'DM Sans', sans-serif;
+    }
+    body {
+      font-family: var(--font-body); color: var(--color-umber);
+      line-height: 1.6; background: var(--color-parchment);
+      -webkit-font-smoothing: antialiased;
+    }
+    .nav { position: fixed; top: 0; left: 0; right: 0; padding: 16px 32px;
+           background: rgba(246, 241, 235, 0.92); border-bottom: 1px solid var(--color-dried-grass); z-index: 100; }
+    .hero { padding: 140px 32px 80px; text-align: center; max-width: 1100px; margin: 0 auto; }
+    .hero h1 { font-family: var(--font-display); font-size: 3rem; line-height: 1.12; max-width: 880px; margin: 0 auto 24px; }
+    .hero-sub { color: var(--color-storm); max-width: 640px; margin: 0 auto 40px; }
+  </style>
+  <link rel="stylesheet" href="/styles/field-notes.css">
+</head>
+<body>
+
+  <!-- ── Nav ─────────────────────────────────────────────────────────── -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">WildCare Solutions</a>
+      <div class="nav-links">
+        <a href="#network" class="nav-link">The network</a>
+        <a href="#platform" class="nav-link">The platform</a>
+        <a href="/find" class="nav-link">Find a rehab</a>
+        <a href="#apply" class="nav-cta">Apply to join</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Hero (coalition-first) ──────────────────────────────────────── -->
+  <header class="hero">
+    <h1>California's wildlife rehabs, sharing what works.</h1>
+    <p class="hero-sub">A coalition of rehabilitation organizations using one toolkit, one set of protocols, one way to answer the hotline. Built by WildCare. Hosted free for community members.</p>
+    <div class="hero-cta-row">
+      <a href="#apply" class="hero-cta">Apply to join</a>
+      <a href="#tool" class="hero-cta-secondary">See the tool</a>
+    </div>
+
+    <!-- VARIANT A: ED endorsement quote.
+         PLACEHOLDER QUOTE attributed to Ellyn Weisel (WildCare's ED) — sounds like an
+         ED talking to peer EDs. Confirm and replace with her actual words on the
+         30-min onboarding call before launch. -->
+    <div class="hero-endorsement">
+      <p class="hero-endorsement-quote">"After fifty years of rescue calls, I know two things: every wildlife rehab needs the same playbook, and no rehab has the time to write it. We wrote it once. Now we're sharing it with every center that wants it."</p>
+      <p class="hero-endorsement-attribution"><strong>Ellyn Weisel</strong>, Executive Director, WildCare</p>
+    </div>
+
+    <!-- VARIANT B: attribution-only fallback. Uncomment if no quote by Friday EOD.
+    <p class="hero-attribution">WildCare — serving Marin County since 1974. Joined by [Founding Partner 2], [Founding Partner 3], and [Founding Partner 4].</p>
+    -->
+  </header>
+
+  <!-- ── Founding partners logo strip ────────────────────────────────── -->
+  <section class="partners-strip">
+    <div class="partners-strip-inner">
+      <p class="partners-strip-label">Founding partners</p>
+      <div class="partners-strip-logos">
+
+        <!-- WildCare — real anchor. Official logo (resized from discoverwildcare.org's
+             12098x1755 source to 600x~87px PNG). -->
+        <a class="partner-logo" href="https://discoverwildcare.org" target="_blank" rel="noopener">
+          <span class="partner-logo-mark">
+            <img src="/img/wildcare-logo.png" alt="WildCare" />
+          </span>
+          <span class="partner-logo-name" style="font-size: 0.7rem; color: var(--color-storm); text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--font-body);">Marin County · since 1974</span>
+        </a>
+
+        <!-- PLACEHOLDER PARTNER 2 — replace with real org when confirmed by WildCare outreach. -->
+        <span class="partner-logo">
+          <span class="partner-logo-mark">
+            <span style="font-family: var(--font-display); font-size: 1.4rem; color: var(--color-storm);">[Founding Partner 2]</span>
+          </span>
+          <span class="partner-logo-name" style="font-size: 0.7rem; color: var(--color-storm); text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--font-body);">[city] · [specialty]</span>
+        </span>
+
+        <!-- PLACEHOLDER PARTNER 3 — replace with real org when confirmed by WildCare outreach. -->
+        <span class="partner-logo">
+          <span class="partner-logo-mark">
+            <span style="font-family: var(--font-display); font-size: 1.4rem; color: var(--color-storm);">[Founding Partner 3]</span>
+          </span>
+          <span class="partner-logo-name" style="font-size: 0.7rem; color: var(--color-storm); text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--font-body);">[city] · [specialty]</span>
+        </span>
+
+        <!-- PLACEHOLDER PARTNER 4 — replace with real org when confirmed by WildCare outreach. -->
+        <span class="partner-logo">
+          <span class="partner-logo-mark">
+            <span style="font-family: var(--font-display); font-size: 1.4rem; color: var(--color-storm);">[Founding Partner 4]</span>
+          </span>
+          <span class="partner-logo-name" style="font-size: 0.7rem; color: var(--color-storm); text-transform: uppercase; letter-spacing: 0.06em; font-family: var(--font-body);">[city] · [specialty]</span>
+        </span>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── The Network ─────────────────────────────────────────────────── -->
+  <section class="network" id="network">
+    <div class="network-text">
+      <p class="section-label">The Network</p>
+      <h2 class="section-title">A coalition, not a SaaS.</h2>
+      <p>WildCare Solutions is a coalition of California wildlife rehabilitation organizations sharing one thing: <strong>the knowledge it takes to answer the phone correctly when someone calls about an injured animal at 11pm.</strong></p>
+      <p>Each member brings their own expertise to the network. The AI assistant is the delivery mechanism. The protocols, the field experience, the species knowledge — all of that comes from people who handle real wildlife emergencies every day.</p>
+      <ul class="network-list">
+        <!-- WildCare — real anchor. Specialty represents WildCare's core areas. -->
+        <li>
+          <span class="org">WildCare</span>
+          <span class="meta">· Marin County · 4,000+ cases/yr · since 1974</span>
+          <span class="specialty">▸ All species (anchor)</span>
+        </li>
+        <!-- PLACEHOLDER — confirm with WildCare's Monday Founding Partner outreach. -->
+        <li>
+          <span class="org">[Founding Partner 2]</span>
+          <span class="meta">· [city, county]</span>
+          <span class="specialty">▸ [specialty TBD]</span>
+        </li>
+        <li>
+          <span class="org">[Founding Partner 3]</span>
+          <span class="meta">· [city, county]</span>
+          <span class="specialty">▸ [specialty TBD]</span>
+        </li>
+        <li>
+          <span class="org">[Founding Partner 4]</span>
+          <span class="meta">· [city, county]</span>
+          <span class="specialty">▸ [specialty TBD]</span>
+        </li>
+      </ul>
+    </div>
+    <div class="network-visual">
+      <!-- Botanical SVG decoration -->
+      <svg viewBox="0 0 200 280" fill="none" stroke="var(--color-sage)" stroke-width="1.2" aria-hidden="true">
+        <path d="M100 270 L100 50" />
+        <path d="M100 60 Q60 30 30 50 Q50 65 70 60" />
+        <path d="M100 90 Q140 60 170 80 Q150 95 130 90" />
+        <path d="M100 120 Q60 90 30 110 Q50 125 70 120" />
+        <path d="M100 150 Q140 120 170 140 Q150 155 130 150" />
+        <path d="M100 180 Q60 150 30 170 Q50 185 70 180" />
+        <circle cx="100" cy="50" r="12" fill="var(--color-sage)" opacity="0.4" />
+      </svg>
+    </div>
+  </section>
+
+  <!-- ── Species Expertise Grid ──────────────────────────────────────── -->
+  <section class="species" id="species">
+    <div class="species-header">
+      <p class="section-label">Species Expertise</p>
+      <h2 class="section-title">19 species. Real protocols. Distributed expertise.</h2>
+      <p class="section-subtitle">Each guide was written by rehabilitation staff. Specialty tags below show which founding partner leads the protocol for that species. Network protocols cover the rest.</p>
+    </div>
+    <div class="species-grid">
+      <!-- 19 species tiles. Specialty tags are PRELIMINARY — confirmed within 7 days of launch. -->
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M20 8 Q12 16 14 26 Q20 30 26 26 Q28 16 20 8 M14 26 Q10 32 6 32 M26 26 Q30 32 34 32" /></svg>
+        <h4>Songbird</h4>
+        <p>Most common rescue call</p>
+        <span class="expertise">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M20 4 L18 12 L12 14 Q12 22 16 26 L20 30 L24 26 Q28 22 28 14 L22 12 Z M20 16 Q20 22 22 24" /></svg>
+        <h4>Squirrel</h4>
+        <p>Tree-dwelling small mammal</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><circle cx="20" cy="22" r="8" /><circle cx="20" cy="22" r="3" fill="var(--color-sage)" /><path d="M14 18 L8 14 M26 18 L32 14" /></svg>
+        <h4>Raccoon</h4>
+        <p>Urban wildlife</p>
+        <span class="expertise">▸ [Partner — TBD]</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M20 6 Q14 14 16 24 Q20 30 24 24 Q26 14 20 6 M16 24 L12 32 M24 24 L28 32" /></svg>
+        <h4>Opossum</h4>
+        <p>Marsupial · only one in NA</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M10 10 Q14 6 20 8 L30 12 Q34 18 30 24 L20 26 Q14 24 10 28 Z" /></svg>
+        <h4>Bat</h4>
+        <p>Rabies-vector species</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M20 6 L10 18 L16 18 L14 30 L20 26 L26 30 L24 18 L30 18 Z" /></svg>
+        <h4>Raptor</h4>
+        <p>Hawks · owls · falcons</p>
+        <span class="expertise">▸ [Partner — TBD]</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M20 8 L20 26 M14 18 Q20 14 26 18 M16 22 Q20 20 24 22 M20 28 L18 32 L22 32 Z" /></svg>
+        <h4>Hummingbird</h4>
+        <p>Tiny · high-metabolism</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M8 30 L14 14 L20 24 L26 14 L32 30 M14 20 L14 30 M26 20 L26 30" /></svg>
+        <h4>Deer / Fawn</h4>
+        <p>Often "rescued" unnecessarily</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M8 14 Q12 10 18 12 L32 14 L30 22 L18 24 Q14 22 8 26 Z M14 16 L14 22 M22 14 L22 22" /></svg>
+        <h4>Duck / Goose</h4>
+        <p>Waterfowl</p>
+        <span class="expertise">▸ [Partner — TBD]</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M20 6 Q12 8 10 16 L14 20 L10 28 L18 30 L22 26 L30 28 L26 20 L30 16 Q28 8 20 6 Z" /></svg>
+        <h4>Gull</h4>
+        <p>Coastal · scavenger</p>
+        <span class="expertise">▸ [Partner — TBD]</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M20 4 L20 28 M16 8 Q20 6 24 8 M14 16 L26 16 M12 24 L28 24 M16 32 L24 32" /></svg>
+        <h4>Heron / Egret</h4>
+        <p>Long-legged · wading</p>
+        <span class="expertise">▸ [Partner — TBD]</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M8 20 Q14 14 20 20 Q26 26 32 20 Q30 14 24 16 Q20 22 14 18 Q10 16 8 20 Z" /></svg>
+        <h4>Snake</h4>
+        <p>Native vs invasive triage</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M14 14 Q20 10 26 14 L30 22 L26 30 L20 28 L14 30 L10 22 Z M16 18 L20 18 M24 18 L28 18" /></svg>
+        <h4>Coyote</h4>
+        <p>Often misidentified</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M12 16 L20 8 L28 16 L30 28 L20 26 L10 28 Z M14 22 L18 22 M22 22 L26 22" /></svg>
+        <h4>Fox</h4>
+        <p>Mange · vehicle strikes</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M14 16 L20 10 L26 16 L24 28 Q20 32 16 28 Z M18 20 L18 22 M22 20 L22 22 M20 26 L20 30" /></svg>
+        <h4>Skunk</h4>
+        <p>Rabies-vector species</p>
+        <span class="expertise">▸ [Partner — TBD]</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M10 18 L20 8 L30 18 L28 26 Q20 30 12 26 Z M16 22 L16 24 M24 22 L24 24 M14 32 L26 32" /></svg>
+        <h4>Bobcat</h4>
+        <p>Native cat · territorial</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M10 14 L20 8 L30 14 L26 24 L20 26 L14 24 Z M18 18 L18 20 M22 18 L22 20 M18 30 L22 30" /></svg>
+        <h4>Raven / Crow</h4>
+        <p>Highly intelligent corvid</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><circle cx="20" cy="22" r="6" /><path d="M14 22 L8 18 M26 22 L32 18 M20 16 L18 8 M20 16 L22 8" /></svg>
+        <h4>Rodent</h4>
+        <p>Mice · rats · voles</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+      <div class="species-tile">
+        <svg viewBox="0 0 40 40"><path d="M8 20 Q14 14 20 18 Q26 22 32 18 M10 24 L14 30 M30 22 L28 30 M16 18 L18 12 M22 20 L24 12" /></svg>
+        <h4>Entangled animal</h4>
+        <p>Fishing line · netting</p>
+        <span class="expertise-network">▸ Network protocol</span>
+      </div>
+    </div>
+    <p class="species-footnote">Specialty tags are preliminary. Confirmed within 7 days of launch as founding partner replies arrive.</p>
+  </section>
+
+  <!-- ── The Tool (single bot demo) ──────────────────────────────────── -->
+  <section class="tool-section" id="tool">
+    <div class="tool-inner">
+      <div class="tool-header">
+        <p class="section-label">The Tool</p>
+        <h2 class="section-title">What your callers see at 11pm on a Saturday.</h2>
+        <p class="section-subtitle">A real conversation from the network. Anonymized for privacy. The bot gives immediate-action steps, asks the right clarifying questions, and escalates to a human when the call needs one.</p>
+      </div>
+
+      <div class="demo-widget">
+        <div class="demo-widget-header">Wildlife Rescue Assistant</div>
+        <div class="demo-widget-body">
+          <!-- PLACEHOLDER TRANSCRIPT — replace with real anonymized D1 session by Friday.
+               Pick one that demonstrates: immediate-action-first, species-specific knowledge,
+               clean escalation. Avoid: bot uncertainty, user frustration. See design doc Phase 4
+               redaction rules. -->
+          <div class="demo-msg demo-msg-user">
+            <div class="demo-bubble">there's a bat flying around my living room what do i do</div>
+          </div>
+          <div class="demo-msg demo-msg-bot">
+            <div class="demo-bubble">
+              Stay calm — here's what to do <strong>RIGHT NOW</strong>:<br><br>
+              1. Open all windows and exterior doors in the room<br>
+              2. Turn off lights inside, turn on outside lights<br>
+              3. Leave the room and close interior doors so the bat stays in one area<br>
+              4. Most bats fly out on their own within 15–30 min<br><br>
+              <strong>IMPORTANT:</strong> Do NOT touch the bat with bare hands. Bats can carry rabies.<br><br>
+              Did anyone in your household have direct contact with the bat (touched it, woke up with it in the room)?
+            </div>
+          </div>
+          <div class="demo-msg demo-msg-user">
+            <div class="demo-bubble">no nobody touched it. it just got in through a window</div>
+          </div>
+          <div class="demo-msg demo-msg-bot">
+            <div class="demo-bubble">
+              Good. No exposure means no rabies risk for the people. Let the bat fly out on its own. If it doesn't leave within 30 min, I can walk you through safe capture (gloves + a container). Want that?
+            </div>
+          </div>
+        </div>
+      </div>
+      <p class="demo-caption">Real transcript pending — the conversation above is a hand-written placeholder modeled on actual rescue protocols.</p>
+    </div>
+  </section>
+
+  <!-- ── The Platform (back-office upsell) ───────────────────────────── -->
+  <section class="platform" id="platform">
+    <div class="platform-inner">
+      <div class="platform-header">
+        <p class="section-label">What Your Team Gets</p>
+        <h2 class="section-title">More than a chatbot. A full ops platform.</h2>
+        <p class="section-subtitle">The widget answers your callers. The dashboard runs your operations — triage, reports, an AI copilot, and a live widget editor.</p>
+      </div>
+
+      <div class="platform-grid">
+
+        <!-- 1. Triage dashboard mockup ──────────────────────────────── -->
+        <div class="platform-feat">
+          <div class="mockup">
+            <div class="mockup-header">Today's calls · 3 active</div>
+            <div class="mockup-body">
+              <div class="mock-triage-row">
+                <div class="mock-triage-dot mock-triage-dot--red"></div>
+                <div class="mock-triage-content">
+                  <div class="title">"There's a bat in my attic"</div>
+                  <div class="meta">bat · rabies risk · escalation flagged</div>
+                </div>
+                <div class="mock-triage-time">2m ago</div>
+              </div>
+              <div class="mock-triage-row">
+                <div class="mock-triage-dot mock-triage-dot--yellow"></div>
+                <div class="mock-triage-content">
+                  <div class="title">"Hawk hit my window, alive but stunned"</div>
+                  <div class="meta">raptor · waiting on volunteer pickup</div>
+                </div>
+                <div class="mock-triage-time">18m ago</div>
+              </div>
+              <div class="mock-triage-row">
+                <div class="mock-triage-dot mock-triage-dot--gray"></div>
+                <div class="mock-triage-content">
+                  <div class="title">"Baby possum alone in my yard"</div>
+                  <div class="meta">opossum · info given · no action needed</div>
+                </div>
+                <div class="mock-triage-time">1h ago</div>
+              </div>
+            </div>
+          </div>
+          <div class="platform-feat-text">
+            <h3>Triage dashboard</h3>
+            <p>Every conversation, urgency-scored. See which calls need a callback and which the bot handled cleanly. Resolve action items in one click.</p>
+          </div>
+        </div>
+
+        <!-- 2. AI copilot chat mockup ─────────────────────────────── -->
+        <div class="platform-feat">
+          <div class="mockup">
+            <div class="mockup-header">Admin Copilot</div>
+            <div class="mockup-body">
+              <div class="mock-chat-msg user">
+                <div class="bubble">Add a coyote mange protocol from CDFW guidelines</div>
+              </div>
+              <div class="mock-chat-msg bot">
+                <div class="bubble">
+                  <span class="check">✓</span>Pulled CDFW Coyote Mange Treatment Guide<br>
+                  <span class="check">✓</span>Added to your knowledge base<br>
+                  <span class="check">✓</span>Updated 3 affected scenarios
+                  <br><span class="action">Preview before publishing →</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="platform-feat-text">
+            <h3>AI copilot for your dashboard</h3>
+            <p>"Make the widget green. Add an opossum protocol. Show me last week's after-hours calls." Talk to a Claude-powered assistant. It edits your config for you.</p>
+          </div>
+        </div>
+
+        <!-- 3. Weekly reports mockup ──────────────────────────────── -->
+        <div class="platform-feat">
+          <div class="mockup">
+            <div class="mockup-header">Weekly report · April 22–28</div>
+            <div class="mockup-body">
+              <div class="mock-report-stats">
+                <div><span class="stat-num">234</span> conversations this week</div>
+                <div><span class="stat-num">12</span> escalated to staff</div>
+                <div><span class="stat-num">3</span> action items unresolved</div>
+              </div>
+              <div class="mock-report-section-label">Top species</div>
+              <div class="mock-report-bars">
+                <div class="mock-report-bar-row">
+                  <span class="label">Songbird</span>
+                  <span class="bar" style="--pct: 72%"></span>
+                  <span class="pct">38%</span>
+                </div>
+                <div class="mock-report-bar-row">
+                  <span class="label">Bat</span>
+                  <span class="bar" style="--pct: 42%"></span>
+                  <span class="pct">22%</span>
+                </div>
+                <div class="mock-report-bar-row">
+                  <span class="label">Squirrel</span>
+                  <span class="bar" style="--pct: 26%"></span>
+                  <span class="pct">14%</span>
+                </div>
+                <div class="mock-report-bar-row">
+                  <span class="label">Hawk</span>
+                  <span class="bar" style="--pct: 14%"></span>
+                  <span class="pct">8%</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="platform-feat-text">
+            <h3>Weekly reports</h3>
+            <p>Email summaries to your whole team. What your community is asking, what's escalating, what changed week-over-week. Set the recipients and walk away.</p>
+          </div>
+        </div>
+
+        <!-- 4. Live widget preview mockup ─────────────────────────── -->
+        <div class="platform-feat">
+          <div class="mockup">
+            <div class="mockup-header">Widget editor · live preview</div>
+            <div class="mock-preview">
+              <div class="mock-preview-widget">
+                <div class="mock-preview-widget-header">Wildlife Help</div>
+                <div class="mock-preview-bubble">How can I help with wildlife today?</div>
+                <div class="mock-preview-input">Type your question…</div>
+              </div>
+              <div class="mock-preview-controls">
+                <div class="mock-control-row">
+                  <span class="label">Color</span>
+                  <span class="value"><span class="mock-color-swatch" style="background: #6B7F5E;"></span>#6B7F5E</span>
+                </div>
+                <div class="mock-control-row">
+                  <span class="label">Header text</span>
+                  <span class="value">Wildlife Help</span>
+                </div>
+                <div class="mock-control-row">
+                  <span class="label">Position</span>
+                  <span class="value">bottom-right</span>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="platform-feat-text">
+            <h3>Live widget preview</h3>
+            <p>Tweak colors, copy, button text, position on the page. See it live in a sandbox. Publish when it's right. No deploys, no engineering tickets.</p>
+          </div>
+        </div>
+
+        <!-- 5. Your hotline playbook (was: Knowledge base) ─────────── -->
+        <div class="platform-feat">
+          <div class="mockup">
+            <div class="mockup-header">Your playbook · 22 protocols</div>
+            <div class="mockup-body">
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--builtin">●</span>
+                <span class="mock-list-name">Bat</span>
+                <span class="mock-list-status">Built-in</span>
+              </div>
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--builtin">●</span>
+                <span class="mock-list-name">Songbird</span>
+                <span class="mock-list-status">Built-in</span>
+              </div>
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--override">✎</span>
+                <span class="mock-list-name">Coyote</span>
+                <span class="mock-list-status mock-list-status--override">Your version</span>
+              </div>
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--custom">+</span>
+                <span class="mock-list-name">Mountain lion <span class="new-badge">New</span></span>
+                <span class="mock-list-status">Custom</span>
+              </div>
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--builtin">●</span>
+                <span class="mock-list-name">Squirrel</span>
+                <span class="mock-list-status">Built-in</span>
+              </div>
+            </div>
+          </div>
+          <div class="platform-feat-text">
+            <h3>Your hotline playbook</h3>
+            <p>22 ready-made protocols for the species you actually see. Edit any of them with your local guidance. Add your own for species we haven't covered yet. The bot answers callers using your version.</p>
+          </div>
+        </div>
+
+        <!-- 6. Practice runs (was: Eval system) ────────────────────── -->
+        <div class="platform-feat">
+          <div class="mockup">
+            <div class="mockup-header">Practice runs · last published April 24</div>
+            <div class="mockup-body">
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--pass">✓</span>
+                <span class="mock-list-name">Bat in attic</span>
+                <span class="mock-list-status mock-list-status--pass">Passed</span>
+              </div>
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--pass">✓</span>
+                <span class="mock-list-name">Cat-caught songbird</span>
+                <span class="mock-list-status mock-list-status--pass">Passed</span>
+              </div>
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--pass">✓</span>
+                <span class="mock-list-name">Coyote with mange <span class="new-badge">New</span></span>
+                <span class="mock-list-status mock-list-status--pass">Passed</span>
+              </div>
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--review">⚠</span>
+                <span class="mock-list-name">Hawk window strike</span>
+                <span class="mock-list-status mock-list-status--review">Needs review</span>
+              </div>
+              <div class="mock-list-row">
+                <span class="mock-list-icon mock-list-icon--pass">✓</span>
+                <span class="mock-list-name">Baby possum alone</span>
+                <span class="mock-list-status mock-list-status--pass">Passed</span>
+              </div>
+            </div>
+          </div>
+          <div class="platform-feat-text">
+            <h3>Practice runs before you go live</h3>
+            <p>Try your bot against real wildlife scenarios in a sandbox. Catch wrong answers in practice instead of on the hotline. Every change you make gets re-tested automatically before publishing.</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ── How a Rehab Joins ───────────────────────────────────────────── -->
+  <section class="how" id="how">
+    <div class="how-header">
+      <p class="section-label">How to Join</p>
+      <h2 class="section-title">Three steps. About a week.</h2>
+    </div>
+    <div class="how-grid">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Apply</h3>
+        <p>Tell us about your org in one sentence. About a minute. WildCare's team reviews each application individually.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Onboarding call</h3>
+        <p>30-min call to configure your branded widget — your colors, your phone number, your local protocols. Same week you apply.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Embed and go live</h3>
+        <p>Paste one script tag on your website. Your branded bot is answering wildlife calls 24/7. Free for community members.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Apply form ──────────────────────────────────────────────────── -->
+  <section class="apply" id="apply">
+    <div class="apply-header">
+      <p class="section-label">Apply to Join</p>
+      <h2 class="section-title">Become a founding partner.</h2>
+      <p class="section-subtitle">Open to wildlife rehabilitation organizations. WildCare reviews each application; we'll be in touch within a week.</p>
+    </div>
+    <div class="card">
+      <form id="appForm">
+        <div class="field">
+          <label for="org_name">Organization name</label>
+          <input id="org_name" type="text" name="org_name" required placeholder="e.g. Marin Wildlife Center" data-1p-ignore autocomplete="off" data-lpignore="true">
+        </div>
+        <div class="field">
+          <label for="contact_name">Your name</label>
+          <input id="contact_name" type="text" name="contact_name" required placeholder="Jane Smith" data-1p-ignore autocomplete="off" data-lpignore="true">
+        </div>
+        <div class="field">
+          <label for="contact_email">Email</label>
+          <input id="contact_email" type="email" name="contact_email" required placeholder="jane@yourorg.org" data-1p-ignore autocomplete="off" data-lpignore="true">
+        </div>
+        <div class="field">
+          <label for="use_case">Tell us about your org in one sentence</label>
+          <textarea id="use_case" name="use_case" placeholder="e.g. Small wildlife rehab in Sonoma County, mostly waterfowl, 4 paid staff and 30 volunteers." data-1p-ignore data-lpignore="true"></textarea>
+        </div>
+
+        <!-- Hidden attribution fields. `source` identifies the page; `ref` captures the
+             ?ref= URL param (set by JS below). Persisted by /platform/apply via the
+             0024 migration so we can answer "which outreach channel produced this app?" -->
+        <input type="hidden" name="source" value="marketing-coalition-v1">
+        <input type="hidden" name="ref" id="ref_field" value="">
+
+        <!-- Turnstile widget mount. Submit button stays disabled until token captured. -->
+        <div id="turnstileMount" style="margin: 16px 0;"></div>
+        <button id="appSubmit" type="submit" class="submit-btn" disabled>Apply to join</button>
+        <p id="appError" class="form-error"></p>
+      </form>
+
+      <p class="directory-promise">
+        When you join, we'll list your org on the public wildlife rehab directory at
+        <strong><a href="/find">wildcaresolutions.org/find</a></strong> — free distribution
+        to people searching for help in your area.
+      </p>
+
+      <div id="appSuccess" class="success">
+        <div class="success-icon">✓</div>
+        <h3>Application received</h3>
+        <p>Thanks for applying. We'll be in touch within a week at <span id="appEmail"></span>.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ── Open Source footnote ────────────────────────────────────────── -->
+  <section class="oss">
+    <p>WildCare Solutions is open source — built on the <a href="https://github.com/wildcaresolutions/rescue-bot" target="_blank" rel="noopener">rescue-bot</a> engine. Cloudflare Workers, AGPL-3.0, runs for pennies. <a href="https://github.com/wildcaresolutions/rescue-bot" target="_blank" rel="noopener">Fork it on GitHub →</a></p>
+  </section>
+
+  <!-- ── Footer ──────────────────────────────────────────────────────── -->
+  <footer class="footer">
+    <p>WildCare Solutions</p>
+    <p>A community project · <a href="https://discoverwildcare.org" target="_blank" rel="noopener">discoverwildcare.org</a> · <a href="mailto:hello@wildcaresolutions.org">hello@wildcaresolutions.org</a></p>
+  </footer>
+
+  <!-- ── JS: ?ref= capture, Turnstile widget, form submission ────────── -->
+  <script>
+    // ── ?ref= URL param capture into hidden form field. ───────────────
+    (function captureRef() {
+      try {
+        const params = new URLSearchParams(window.location.search)
+        const ref = params.get('ref') || ''
+        if (ref) document.getElementById('ref_field').value = ref.slice(0, 128)
+      } catch (e) { /* graceful — no ref captured */ }
+    })()
+
+    // ── Turnstile widget integration. ─────────────────────────────────
+    // The submit button stays disabled until a Turnstile token is captured.
+    // /api/config returns the site key so we don't ship it inline.
+    const form = document.getElementById('appForm')
+    let turnstileToken = null
+    let turnstileWidgetId = null
+    let appConfig = null
+
+    ;(async () => {
+      try {
+        const res = await fetch('/api/config')
+        appConfig = await res.json()
+      } catch (e) {
+        console.error('config fetch failed', e)
+      }
+      if (!appConfig || !appConfig.turnstile_site_key) {
+        document.getElementById('appError').textContent = 'CAPTCHA misconfigured. Please email hello@wildcaresolutions.org.'
+        document.getElementById('appError').style.display = 'block'
+        return
+      }
+      const s = document.createElement('script')
+      s.src = 'https://challenges.cloudflare.com/turnstile/v0/api.js?onload=onAppTurnstileReady'
+      s.async = true; s.defer = true
+      window.onAppTurnstileReady = () => {
+        turnstileWidgetId = window.turnstile.render('#turnstileMount', {
+          sitekey: appConfig.turnstile_site_key,
+          // Hide the widget unless CF decides interaction is needed. The
+          // submit button is wired to flip enabled when callback fires —
+          // for non-challenged users that fires immediately on render, so
+          // the form is usable without ever seeing the widget.
+          appearance: 'interaction-only',
+          callback: t => {
+            turnstileToken = t
+            document.getElementById('appSubmit').disabled = false
+          },
+          'expired-callback': () => {
+            turnstileToken = null
+            document.getElementById('appSubmit').disabled = true
+          },
+          'error-callback': () => {
+            turnstileToken = null
+            document.getElementById('appSubmit').disabled = true
+          },
+        })
+      }
+      document.head.appendChild(s)
+    })()
+
+    // ── Form submission. ──────────────────────────────────────────────
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault()
+      const err = document.getElementById('appError')
+      err.style.display = 'none'
+      const btn = form.querySelector('button[type="submit"]')
+      btn.disabled = true
+      btn.textContent = 'Submitting...'
+
+      const data = Object.fromEntries(new FormData(form))
+      data.turnstile_token = turnstileToken
+
+      try {
+        const res = await fetch('/platform/apply', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(data),
+        })
+        const body = await res.json()
+        if (!res.ok) {
+          err.textContent = body.error || 'Something went wrong. Please try again.'
+          err.style.display = 'block'
+          btn.textContent = 'Apply to join'
+          if (window.turnstile && turnstileWidgetId !== null) {
+            window.turnstile.reset(turnstileWidgetId)
+            turnstileToken = null
+          } else {
+            btn.disabled = false
+          }
+          return
+        }
+        form.style.display = 'none'
+        document.getElementById('appEmail').textContent = data.contact_email
+        document.getElementById('appSuccess').style.display = 'block'
+      } catch (ex) {
+        err.textContent = 'Network error. Please try again.'
+        err.style.display = 'block'
+        btn.disabled = false
+        btn.textContent = 'Apply to join'
+      }
+    })
+
+    // ── Smooth-scroll for nav anchors. ────────────────────────────────
+    document.querySelectorAll('a[href^="#"]').forEach(link => {
+      link.addEventListener('click', (e) => {
+        const target = document.querySelector(link.getAttribute('href'))
+        if (target) {
+          e.preventDefault()
+          target.scrollIntoView({ behavior: 'smooth' })
+        }
+      })
+    })
+
+    // ── Fade-in observer for sections. ────────────────────────────────
+    const observer = new IntersectionObserver((entries) => {
+      entries.forEach(entry => {
+        if (entry.isIntersecting) entry.target.classList.add('visible')
+      })
+    }, { threshold: 0.1 })
+    document.querySelectorAll('.fade-in').forEach(el => observer.observe(el))
+  </script>
+</body>
+</html>

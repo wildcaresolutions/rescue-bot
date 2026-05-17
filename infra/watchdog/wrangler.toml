@@ -1,0 +1,63 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CANONICAL TEMPLATE for the watchdog Worker. Generated to wrangler.toml by
+#   `node workers/scripts/gen-wrangler.js --target watchdog`
+# (or `--all` to render both main + watchdog).
+#
+# Mustache-style placeholder tokens are substituted by gen-wrangler from
+# org.env (or process.env in CI). The committed wrangler.toml is the STUB form
+# (REPLACE_VIA_GEN_WRANGLER) — CI's cf-verify-stub asserts they match.
+#
+# This worker is INDEPENDENT of the main <ORG_SLUG>-bot worker. It deploys
+# separately via `make cf-deploy-watchdog` and runs in a single environment
+# (production-only). It probes the main worker's /health endpoint every 5
+# minutes and emails OPS_EMAIL when it sees an outage.
+#
+# Forks that don't want the watchdog can leave WATCHDOG_* values blank in
+# org.env — `make cf-deploy` (main worker) still works.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name = "REPLACE_VIA_GEN_WRANGLER-bot-watchdog"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "REPLACE_VIA_GEN_WRANGLER"
+
+# Workers Logs flow into Workers Observability so the dashboard can chart
+# watchdog error rate (Tile 7) and the CF Notifications alert can fire on
+# `<ORG_SLUG>-bot-watchdog` errors > 0.
+[observability]
+enabled = true
+head_sampling_rate = 1
+
+# Probe targets. Updated via org.env when the blue/green deploy cutover changes
+# the prod URL. Watchdog reads these as plain vars; rotation is a config change,
+# not a code change.
+[vars]
+HEALTH_URL_TEST = "REPLACE_VIA_GEN_WRANGLER"
+HEALTH_URL_PROD = "REPLACE_VIA_GEN_WRANGLER"
+ENVIRONMENT = "production"
+
+# Dedupe state. One key per env (`outage:test`, `outage:prod`) with 60-min TTL
+# auto-heals stuck-suppressed state when a recovery probe never fires.
+[[kv_namespaces]]
+binding = "WATCHDOG_KV"
+id = "REPLACE_VIA_GEN_WRANGLER"
+
+# Email Routing send_email binding. From-address must be a verified sender on
+# the org's domain (configured in CF Email Routing, same as the main worker).
+[[send_email]]
+name = "EMAIL"
+
+# Probe every 5 minutes. Fast enough to catch most outages within a typical
+# attention span, slow enough to stay deep inside the Workers free tier
+# (288 invocations/day vs 100k/day limit).
+[triggers]
+crons = ["*/5 * * * *"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets — set via wrangler secret put after first deploy:
+#   echo "<your-email>" | npx wrangler secret put OPS_EMAIL
+#   echo "<from-address>" | npx wrangler secret put OPS_FROM_EMAIL
+# OPS_EMAIL is distinct from tenant daily-report recipients. The watchdog
+# NEVER emails tenant recipients.
+# ─────────────────────────────────────────────────────────────────────────────

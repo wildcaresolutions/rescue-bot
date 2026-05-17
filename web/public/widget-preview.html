@@ -54,9 +54,6 @@
       const s = document.createElement('script')
       s.src = '/widget.js?v=' + Date.now()
       s.setAttribute('data-tenant', tenant)
-      // In the admin editor preview, the widget talks to the operator's DRAFT
-      // (server still verifies the admin cookie before honoring this).
-      if (editorMode) s.setAttribute('data-preview-draft', 'true')
       document.body.appendChild(s)
 
       // Editor mode: handle auto-open toggle from admin editor
@@ -65,12 +62,9 @@
           if (event.data?.type !== 'wildcare-preview-config') return
           // Theme/position/customCSS are handled by widget.js's own message listener.
           // Auto-open needs special handling: toggle the widget open/closed.
-          // Widget elements live inside a Shadow DOM attached to #rbot-widget-host
-          // (mode: 'open'), so reach them via the shadow root, not document directly.
           if (event.data.autoOpen !== undefined) {
-            const shadowRoot = document.getElementById('rbot-widget-host')?.shadowRoot
-            const btn = shadowRoot?.getElementById('rbot-widget-button')
-            const pane = shadowRoot?.querySelector('.rbot-widget-pane')
+            const btn = document.getElementById('rbot-widget-button')
+            const pane = document.querySelector('.rbot-widget-pane')
             if (event.data.autoOpen && btn && (!pane || pane.style.display === 'none')) {
               btn.click()
             }

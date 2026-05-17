@@ -74,13 +74,9 @@ describe('extractJudgeJson', () => {
     expect(extractJudgeJson(text)).toEqual({ passed: false, reasoning: 'missing X' })
   })
 
-  it('accepts numeric "passed" values (1 = pass, 0 = fail)', () => {
-    // Judge models (notably Llama) sometimes emit `"passed": 1` instead of a
-    // boolean. Accepting it keeps a real verdict out of the brittle keyword
-    // fallback, which is what false-failed good answers.
-    expect(extractJudgeJson('{"passed": 1, "reasoning": "good"}'))
-      .toEqual({ passed: true, reasoning: 'good' })
-    expect(extractJudgeJson('{"passed": 0, "reasoning": "bad"}'))
-      .toEqual({ passed: false, reasoning: 'bad' })
+  it('ignores numeric "passed" values', () => {
+    // Only boolean | string is accepted.
+    const text = '{"passed": 1, "reasoning": "should be ignored"}'
+    expect(extractJudgeJson(text)).toBeNull()
   })
 })

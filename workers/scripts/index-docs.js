@@ -54,27 +54,19 @@ const CF_HEADERS = {
 
 // ── Species & Metadata Extraction ───────────────────────────────────────────
 
-// Filename → token lookup, derived from the shared catalog. Two stages:
-//   1. Exact filename match — every builtin guide hits this in one lookup.
-//   2. Substring keyword match — for site-resource files like
-//      "sick_coyote_mange_faq.txt" that don't have a catalog entry but
-//      still belong to a species bucket. Each entry's filename_keywords
-//      list (defaults to [token]) is checked as a substring against the
-//      lowercased filename.
-const catalogJson = JSON.parse(fs.readFileSync(path.join(ROOT, 'shared/species-catalog.json'), 'utf8'))
-const FILENAME_TO_TOKEN = {}
-const KEYWORD_RULES = []
-for (const sp of catalogJson.species) {
-  if (sp.filename) FILENAME_TO_TOKEN[sp.filename] = sp.token
-  const kws = sp.filename_keywords || [sp.token]
-  for (const kw of kws) KEYWORD_RULES.push([kw.toLowerCase(), sp.token])
+const SPECIES_MAP = {
+  raccoon: 'raccoon', bat: 'bat', songbird: 'songbird', hummingbird: 'hummingbird',
+  snake: 'snake', heron: 'heron_egret', egret: 'heron_egret', raptor: 'raptor',
+  squirrel: 'squirrel', opossum: 'opossum', deer: 'deer', fawn: 'deer',
+  duck: 'duck_goose', goose: 'duck_goose', fox: 'fox', skunk: 'skunk',
+  coyote: 'coyote', bobcat: 'bobcat', gull: 'gull', raven: 'raven',
+  rodent: 'rodent', entangled: 'entangled',
 }
 
 function extractSpecies(filename) {
-  if (FILENAME_TO_TOKEN[filename]) return FILENAME_TO_TOKEN[filename]
   const lower = filename.toLowerCase()
-  for (const [kw, token] of KEYWORD_RULES) {
-    if (lower.includes(kw)) return token
+  for (const [key, value] of Object.entries(SPECIES_MAP)) {
+    if (lower.includes(key)) return value
   }
   return 'general'
 }

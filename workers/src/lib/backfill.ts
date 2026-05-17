@@ -8,8 +8,7 @@
  * Triggered from /admin/analyze-backfill (route in admin.ts).
  */
 import type { Env } from './types'
-import { quickAnalyzeSession } from './analyze-session'
-import { logError } from './logger'
+import { quickAnalyzeSession } from '../routes/chat'
 
 export interface BackfillResult {
   candidates: number
@@ -33,7 +32,7 @@ export async function backfillSessionAnalysis(env: Env, tenantId: string): Promi
       analyzed++
     } catch (e) {
       failed++
-      logError('backfill/session-analyze-failed', { session_id, error: e })
+      console.error('[backfill] session', session_id, e)
     }
   }
 

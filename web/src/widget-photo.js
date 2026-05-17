@@ -124,13 +124,6 @@ export async function uploadPhoto({
   })
   if (!res.ok) {
     const err = await readErrorBody(res)
-    // 403 with a "not enabled" body means the tenant hasn't flipped the
-    // photo-upload feature flag — that's a config gap, not a network
-    // interruption. Surface a distinct code so the UX shows a real
-    // explanation instead of "Upload was interrupted. Please try again."
-    if (res.status === 403 && /not enabled/i.test(String(err))) {
-      throw new Error('upload-disabled')
-    }
     throw new Error(`upload-failed: ${err}`)
   }
   const { photo_id } = await res.json()
@@ -230,7 +223,6 @@ export const PHOTO_ERROR_MESSAGES = {
   'canvas-toblob-failed': 'Couldn\'t process this photo \u2014 try again.',
   'mint-failed': 'Upload didn\'t start. Please try again.',
   'upload-failed': 'Upload was interrupted. Please try again.',
-  'upload-disabled': 'Photo uploads aren\'t enabled for this site yet.',
   'chat-photo-failed': 'Photo uploaded, but the assistant couldn\'t read it. Try again or describe in words.',
 }
 

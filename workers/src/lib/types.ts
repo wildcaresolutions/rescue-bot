@@ -41,19 +41,9 @@ export interface Env {
   // Hostname for the chat-widget embed script. Used by the copilot's
   // get_embed_code tool. Per audit ralph-1 M11.
   PLATFORM_EMBED_HOST?: string
-  // FROM address for transactional auth mail (magic-link sign-in, invites).
-  // Distinct from REPORT_FROM_EMAIL (daily-report sender) so the daily-report
-  // address (e.g. reports@<domain>) doesn't end up on user-facing sign-in
-  // emails. Empty → falls back to noreply@<REPORT_FROM_EMAIL domain>.
-  PLATFORM_FROM_EMAIL?: string
   // When "true", server-side auth gate + Turnstile checks short-circuit.
   // Set in [vars] of the default (local dev) wrangler config.
   DEV_AUTH_BYPASS?: string
-  // CF native Rate Limiting bindings (per-colo, eventually-consistent).
-  // See wrangler.template.toml [[ratelimits]] blocks.
-  RL_IP_CHAT: RateLimit
-  RL_IP_SESSION: RateLimit
-  RL_TENANT: RateLimit
 }
 
 // ── Tenant types ──────────────────────────────────────────────────────────────
@@ -99,12 +89,6 @@ export interface Tenant {
    * previously routed through `tenant as unknown as { feature_flags?: string }`
    * casts at three call sites; declared here so the casts can be removed. */
   feature_flags: string | null
-  /** JSON partial patch of publishable columns the operator has edited but not
-   * yet published (global draft/publish). NULL = no unpublished changes. The
-   * bot NEVER reads this — only the admin editing overlay (lib/draft.ts) does.
-   * Publish applies it to the live columns and recompiles; Discard nulls it. */
-  draft_config: string | null
-  draft_updated_at: string | null
   created_at: string
   updated_at: string
 }
@@ -114,7 +98,6 @@ export interface Tenant {
 export type Variables = {
   tenant: Tenant | null
   authToken: string | null
-  originAllowed?: boolean
 }
 
 export type AppType = Hono<{ Bindings: Env; Variables: Variables }>

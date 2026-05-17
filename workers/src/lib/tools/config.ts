@@ -1,27 +1,28 @@
 /**
  * Config tools — tenant settings, brand colors, widget theme/CSS.
  *
- * Under the global draft/publish model these tools STAGE their changes into
- * the tenant's draft (lib/draft.ts) — they no longer write live columns or
- * recompile (publish does both). They read from the OVERLAID tenant (live +
- * draft) so the agent builds on its own pending edits within a turn.
+ * Extracted from workers/src/routes/agent.ts. These tools all mutate
+ * the tenant row (or its widget_theme / widget_custom_css columns) and
+ * follow the same pattern: validate, UPDATE tenants, invalidate the
+ * in-memory tenant cache so the next chat turn sees the new state.
+ *
+ * `update_org_info` is special — it writes to the org_config JSON and
+ * then recompiles `custom_instruction` so the chat-time system prompt
+ * reflects the new info on the very next message.
  */
 import { tool } from 'ai'
 import { z } from 'zod'
+import type { Tenant } from '../types'
 import type { ToolContext } from './types'
-import type { OrgConfig, Referral } from '../compile-instruction'
 import { sanitizeCustomCss } from '../css-sanitize'
 import { parseOrgConfig, loadTenantById } from '../tenant-loader'
-import { stageConfigChange, overlayTenant, type DraftConfig } from '../draft'
+import { recompileAndMaybeWrite } from '../compile-instruction'
 
 export function configTools(ctx: ToolContext) {
-  const { db, tenantId, freshTenant } = ctx
-  const target = { id: tenantId, slug: freshTenant.slug }
-  // Re-read live+draft each execute so a tool sees prior staged edits in this turn.
-  const overlay = async () => overlayTenant((await loadTenantById(db, tenantId)) ?? freshTenant)
+  const { db, tenantId, tenant, freshTenant, invalidateCache } = ctx
 
   const update_config = tool({
-    description: 'Updates tenant configuration fields like phone, email, url, location. Staged as a draft until the operator publishes.',
+    description: 'Updates tenant configuration fields like phone, email, url, location',
     inputSchema: z.object({
       phone: z.string().optional().describe('Phone number'),
       email: z.string().optional().describe('Email address'),
@@ -31,19 +32,37 @@ export function configTools(ctx: ToolContext) {
       location_service_area: z.string().optional().describe('Service area description'),
     }),
     execute: async (params) => {
-      const patch: DraftConfig = {}
-      const applied: Record<string, string> = {}
-      for (const [k, v] of Object.entries(params)) {
-        if (typeof v === 'string') { (patch as Record<string, unknown>)[k] = v; applied[k] = v }
+      const updates: string[] = []
+      const values: (string | null)[] = []
+      const entries = Object.entries(params) as Array<[string, string | undefined]>
+      for (const [key, val] of entries) {
+        if (val !== undefined) {
+          updates.push(`${key} = ?`)
+          values.push(val)
+        }
       }
-      if (!Object.keys(patch).length) return { success: true, message: 'No changes' }
-      await stageConfigChange(db, target, patch)
-      return { success: true, message: 'Configuration updated (staged)', updated: Object.keys(applied), ...applied }
+      if (!updates.length) return { success: true, message: 'No changes' }
+      updates.push("updated_at = datetime('now')")
+      await db.prepare(`UPDATE tenants SET ${updates.join(', ')} WHERE id = ?`)
+        .bind(...values, tenantId).run()
+      invalidateCache()
+      const updated = entries.filter(([, v]) => v !== undefined).map(([k]) => k)
+      // Spread values into the result so the frontend's breadcrumb chip can
+      // show what was saved ("Saved: phone=805-555-…", not just "Config
+      // updated"). The user complained the chip was unhelpfully vague.
+      const applied: Record<string, string> = {}
+      for (const [k, v] of entries) if (typeof v === 'string') applied[k] = v
+      return { success: true, message: 'Configuration updated', updated, ...applied }
     },
   })
 
+  // Hours and after-hours info live in org_config JSON, not as tenant
+  // columns, so update_config can't reach them. Without this tool the
+  // agent would dutifully ask the user for hours during onboarding, accept
+  // an answer, then have no way to persist it — leading to a silent skip
+  // we observed driving step 2 of onboarding.
   const update_org_info = tool({
-    description: 'Update operational org info (hours, after-hours phone, emergency contacts, redirect-info default). All optional. Staged as a draft until the operator publishes.',
+    description: 'Update operational org info (hours, after-hours phone, emergency contacts, redirect-info default). All optional. Saves to tenant.org_config and recompiles the system instruction so changes take effect on the next chat turn.',
     inputSchema: z.object({
       hours: z.string().optional().describe('Operating hours, e.g. "Mon-Fri 9am-5pm; Sat-Sun 10am-4pm"'),
       after_hours_phone: z.string().optional().describe('Number callers should reach for emergencies outside hours'),
@@ -51,140 +70,116 @@ export function configTools(ctx: ToolContext) {
       redirect_info: z.string().optional().describe('Default redirect destination used when a skipped species has no per-species redirect set'),
     }),
     execute: async (params) => {
-      const oc = parseOrgConfig<Record<string, unknown>>((await overlay()).org_config)
+      const oc = parseOrgConfig<Record<string, unknown>>(freshTenant.org_config)
       const updated: string[] = []
       for (const [k, v] of Object.entries(params)) {
         if (typeof v === 'string') { oc[k] = v; updated.push(k) }
       }
       if (!updated.length) return { success: true, message: 'No changes' }
-      await stageConfigChange(db, target, { org_config: oc as unknown as OrgConfig })
-      return { success: true, updated, message: `Saved (staged): ${updated.join(', ')}` }
-    },
-  })
-
-  // Referrals live in org_config.referrals[] — the structured list of
-  // organizations the bot routes callers to, tagged by species (`covers`)
-  // and/or area (`area`). compile-instruction.ts renders them into the
-  // LLM prompt under "## Referrals & Emergency Contacts". Without a tool
-  // here, the copilot used to claim "I have no referrals concept" and
-  // bury routing rules in house_rules narrative — losing the by-area
-  // routing the structured field is designed for.
-  const manage_referrals = tool({
-    description: 'Add, update, or remove a referral organization in the structured referrals list. Referrals are how the bot routes callers it can\'t help — by SPECIES (the "covers" tag, e.g. "raptors") or by AREA (the "area" tag, e.g. "Contra Costa County" for out-of-service-area callers). Adding a referral with an area tag automatically routes callers from that area to that org. Name is used as the key for update/remove (case-insensitive). Recompiles the system prompt after each change.',
-    inputSchema: z.object({
-      action: z.enum(['add', 'update', 'remove']).describe('"add" creates a new referral. "update" modifies the named referral (only fields you pass are changed). "remove" deletes it.'),
-      name: z.string().describe('Referral organization name, e.g. "Lindsay Wildlife Experience". Used as the key for update/remove.'),
-      contact: z.string().optional().describe('Phone and/or URL, e.g. "(925) 935-1978 · lindsaywildlife.org"'),
-      covers: z.string().optional().describe('What they handle, e.g. "general wildlife", "raptors and bats", "wild turkeys, mange coyotes"'),
-      area: z.string().optional().describe('Geographic coverage, e.g. "Contra Costa County" — used to route out-of-area callers to them automatically'),
-    }),
-    execute: async ({ action, name, contact, covers, area }) => {
-      // Read live+draft so we build on any referrals staged earlier this turn.
-      const t = await overlay()
-      const oc = parseOrgConfig<OrgConfig & Record<string, unknown>>(t.org_config)
-      const referrals: Referral[] = Array.isArray(oc.referrals) ? [...oc.referrals] : []
-      const trimmedName = name.trim()
-      const nameKey = trimmedName.toLowerCase()
-      const idx = referrals.findIndex(r => r?.name?.trim().toLowerCase() === nameKey)
-
-      if (action === 'add') {
-        if (idx >= 0) {
-          return { success: false, error: 'duplicate', message: `Referral "${trimmedName}" already exists. Use action="update" to change it, or action="remove" first.` }
-        }
-        const entry: Referral = { name: trimmedName }
-        if (contact !== undefined) entry.contact = contact
-        if (covers !== undefined) entry.covers = covers
-        if (area !== undefined) entry.area = area
-        referrals.push(entry)
-      } else if (action === 'update') {
-        if (idx < 0) {
-          return { success: false, error: 'not_found', message: `Referral "${trimmedName}" not found. Use action="add" to create it.` }
-        }
-        const current = referrals[idx]
-        const updated: Referral = { ...current, name: trimmedName }
-        if (contact !== undefined) updated.contact = contact
-        if (covers !== undefined) updated.covers = covers
-        if (area !== undefined) updated.area = area
-        referrals[idx] = updated
-      } else {
-        if (idx < 0) {
-          return { success: false, error: 'not_found', message: `Referral "${trimmedName}" not found.` }
-        }
-        referrals.splice(idx, 1)
-      }
-
-      oc.referrals = referrals
-      // Stage into the draft (recompile/cache handled at publish + by stageConfigChange).
-      await stageConfigChange(db, target, { org_config: oc })
-      return {
-        success: true,
-        action,
-        name: trimmedName,
-        referrals_count: referrals.length,
-        message: `${action === 'add' ? 'Added' : action === 'update' ? 'Updated' : 'Removed'} referral: ${trimmedName}`,
-      }
+      await db.prepare("UPDATE tenants SET org_config = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(JSON.stringify(oc), tenantId).run()
+      // Recompile so the chat-time system prompt reflects the new info.
+      const bo = parseOrgConfig<Record<string, unknown>>(freshTenant.bot_overrides)
+      await recompileAndMaybeWrite(db, freshTenant, oc, bo)
+      invalidateCache()
+      return { success: true, updated, message: `Saved: ${updated.join(', ')}` }
     },
   })
 
   const update_colors = tool({
-    description: 'Updates brand colors for the rescue bot. Staged as a draft until the operator publishes.',
+    description: 'Updates brand colors for the rescue bot',
     inputSchema: z.object({
       color_primary: z.string().optional().describe('Primary brand color (hex, e.g. #2d7a3c)'),
       color_secondary: z.string().optional().describe('Secondary brand color (hex)'),
       color_accent: z.string().optional().describe('Accent color (hex)'),
     }),
     execute: async (params) => {
-      // Refuse to leave two roles with the same hex — compute the effective
-      // palette by merging args over the current (overlaid) values.
-      const cur = await overlay()
+      // Compute the effective post-update palette by merging the call args
+      // over the current tenant row, then check that the three roles end up
+      // with three different hexes. The agent has previously set primary,
+      // secondary, AND accent all to the same #c96310 without warning the
+      // user; that's almost always a mistake (the user said one role-change
+      // and the agent over-applied). Refuse and return guidance so the
+      // agent can re-prompt.
+      const current = await db.prepare(
+        'SELECT color_primary, color_secondary, color_accent FROM tenants WHERE id = ?',
+      ).bind(tenantId).first<{
+        color_primary: string | null
+        color_secondary: string | null
+        color_accent: string | null
+      }>()
       const norm = (h: string | null | undefined) => h?.toLowerCase().trim() || null
       const eff = {
-        color_primary: norm(params.color_primary ?? cur.color_primary),
-        color_secondary: norm(params.color_secondary ?? cur.color_secondary),
-        color_accent: norm(params.color_accent ?? cur.color_accent),
+        color_primary: norm(params.color_primary ?? current?.color_primary),
+        color_secondary: norm(params.color_secondary ?? current?.color_secondary),
+        color_accent: norm(params.color_accent ?? current?.color_accent),
       }
-      const present = [eff.color_primary, eff.color_secondary, eff.color_accent].filter(Boolean)
-      if (new Set(present).size !== present.length) {
+      const collisions = ['color_primary', 'color_secondary', 'color_accent']
+        .map(k => ({ k, v: eff[k as keyof typeof eff] }))
+        .filter(x => x.v)
+      const dup = collisions.find((a, i) =>
+        collisions.findIndex(b => b.v === a.v) !== i,
+      )
+      if (dup) {
         return {
-          success: false, error: 'role_collision',
-          message: `Refusing to apply: ${eff.color_primary} / ${eff.color_secondary} / ${eff.color_accent} would leave two roles with the same color. Confirm which role each hex belongs to before re-calling.`,
+          success: false,
+          error: 'role_collision',
+          message: `Refusing to apply: ${eff.color_primary} / ${eff.color_secondary} / ${eff.color_accent} would leave two roles with the same color. Confirm with the user which role each hex belongs to before re-calling.`,
           effective: eff,
         }
       }
-      const patch: DraftConfig = {}
-      for (const [k, v] of Object.entries(params)) if (typeof v === 'string') (patch as Record<string, unknown>)[k] = v
-      if (!Object.keys(patch).length) return { success: true, message: 'No changes' }
-      await stageConfigChange(db, target, patch)
-      return { success: true, message: 'Colors updated (staged)', applied: eff }
+
+      const updates: string[] = []
+      const values: (string | null)[] = []
+      const entries = Object.entries(params) as Array<[string, string | undefined]>
+      for (const [key, val] of entries) {
+        if (val !== undefined) {
+          updates.push(`${key} = ?`)
+          values.push(val)
+        }
+      }
+      if (!updates.length) return { success: true, message: 'No changes' }
+      updates.push("updated_at = datetime('now')")
+      await db.prepare(`UPDATE tenants SET ${updates.join(', ')} WHERE id = ?`)
+        .bind(...values, tenantId).run()
+      // Original used `tenant.slug` rather than `freshTenant.slug` here —
+      // they refer to the same row, but preserved verbatim for zero-diff.
+      void tenant
+      invalidateCache()
+      return { success: true, message: 'Colors updated', applied: eff }
     },
   })
 
   const get_config = tool({
-    description: 'Gets the current tenant configuration (including unpublished/staged edits). This is your READ tool — call it before editing anything. It returns the FULL house_rules text, so you never need to "probe" with a write tool to see the current prompt.',
+    description: 'Gets the current tenant configuration',
     inputSchema: z.object({}),
     execute: async () => {
-      const t = await overlay()
+      const t = await loadTenantById(db, tenantId)
+      if (!t) return { error: 'Tenant not found' }
       const oc = parseOrgConfig(t.org_config)
       return {
-        name: t.name, phone: t.phone, email: t.email, url: t.url,
-        location_county: t.location_county, location_state: t.location_state, location_service_area: t.location_service_area,
-        color_primary: t.color_primary, color_secondary: t.color_secondary, color_accent: t.color_accent,
-        hours: oc.hours || null, after_hours_phone: oc.after_hours_phone || null, emergency_contacts: oc.emergency_contacts || null,
+        name: t.name,
+        phone: t.phone,
+        email: t.email,
+        url: t.url,
+        location_county: t.location_county,
+        location_state: t.location_state,
+        location_service_area: t.location_service_area,
+        color_primary: t.color_primary,
+        color_secondary: t.color_secondary,
+        color_accent: t.color_accent,
+        hours: oc.hours || null,
+        after_hours_phone: oc.after_hours_phone || null,
+        emergency_contacts: oc.emergency_contacts || null,
         species_config: oc.species_config || {},
-        // The operator-editable prose ("House rules"). Returned IN FULL so the
-        // agent can read-modify-write it via save_protocols. (Returning a
-        // truncated preview here is what drove the agent to misuse a write tool
-        // as a read and clobber the prompt — 2026-06-18 incident.)
-        house_rules: t.house_rules || '',
-        // custom_instruction is DERIVED (compiled from species/referrals config
-        // at publish). Shown read-only for context — do NOT write it directly.
-        custom_instruction: t.custom_instruction || null,
+        custom_instruction_preview: t.custom_instruction ? t.custom_instruction.slice(0, 500) + '...' : null,
+        has_custom_instruction: !!t.custom_instruction,
       }
     },
   })
 
   const update_widget_theme = tool({
-    description: 'Update widget appearance: colors, radii, button text, header title, welcome message, header style, and position. Typography is fixed by the design system. Staged as a draft until the operator publishes.',
+    description: 'Update widget appearance: colors, radii, button text, header title, welcome message, header style, and position. Typography is fixed by the product design system and is not configurable.',
     inputSchema: z.object({
       primaryColor: z.string().optional(),
       secondaryColor: z.string().optional(),
@@ -197,26 +192,49 @@ export function configTools(ctx: ToolContext) {
       welcomeMessage: z.string().optional(),
       headerText: z.string().optional(),
       autoOpen: z.boolean().optional(),
-      buttonPosition: z.object({ bottom: z.string().optional(), top: z.string().optional(), left: z.string().optional(), right: z.string().optional() }).nullable().optional(),
-      panePosition: z.object({ bottom: z.string().optional(), top: z.string().optional(), left: z.string().optional(), right: z.string().optional() }).nullable().optional(),
+      // Each edge is a CSS value ("25%", "20px"). Pass only the edges
+      // you want to set. Pass null for the whole field to clear.
+      buttonPosition: z.object({
+        bottom: z.string().optional(),
+        top: z.string().optional(),
+        left: z.string().optional(),
+        right: z.string().optional(),
+      }).nullable().optional(),
+      panePosition: z.object({
+        bottom: z.string().optional(),
+        top: z.string().optional(),
+        left: z.string().optional(),
+        right: z.string().optional(),
+      }).nullable().optional(),
     }),
     execute: async (params) => {
-      const existing = parseOrgConfig<Record<string, unknown>>((await overlay()).widget_theme)
+      const existing = parseOrgConfig<Record<string, unknown>>(freshTenant.widget_theme)
       const merged = { ...existing }
-      for (const [k, v] of Object.entries(params)) if (v !== undefined) merged[k] = v
-      await stageConfigChange(db, target, { widget_theme: merged })
+      for (const [k, v] of Object.entries(params)) {
+        if (v !== undefined) merged[k] = v
+      }
+      await db.prepare("UPDATE tenants SET widget_theme = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(JSON.stringify(merged), tenantId).run()
+      invalidateCache()
       return { success: true, theme: merged }
     },
   })
 
   const update_custom_css = tool({
-    description: 'Set custom CSS for the chat widget. Overwrites previous CSS. Staged as a draft until the operator publishes. Use .rbot-widget-* classes and --rbot-* custom properties.',
-    inputSchema: z.object({ css: z.string().describe('The complete custom CSS to apply') }),
+    description: 'Set custom CSS for the chat widget. Overwrites previous CSS. Use .rbot-widget-* classes and --rbot-* custom properties.',
+    inputSchema: z.object({
+      css: z.string().describe('The complete custom CSS to apply'),
+    }),
     execute: async ({ css }) => {
-      // Sanitize before staging (audit P1-21): operator CSS is served inline to
-      // every widget visitor; strip @import, expression(), url() exfil, etc.
-      const sanitized = sanitizeCustomCss(css).css
-      await stageConfigChange(db, target, { widget_custom_css: sanitized })
+      // Audit P1-21: operator-supplied CSS is served inline to every widget
+      // visitor on the tenant's site. Without sanitization a copilot prompt-
+      // injection (or just a careless operator) can ship CSS with @import,
+      // expression(), behavior: url(...), or javascript: URLs to every chat
+      // session. sanitizeCustomCss strips those patterns and caps length.
+      const sanitized = sanitizeCustomCss(css)
+      await db.prepare("UPDATE tenants SET widget_custom_css = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(sanitized, tenantId).run()
+      invalidateCache()
       return { success: true, css: sanitized }
     },
   })
@@ -224,7 +242,6 @@ export function configTools(ctx: ToolContext) {
   return {
     update_config,
     update_org_info,
-    manage_referrals,
     update_colors,
     get_config,
     update_widget_theme,

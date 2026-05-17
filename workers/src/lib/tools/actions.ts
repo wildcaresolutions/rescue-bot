@@ -19,7 +19,7 @@ import type { ToolContext } from './types'
 import { getEmbedHost } from '../platform'
 
 export function actionsTools(ctx: ToolContext) {
-  const { env, c, db, tenantId, freshTenant } = ctx
+  const { env, db, tenantId, freshTenant } = ctx
 
   const navigate_to_tab = tool({
     description: 'Switch the admin portal to a specific tab.',
@@ -47,16 +47,7 @@ export function actionsTools(ctx: ToolContext) {
     description: 'Return the exact embed snippet a partner pastes into their site footer. Use this whenever the user asks for the embed code, instead of typing the URL yourself — that has been wrong before.',
     inputSchema: z.object({}),
     execute: async () => {
-      // PLATFORM_EMBED_HOST set → use the CDN-cached versioned entry point
-      // (`https://<host>/v1.js`). Unset → fall back to the worker's own
-      // origin, where Workers Assets serves `/widget.js` directly. Both
-      // produce a one-line snippet that works; the CDN form is preferred
-      // for partner embedding because it's decoupled from the worker host.
-      const host = getEmbedHost(env)
-      const src = host
-        ? `https://${host}/v1.js`
-        : `${new URL(c.req.url).origin}/widget.js`
-      const snippet = `<script src="${src}" data-tenant="${freshTenant.slug}"></script>`
+      const snippet = `<script src="https://${getEmbedHost(env)}/v1.js" data-tenant="${freshTenant.slug}"></script>`
       return {
         embed_code: snippet,
         instructions: 'Paste the snippet immediately before the closing </body> tag on every page where the chat should appear. The widget reads colors, position, and visibility rules from the published config — no other arguments needed.',

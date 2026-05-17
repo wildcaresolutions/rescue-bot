@@ -11,8 +11,6 @@ import {
   tenantCookiePrefix,
   resolveSession,
   PLATFORM_COOKIE_PREFIX,
-  ADMIN_TOKEN_TTL_DAYS,
-  USER_TOKEN_TTL_DAYS,
 } from '../src/lib/auth'
 import type { Env } from '../src/lib/types'
 
@@ -47,13 +45,13 @@ describe('verifyPassword', () => {
     expect(await verifyPassword('wrong-horse', stored)).toBe(false)
   })
 
-  it('returns false for non-pbkdf2 stored values (plaintext fallback removed, L-5)', async () => {
-    // Any stored value that is not pbkdf2:-prefixed must be rejected, including
-    // cases where the password matches byte-for-byte. This closes the footgun
-    // where a tenant with a plaintext-stored password would be compared as-is.
-    expect(await verifyPassword('plaintext', 'plaintext')).toBe(false)
-    expect(await verifyPassword('plaintext', 'different')).toBe(false)
+  it('returns false for LEGACY_SITE_PASSWORD stored value', async () => {
     expect(await verifyPassword('anything', 'LEGACY_SITE_PASSWORD')).toBe(false)
+  })
+
+  it('falls back to timing-safe comparison for plain-text stored values', async () => {
+    expect(await verifyPassword('plaintext', 'plaintext')).toBe(true)
+    expect(await verifyPassword('plaintext', 'different')).toBe(false)
   })
 })
 
@@ -206,52 +204,16 @@ describe('generateToken + verifyToken', () => {
     expect(result).toBeNull()
   })
 
-  it('rejects an expired token (>30 days old) for viewer role', async () => {
+  it('rejects an expired token (>30 days old)', async () => {
     const thirtyOneDays = 31 * 24 * 60 * 60 * 1000
     const past = Date.now() - thirtyOneDays
 
     vi.spyOn(Date, 'now').mockReturnValue(past)
-    const token = await generateToken('tenant-old', false, env)  // viewer role
+    const token = await generateToken('tenant-old', false, env)
     vi.restoreAllMocks()
 
     const result = await verifyToken(token, env)
     expect(result).toBeNull()
-  })
-
-  // M-2: admin/platform sessions get a shorter 1-day TTL.
-  it(`rejects an admin token older than ${ADMIN_TOKEN_TTL_DAYS}d`, async () => {
-    const twoDaysMs = 2 * 24 * 60 * 60 * 1000
-    const past = Date.now() - twoDaysMs
-
-    vi.spyOn(Date, 'now').mockReturnValue(past)
-    const token = await generateToken('tenant-admin', 'admin', env)
-    vi.restoreAllMocks()
-
-    expect(await verifyToken(token, env)).toBeNull()
-  })
-
-  it('accepts an admin token younger than 1d', async () => {
-    const twelveHoursMs = 12 * 60 * 60 * 1000
-    const past = Date.now() - twelveHoursMs
-
-    vi.spyOn(Date, 'now').mockReturnValue(past)
-    const token = await generateToken('tenant-admin', 'admin', env)
-    vi.restoreAllMocks()
-
-    const result = await verifyToken(token, env)
-    expect(result?.role).toBe('admin')
-  })
-
-  it(`accepts a viewer token at ${USER_TOKEN_TTL_DAYS - 1}d (still within user TTL)`, async () => {
-    const twentyNineDays = 29 * 24 * 60 * 60 * 1000
-    const past = Date.now() - twentyNineDays
-
-    vi.spyOn(Date, 'now').mockReturnValue(past)
-    const token = await generateToken('tenant-viewer', 'viewer', env)
-    vi.restoreAllMocks()
-
-    const result = await verifyToken(token, env)
-    expect(result?.role).toBe('viewer')
   })
 
   it('rejects a malformed token', async () => {
@@ -305,22 +267,6 @@ describe('isDevAuthBypass', () => {
     expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: '1' }))).toBe(false)
     expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'TRUE' }))).toBe(false)  // case-sensitive
     expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'true' }))).toBe(true)
-  })
-
-  it('always false when ENVIRONMENT is production, even if bypass value is set', () => {
-    expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'true', ENVIRONMENT: 'production' }))).toBe(false)
-  })
-
-  it('always false when ENVIRONMENT is test, even if bypass value is set', () => {
-    expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'true', ENVIRONMENT: 'test' }))).toBe(false)
-  })
-
-  it('true when ENVIRONMENT is dev and bypass value is set', () => {
-    expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'true', ENVIRONMENT: 'dev' }))).toBe(true)
-  })
-
-  it('false when ENVIRONMENT is dev but bypass value is not set', () => {
-    expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: '', ENVIRONMENT: 'dev' }))).toBe(false)
   })
 })
 

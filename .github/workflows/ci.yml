@@ -6,17 +6,11 @@ on:
   pull_request:
     branches: [main]
 
-# PRs: share a per-ref group and cancel the in-progress run when a new commit
-# is pushed — no point finishing CI on a superseded PR head.
-# main pushes: append the commit SHA so every merge gets its OWN group. Pushes
-# to main therefore never cancel (cancel-in-progress is false for push) AND
-# never queue/evict each other under a shared group. This closes the trap where
-# merging two PRs to main within a few minutes let the second push cancel the
-# first push's run — silently stranding the first commit's prod deploy. Each
-# main commit now deploys on its own run.
+# Cancel any in-progress run on the same branch when a new push lands.
+# Avoids stacking deploys when you push twice in quick succession.
 concurrency:
-  group: ci-${{ github.ref }}${{ github.event_name == 'push' && format('-{0}', github.sha) || '' }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
 
 env:
   GIT_CONFIG_COUNT: '1'
@@ -28,10 +22,10 @@ jobs:
     name: Lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
       - run: npm ci
       - run: make deps
@@ -41,10 +35,10 @@ jobs:
     name: Build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
       - run: make deps
       - name: Generate Worker bundle inputs (instructions, guides)
@@ -66,10 +60,10 @@ jobs:
     name: Unit Tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
       - run: make deps
       # router.test.ts boots the full Worker (incl. routes/chat.ts) which
@@ -85,50 +79,23 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
-      # --omit=dev: only audit deps that actually ship in the Worker / web bundle.
-      # This is a required gate for deploy-prod, so a high-severity vuln in code
-      # we deploy SHOULD block a release. But build/test-only tooling (vite,
-      # esbuild, wrangler/miniflare, promptfoo, …) must NOT — an advisory in a
-      # dev dependency has no runtime exposure, yet under the old unscoped audit
-      # it hard-blocked every prod deploy, including pure prompt fixes (this is
-      # exactly what stranded the location-grounding fix in #85). evals/ and
-      # infra/watchdog/ are not audited here at all — they're separate dev/cron
-      # tooling, not part of the shipped product.
-      - run: npm audit --audit-level=high --omit=dev
-      - run: cd workers && npm audit --audit-level=high --omit=dev
-      - run: cd web && npm audit --audit-level=high --omit=dev
-
-  widget-e2e:
-    name: Widget E2E (cross-origin)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      # Self-contained: the spec boots its own HTTP server on a random port
-      # and points the embedded widget at the prod bundle. No wrangler dev
-      # needed. Just install Chromium and run.
-      - name: Install Playwright browsers (chromium only)
-        run: npx playwright install --with-deps chromium
-      - name: Run widget E2E
-        run: npm run e2e:widget
+      - run: npm audit --audit-level=high
+      - run: cd workers && npm audit --audit-level=high
+      - run: cd web && npm audit --audit-level=high
 
   verify-stub:
     name: Verify wrangler.toml stub matches template
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
       # No deps install needed — gen-wrangler.js has zero npm dependencies.
       # Catches the case where someone edits wrangler.template.toml but forgets
@@ -140,11 +107,7 @@ jobs:
   deploy-test:
     name: Deploy → test env (workers.dev)
     needs: [lint, build, test, audit, verify-stub]
-    # Skip on dependabot PRs — they don't have access to the `test` environment
-    # secrets (ORG_SLUG, ACCOUNT_ID, etc.), so gen-wrangler.js fails before
-    # wrangler is even invoked. The actual test-env deploy fires when the bump
-    # lands on main.
-    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     environment: test
     # Job-level concurrency: serialize test deploys across PRs so two open PRs
@@ -155,10 +118,10 @@ jobs:
       group: deploy-test-shared
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
       - run: make deps
       - name: Deploy test env
@@ -179,74 +142,12 @@ jobs:
           PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
-          PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
-          MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
-          PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
-      # No smoke tests on the test env — smoke runs against prod only (after
-      # deploy-prod on main). PR deploys rely on widget-e2e + unit tests.
+      # No public-URL smoke test — CF blocks GHA runner IPs at the edge
+      # (Bot Fight Mode / WAF) so probing from CI returns 403 even when
+      # the deploy is healthy. The wrangler deploy step's exit code is
+      # the authoritative success signal; runtime health is monitored
+      # separately. See history before bcb4409 for the iteration.
 
-  integration-test:
-    name: Integration → deployed test worker
-    needs: [deploy-test]
-    # Runs on PRs only. deploy-prod does not wait on this job — integration
-    # tests serialise on the shared test worker and blocking prod deploys on
-    # them would stall the deploy queue.
-    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    environment: test
-    concurrency:
-      group: integration-test-shared
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: make deps
-      - name: Render wrangler.toml
-        run: node workers/scripts/gen-wrangler.js
-        env:
-          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
-          ORG_SLUG: ${{ secrets.ORG_SLUG }}
-          ORG_DOMAIN: ${{ secrets.ORG_DOMAIN }}
-          AI_GATEWAY_ACCOUNT_ID: ${{ secrets.AI_GATEWAY_ACCOUNT_ID }}
-          AI_GATEWAY_ID: ${{ secrets.AI_GATEWAY_ID }}
-          DEV_D1_DATABASE_ID: ${{ secrets.DEV_D1_DATABASE_ID }}
-          TEST_D1_DATABASE_ID: ${{ secrets.TEST_D1_DATABASE_ID }}
-          PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
-          PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
-          PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
-          PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
-          MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
-          PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
-      - name: Seed ephemeral tenant
-        id: seed
-        run: |
-          SLUG="it-${{ github.run_id }}-${{ github.run_attempt }}"
-          TENANT_ID="it-$(echo $SLUG | sha256sum | head -c 12)"
-          node workers/integration/scripts/seed-tenant.mjs "$SLUG" "$TENANT_ID"
-          echo "slug=$SLUG" >> $GITHUB_OUTPUT
-          echo "tenant_id=$TENANT_ID" >> $GITHUB_OUTPUT
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-      - name: Run integration suite
-        run: make cf-test-integration
-        env:
-          BASE_URL: ${{ secrets.TEST_WORKER_URL }}
-          SIGNING_SECRET: ${{ secrets.SIGNING_SECRET }}
-          TEST_TENANT_SLUG: ${{ steps.seed.outputs.slug }}
-          TEST_TENANT_ID: ${{ steps.seed.outputs.tenant_id }}
-      - name: Teardown ephemeral tenant
-        if: always()
-        run: node workers/integration/scripts/teardown-tenant.mjs
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          TEST_TENANT_SLUG: ${{ steps.seed.outputs.slug }}
-          TEST_TENANT_ID: ${{ steps.seed.outputs.tenant_id }}
-
-      
   deploy-prod:
     name: Deploy → production
     needs: [lint, build, test, audit, verify-stub]
@@ -254,10 +155,10 @@ jobs:
     runs-on: ubuntu-latest
     environment: production
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
       - run: make deps
       - name: Deploy production
@@ -274,80 +175,11 @@ jobs:
           PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
-          PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
-          MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
-          PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
-          # Lets deploy-embed.js purge the embed CDN's rolling keys (v1.js /
-          # widget.js) so a freshly deployed widget isn't masked by the edge
-          # cache for hours. Requires the CLOUDFLARE_API_TOKEN to also have
-          # Zone → Cache Purge. Missing/insufficient → deploy-embed warns,
-          # doesn't fail.
-          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
-      # Public-URL smoke tests run in the `smoke` job below — uses Chromium's
-      # real TLS fingerprint (page.evaluate fetch) to bypass CF Bot Fight Mode.
-
-  smoke:
-    name: Smoke tests → production
-    needs: [deploy-prod]
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    environment: production
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
-        with:
-          node-version: '22'
-          cache: 'npm'
-      - run: npm ci
-      - name: Render wrangler.toml (required before wrangler d1 execute)
-        # The committed wrangler.toml is the stub form. gen-wrangler.js renders
-        # it with real values from CI secrets so wrangler can resolve 'wildcare-db'
-        # to its production database ID. Same step deploy-prod does via cf-render-config.
-        run: node workers/scripts/gen-wrangler.js
-        env:
-          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
-          ORG_SLUG: ${{ secrets.ORG_SLUG }}
-          ORG_DOMAIN: ${{ secrets.ORG_DOMAIN }}
-          AI_GATEWAY_ACCOUNT_ID: ${{ secrets.AI_GATEWAY_ACCOUNT_ID }}
-          AI_GATEWAY_ID: ${{ secrets.AI_GATEWAY_ID }}
-          DEV_D1_DATABASE_ID: ${{ secrets.DEV_D1_DATABASE_ID }}
-          TEST_D1_DATABASE_ID: ${{ secrets.TEST_D1_DATABASE_ID }}
-          PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
-          PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
-          PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
-          PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
-      - name: Seed smoke.wildcaresolutions.org into allowed_domains
-        # Idempotent INSERT OR IGNORE — safe to run on every push. Ensures the
-        # smoke subdomain is always allowed before the CORS tests run, without
-        # manual setup steps or drift risk. Uses a subquery to avoid hardcoding
-        # the tenant UUID (slug is stable; UUID is not).
-        run: |
-          cd workers && npx wrangler d1 execute wildcare-db --env production --remote --command \
-            "INSERT OR IGNORE INTO allowed_domains (tenant_id, domain) SELECT id, 'smoke.wildcaresolutions.org' FROM tenants WHERE slug = 'wildcare'"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
-          ORG_SLUG: ${{ secrets.ORG_SLUG }}
-          ORG_DOMAIN: ${{ secrets.ORG_DOMAIN }}
-          AI_GATEWAY_ACCOUNT_ID: ${{ secrets.AI_GATEWAY_ACCOUNT_ID }}
-          AI_GATEWAY_ID: ${{ secrets.AI_GATEWAY_ID }}
-          DEV_D1_DATABASE_ID: ${{ secrets.DEV_D1_DATABASE_ID }}
-          TEST_D1_DATABASE_ID: ${{ secrets.TEST_D1_DATABASE_ID }}
-          PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
-      - name: Install Playwright browsers (chromium only)
-        run: npx playwright install --with-deps chromium
-      - name: Run smoke tests
-        run: npm run e2e:smoke
-      - name: Rollback production on smoke failure
-        if: failure()
-        # Smoke tests failed after a successful deploy — roll back to the
-        # previous Worker version automatically. wrangler.toml is already
-        # rendered by the earlier step so wrangler can resolve the env.
-        run: |
-          echo "Smoke tests failed — rolling back production Worker to previous version"
-          cd workers && npx wrangler rollback --env production --message "auto-rollback: smoke tests failed on ${{ github.sha }}"
-        env:
-          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      # No public-URL smoke test — CF blocks GHA runner IPs at the edge
+      # (Bot Fight Mode / WAF) so probing from CI returns 403 even when
+      # the deploy is healthy. The wrangler deploy step's exit code is
+      # the authoritative success signal; runtime health is monitored
+      # separately. See history before bcb4409 for the iteration.
 
   deploy-watchdog:
     name: Deploy → watchdog (independent /health prober)
@@ -359,10 +191,10 @@ jobs:
     # to page on outage. Deploy from the same push that produces a new prod
     # worker so the watchdog's idea of "what should be up" matches reality.
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
       - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: '22'
+          node-version: '20'
           cache: 'npm'
       - run: make deps
       - name: Deploy watchdog

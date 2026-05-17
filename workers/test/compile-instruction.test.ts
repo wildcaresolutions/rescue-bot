@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compileInstruction, recompileAndMaybeWrite, OrgConfig, BotOverrides } from '../src/lib/compile-instruction'
+import { compileInstruction, OrgConfig, BotOverrides } from '../src/lib/compile-instruction'
 
 function baseTenant(overrides: Partial<Parameters<typeof compileInstruction>[0]> = {}) {
   return {
@@ -30,26 +30,48 @@ describe('compileInstruction', () => {
     expect(compileInstruction(baseTenant(), emptyOrg, emptyBot, '   \n  ')).toBe('')
   })
 
-  describe('contact facts are NOT compiled (surfaced once in chat-prompt identity block)', () => {
-    it('does not emit a Service Area & Contact section even with full contact info', () => {
+  describe('Service Area & Contact section', () => {
+    it('generates section with service area and phone', () => {
       const result = compileInstruction(
-        baseTenant({
-          phone: '555-1234',
-          email: 'help@rescue.org',
-          url: 'https://rescue.org',
-          location_service_area: 'Bay Area',
-          location_county: 'Marin',
-          location_state: 'CA',
-        }),
-        { hours: '9am-5pm', after_hours_phone: '555-9999', public_address: '1 Main St' },
+        baseTenant({ location_service_area: 'Bay Area', phone: '555-1234' }),
+        emptyOrg,
         emptyBot,
       )
-      expect(result).not.toContain('## Service Area & Contact')
-      expect(result).not.toContain('Phone: 555-1234')
-      expect(result).not.toContain('Hours: 9am-5pm')
-      expect(result).not.toContain('Drop-off address')
-      // With only contact info and nothing protocol-shaped, output is empty.
-      expect(result).toBe('')
+      expect(result).toContain('## Service Area & Contact')
+      expect(result).toContain('Service area: Bay Area')
+      expect(result).toContain('Phone: 555-1234')
+    })
+
+    it('includes county, state, email, url when present', () => {
+      const result = compileInstruction(
+        baseTenant({
+          location_county: 'Marin',
+          location_state: 'CA',
+          email: 'help@rescue.org',
+          url: 'https://rescue.org',
+        }),
+        emptyOrg,
+        emptyBot,
+      )
+      expect(result).toContain('County: Marin')
+      expect(result).toContain('State: CA')
+      expect(result).toContain('Email: help@rescue.org')
+      expect(result).toContain('Website: https://rescue.org')
+    })
+
+    it('includes hours and after-hours phone from orgConfig', () => {
+      const result = compileInstruction(
+        baseTenant(),
+        { hours: '9am-5pm', after_hours_phone: '555-9999' },
+        emptyBot,
+      )
+      expect(result).toContain('Hours: 9am-5pm')
+      expect(result).toContain('After-hours phone: 555-9999')
+    })
+
+    it('omits section when no contact info is present', () => {
+      const result = compileInstruction(baseTenant(), emptyOrg, emptyBot)
+      expect(result).not.toContain('Service Area & Contact')
     })
   })
 
@@ -218,7 +240,7 @@ describe('compileInstruction', () => {
         emptyBot,
       )
       expect(result).toContain('## Organization-Specific Notes')
-      expect(result).toContain('**Raccoon**: We see lots of juveniles in spring')
+      expect(result).toContain('Raccoon: We see lots of juveniles in spring')
     })
 
     it('augment mode without notes produces no output', () => {
@@ -266,7 +288,7 @@ describe('compileInstruction', () => {
         emptyBot,
       )
       expect(result).toContain('## Species We Do Not Handle')
-      expect(result).toContain('**Marine mammals**: We do NOT handle this species')
+      expect(result).toContain('Marine mammals: We do NOT handle this species')
       expect(result).toContain('Redirect: Call Marine Mammal Center at 415-289-7325')
     })
 
@@ -306,40 +328,11 @@ describe('compileInstruction', () => {
       )
       expect(result).not.toContain('Raccoon')
       expect(result).toContain('## Organization-Specific Notes')
-      expect(result).toContain('**Opossum**: Extra opossum info')
+      expect(result).toContain('Opossum: Extra opossum info')
       expect(result).toContain('## Protocol Overrides')
       expect(result).toContain('### Skunk')
       expect(result).toContain('## Species We Do Not Handle')
       expect(result).toContain('Reptiles')
-    })
-
-    it('keeps a multi-line note (paragraphs + sub-bullets) attached to its species', () => {
-      // Regression: an operator note with blank lines and its own sub-bullets
-      // used to be dumped raw after "- Pigeon: ", so the sub-bullets detached
-      // and read as unrelated top-level rules — confusing the model.
-      const notes = 'Many Bay Area rescues refuse pigeons.\n\nRouting rules ->\n- if not in the SF Bay Area, fall through\n- if Contra Costa, direct to WildCare'
-      const result = compileInstruction(
-        baseTenant(),
-        { species_config: { Pigeon: { mode: 'augment', notes } } },
-        emptyBot,
-      )
-      // Species on its own bolded bullet, body indented 2 spaces so the
-      // sub-bullets nest UNDER Pigeon rather than becoming siblings.
-      expect(result).toContain('- **Pigeon**:\n  Many Bay Area rescues refuse pigeons.')
-      expect(result).toContain('\n  - if not in the SF Bay Area, fall through')
-      expect(result).toContain('\n  - if Contra Costa, direct to WildCare')
-      // No un-indented top-level sub-bullet detached from the species.
-      expect(result).not.toContain('\n- if not in the SF Bay Area')
-    })
-
-    it('single-line notes stay compact', () => {
-      const result = compileInstruction(
-        baseTenant(),
-        { species_config: { Opossum: { mode: 'augment', notes: 'Extra opossum info' } } },
-        emptyBot,
-      )
-      expect(result).toContain('- **Opossum**: Extra opossum info')
-      expect(result).not.toContain('- **Opossum**:\n')
     })
 
     it('species_config suppresses legacy species lists', () => {
@@ -452,39 +445,6 @@ describe('compileInstruction', () => {
     })
   })
 
-  describe('referrals', () => {
-    it('renders a structured Referrals & Emergency Contacts section', () => {
-      const result = compileInstruction(baseTenant(), {
-        referrals: [
-          { name: 'Marin Humane', contact: '(415) 883-4621', covers: 'animal control, wild turkeys' },
-          { name: 'Peninsula Humane', contact: '650-340-7022', area: 'San Mateo County' },
-          { name: 'Marine Mammal Center', contact: '415-289-7325' },
-        ],
-      }, emptyBot)
-      expect(result).toContain('## Referrals & Emergency Contacts')
-      expect(result).toContain('- Marin Humane — (415) 883-4621 — covers: animal control, wild turkeys')
-      expect(result).toContain('- Peninsula Humane — 650-340-7022 — area: San Mateo County')
-      expect(result).toContain('- Marine Mammal Center — 415-289-7325')
-    })
-
-    it('falls back to legacy emergency_contacts only when no referrals', () => {
-      const withReferrals = compileInstruction(baseTenant(), {
-        referrals: [{ name: 'X', contact: '1' }], emergency_contacts: 'LEGACY TEXT',
-      }, emptyBot)
-      expect(withReferrals).not.toContain('LEGACY TEXT')
-      const legacyOnly = compileInstruction(baseTenant(), { emergency_contacts: 'LEGACY TEXT' }, emptyBot)
-      expect(legacyOnly).toContain('## Emergency Contacts')
-      expect(legacyOnly).toContain('LEGACY TEXT')
-    })
-
-    it('ignores referral rows with a blank name', () => {
-      const result = compileInstruction(baseTenant(), {
-        referrals: [{ name: '', contact: 'x' }, { name: '  ', contact: 'y' }],
-      }, emptyBot)
-      expect(result).not.toContain('## Referrals')
-    })
-  })
-
   describe('full integration', () => {
     it('generates all sections in order when all fields provided', () => {
       const result = compileInstruction(
@@ -516,10 +476,8 @@ describe('compileInstruction', () => {
         'Custom protocol here.',
       )
 
-      // Contact facts are no longer compiled here (they live in the
-      // chat-prompt identity block); the first compiled section is now the
-      // species list.
-      expect(result).not.toContain('## Service Area & Contact')
+      // Verify section order by checking indices
+      const serviceIdx = result.indexOf('## Service Area & Contact')
       const handledIdx = result.indexOf('## Species We Handle')
       const notHandledIdx = result.indexOf('## Species We Do Not Handle')
       const triageIdx = result.indexOf('## Triage Rules')
@@ -528,7 +486,8 @@ describe('compileInstruction', () => {
       const behaviorIdx = result.indexOf('## Bot Behavior')
       const protocolsIdx = result.indexOf('## Additional Protocols')
 
-      expect(handledIdx).toBeGreaterThanOrEqual(0)
+      expect(serviceIdx).toBeGreaterThanOrEqual(0)
+      expect(handledIdx).toBeGreaterThan(serviceIdx)
       expect(notHandledIdx).toBeGreaterThan(handledIdx)
       expect(triageIdx).toBeGreaterThan(notHandledIdx)
       expect(intakeIdx).toBeGreaterThan(triageIdx)
@@ -537,87 +496,8 @@ describe('compileInstruction', () => {
       expect(protocolsIdx).toBeGreaterThan(behaviorIdx)
 
       // Verify sections are separated by double newlines
-      expect(result).toContain('\n\n## Species We Do Not Handle')
+      expect(result).toContain('\n\n## Species We Handle')
       expect(result).toContain('Redirect callers: Call Marine Mammal Center')
     })
-  })
-})
-
-// ── recompileAndMaybeWrite — locked-instruction path ─────────────────────────
-// This function exists alongside compileInstruction in compile-instruction.ts
-// and handles the DB write + lock semantics. Zero tests existed for it before.
-
-// Minimal D1 mock that captures UPDATE statements.
-class FakeDb {
-  writes: { sql: string; binds: unknown[] }[] = []
-  prepare(sql: string) {
-    const self = this
-    let binds: unknown[] = []
-    return {
-      bind(...args: unknown[]) { binds = args; return this },
-      async run() { self.writes.push({ sql, binds: [...binds] }); return { success: true, meta: {} } },
-      async first() { return null },
-      async all() { return { results: [] } },
-    }
-  }
-}
-
-function dbTenant(locked: number) {
-  return {
-    id: 'tenant-locked-test',
-    name: 'Acme Wildlife',
-    phone: null,
-    email: null,
-    url: null,
-    location_service_area: null,
-    location_county: null,
-    location_state: null,
-    house_rules: null,
-    custom_instruction_locked: locked,
-  }
-}
-
-describe('recompileAndMaybeWrite — custom_instruction_locked', () => {
-  it('does NOT write to the DB when the instruction is locked (locked=1)', async () => {
-    const db = new FakeDb()
-    const orgConfig: OrgConfig = { species_config: { Raccoon: { mode: 'augment', notes: 'Stay calm.' } } }
-    const result = await recompileAndMaybeWrite(
-      db as unknown as D1Database,
-      dbTenant(1),
-      orgConfig,
-      {},
-    )
-    expect(result.wrote).toBe(false)
-    const updates = db.writes.filter(w => /UPDATE tenants/.test(w.sql))
-    expect(updates).toHaveLength(0)
-  })
-
-  it('returns a compiled string even when locked (preview still works)', async () => {
-    const db = new FakeDb()
-    const orgConfig: OrgConfig = { species_config: { Bat: { mode: 'augment', notes: 'Handle with gloves.' } } }
-    const result = await recompileAndMaybeWrite(
-      db as unknown as D1Database,
-      dbTenant(1),
-      orgConfig,
-      {},
-    )
-    expect(result.compiled).toContain('Bat')
-    expect(result.compiled).toContain('Handle with gloves.')
-  })
-
-  it('writes to the DB when the instruction is NOT locked (locked=0)', async () => {
-    const db = new FakeDb()
-    const orgConfig: OrgConfig = { species_config: { Opossum: { mode: 'augment', notes: 'Check for pouch young.' } } }
-    const result = await recompileAndMaybeWrite(
-      db as unknown as D1Database,
-      dbTenant(0),
-      orgConfig,
-      {},
-    )
-    expect(result.wrote).toBe(true)
-    const updates = db.writes.filter(w => /UPDATE tenants/.test(w.sql))
-    expect(updates).toHaveLength(1)
-    expect(updates[0].binds[0]).toContain('Opossum')
-    expect(updates[0].binds[1]).toBe('tenant-locked-test')
   })
 })

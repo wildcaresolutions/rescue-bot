@@ -18,9 +18,7 @@ import { z } from 'zod'
 import { BUILTIN_GUIDES } from '../../guides'
 import { searchRAG } from '../rag'
 import { validateAnalyticsSql, ANALYTICS_SCHEMA_DESCRIPTION } from '../safe-sql'
-import { redactPIITextOnly } from '../pii-redact'
 import type { ToolContext } from './types'
-import { logWarn, logError, logInfo } from '../logger'
 
 export function queriesTools(ctx: ToolContext) {
   const { env, db, tenantId } = ctx
@@ -44,7 +42,7 @@ export function queriesTools(ctx: ToolContext) {
   })
 
   const run_analytics_query = tool({
-    description: `Run a one-off read-only SQL query against this tenant's data when no other tool fits the question (e.g. "how many cat-attack sessions last month with thumbs down", "median response time"). Read-only: single SELECT only — no WITH/CTEs, no subqueries, no UNION, no JOIN, no comma-joins. Use AND-only filters: OR and standalone NOT are rejected (IS NOT NULL, NOT IN, NOT LIKE are still allowed). The query MUST be tenant-scoped using the :tenant_id placeholder — never a literal. Results are capped at 100 rows. Schema and examples:\n\n${ANALYTICS_SCHEMA_DESCRIPTION}`,
+    description: `Run a one-off read-only SQL query against this tenant's data when no other tool fits the question (e.g. "how many cat-attack sessions last month with thumbs down", "median response time"). Read-only: single SELECT only — no WITH/CTEs, no subqueries, no UNION, no JOIN, no comma-joins. The query MUST be tenant-scoped using the :tenant_id placeholder — never a literal. Results are capped at 100 rows. Schema and examples:\n\n${ANALYTICS_SCHEMA_DESCRIPTION}`,
     inputSchema: z.object({
       question: z.string().describe('The plain-English question this query answers (shown to the user alongside the SQL).'),
       sql: z.string().describe('A single read-only SELECT using :tenant_id for tenant scoping. WITH/CTEs, JOIN, and subqueries are rejected.'),
@@ -52,56 +50,21 @@ export function queriesTools(ctx: ToolContext) {
     execute: async ({ question, sql }) => {
       const v = validateAnalyticsSql(sql)
       if (!v.ok) {
-        logWarn('analytics/query-rejected', { tenantId, reason: v.reason, sql })
+        console.log(`[analytics_query] rejected tenant=${tenantId} reason=${v.reason} sql=${sql}`)
         return { error: `Query rejected: ${v.reason}`, attempted_sql: sql }
       }
-      logInfo('analytics/query-executing', { tenantId, sql: v.sql })
+      console.log(`[analytics_query] tenant=${tenantId} sql=${v.sql}`)
       try {
         const stmt = db.prepare(v.sql!)
         const binds = Array(v.bindCount ?? 1).fill(tenantId)
         const { results } = await stmt.bind(...binds).all()
         const rows = (results || []).slice(0, 100)
-
-        // Belt-and-braces: if any returned row exposes a tenant_id column
-        // that does not match the caller, drop it and log a security alert.
-        // This provides defense-in-depth against any validator bypass that
-        // somehow passes — the row level is always safe regardless.
-        const tenantFilteredRows = rows.filter((r) => {
-          if (r && typeof r === 'object' && 'tenant_id' in r) {
-            const match = (r as Record<string, unknown>).tenant_id === tenantId
-            if (!match) {
-              logError('analytics/cross-tenant-row-dropped', { callerTenantId: tenantId, rowTenantId: (r as Record<string, unknown>).tenant_id })
-            }
-            return match
-          }
-          return true
-        })
-        const dropped = rows.length - tenantFilteredRows.length
-
-        // M-3: Redact PII from results before they enter the LLM context.
-        // contact_info columns are replaced wholesale; all other string
-        // columns have regex-based PII patterns stripped.
-        const safeRows = tenantFilteredRows.map((r) => {
-          if (!r || typeof r !== 'object') return r
-          const redacted: Record<string, unknown> = {}
-          for (const [col, val] of Object.entries(r as Record<string, unknown>)) {
-            if (col === 'contact_info') {
-              redacted[col] = '[redacted — contact info not available in analytics]'
-            } else if (typeof val === 'string') {
-              redacted[col] = redactPIITextOnly(val)
-            } else {
-              redacted[col] = val
-            }
-          }
-          return redacted
-        })
-
         return {
           question,
           sql: v.sql,
-          row_count: safeRows.length,
-          truncated: (results || []).length > rows.length || dropped > 0,
-          rows: safeRows,
+          row_count: rows.length,
+          truncated: (results || []).length > rows.length,
+          rows,
         }
       } catch (e) {
         return { error: 'Query execution failed: ' + (e instanceof Error ? e.message : String(e)), sql: v.sql }

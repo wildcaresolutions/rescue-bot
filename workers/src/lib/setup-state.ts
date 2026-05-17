@@ -16,7 +16,6 @@
  */
 import type { Env, Tenant } from './types'
 import { readOnboardingSignals, loadTestSummary } from './onboarding-state'
-import { hasDraft } from './draft'
 
 export interface SetupStateResult {
   onboarded: boolean
@@ -25,9 +24,7 @@ export interface SetupStateResult {
   has_service_area: boolean
   has_species_rules: boolean
   tests: { total: number; passing: number; failing: number; unrun: number }
-  /** True when the operator has staged-but-unpublished config changes. */
-  has_unpublished_changes: boolean
-  next_action: 'website' | 'service_area' | 'species' | 'publish' | 'done'
+  next_action: 'website' | 'service_area' | 'species' | 'tests' | 'publish' | 'done'
 }
 
 export async function loadSetupState(env: Env, tenant: Tenant): Promise<SetupStateResult> {
@@ -46,9 +43,9 @@ export async function loadSetupState(env: Env, tenant: Tenant): Promise<SetupSta
     nextAction = 'service_area'
   } else if (!signals.hasSpeciesRules) {
     nextAction = 'species'
+  } else if (tests.total === 0 || tests.failing > 0 || tests.unrun > 0) {
+    nextAction = 'tests'
   } else {
-    // Tests NEVER gate publishing — the human decides. (Was: blocked here
-    // while any test failed/unrun, which trapped operators.)
     nextAction = 'publish'
   }
 
@@ -64,7 +61,6 @@ export async function loadSetupState(env: Env, tenant: Tenant): Promise<SetupSta
       failing: tests.failing,
       unrun: tests.unrun,
     },
-    has_unpublished_changes: hasDraft(tenant),
     next_action: nextAction,
   }
 }

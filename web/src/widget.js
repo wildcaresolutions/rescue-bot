@@ -9,9 +9,7 @@ import { initErrorReporting, reportError } from './error-reporter.js'
 import { renderMarkdown } from './shared/message-renderer.js'
 import { SITE_CONFIG } from './shared/site-config.js'
 import { setCookie, getCookie, deleteCookie } from './shared/cookies.js'
-import {
-  shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl, sameOrigin,
-} from './widget-runtime.js'
+import { shouldHideForCMS, deriveBaseUrl } from './widget-runtime.js'
 import {
   reencodeImage,
   uploadPhoto,
@@ -28,11 +26,6 @@ initErrorReporting()
 // ── Multi-tenant: read data-tenant and data-* attrs from script tag ─────────
 const _widgetScript = document.currentScript || document.querySelector('script[data-tenant]')
 const _tenantSlug = _widgetScript?.getAttribute('data-tenant') || null
-// Set ONLY by the admin preview iframe (same-origin, operator logged in). Tells
-// the server to serve this conversation from the operator's DRAFT instead of
-// the published config. The server still independently verifies admin auth, so
-// this header does nothing for a public embed (no admin cookie → ignored).
-const _previewDraft = _widgetScript?.getAttribute('data-preview-draft') === 'true'
 let _runtimeConfig = null
 
 // Read data-attribute overrides from the script tag
@@ -44,31 +37,20 @@ const _dataAttrs = {
   maxHeight: _widgetScript?.getAttribute('data-max-height') || null,
 }
 
-// Resolve the trusted API origin from the SCRIPT TAG only — never from the
-// embedding page's window.RescueBotChat.baseUrl, which is attacker-controllable
-// on a compromised host and could redirect all API/data traffic elsewhere.
-const _scriptBaseUrl = deriveBaseUrl({
+// Resolve the API origin once at load time. Logic lives in widget-runtime.js
+// (pure, unit-tested); we just feed it the runtime values it needs.
+const _baseUrl = deriveBaseUrl({
+  userBaseUrl: (typeof window !== 'undefined'
+    ? (window.RescueBotChat || window.WildCareChat || {})
+    : {}).baseUrl,
   tenantSlug: _tenantSlug,
   scriptSrc: _widgetScript?.src,
 })
 
-// Accept a window.RescueBotChat.baseUrl override ONLY when it points at the
-// same origin as the script tag (e.g. a self-hosted deploy where the embedding
-// page mirrors the script origin). A cross-origin override is silently ignored
-// and the script-tag-derived origin is used instead.
-const _windowBaseUrl = (typeof window !== 'undefined'
-  ? (window.RescueBotChat || window.WildCareChat || {})
-  : {}).baseUrl
-const _baseUrl = (_windowBaseUrl && sameOrigin(_windowBaseUrl, _scriptBaseUrl))
-  ? _windowBaseUrl
-  : _scriptBaseUrl
-
 /** Add X-Tenant-Slug header to all API requests if tenant is set */
 function _tenantHeaders(headers = {}) {
-  const out = { ...headers }
-  if (_tenantSlug) out['X-Tenant-Slug'] = _tenantSlug
-  if (_previewDraft) out['X-Preview-Draft'] = '1'
-  return out
+  if (_tenantSlug) return { ...headers, 'X-Tenant-Slug': _tenantSlug }
+  return headers
 }
 
 /** Fetch runtime config for multi-tenant branding */
@@ -85,54 +67,14 @@ async function _fetchRuntimeConfig() {
   return null
 }
 
-// ── Shadow DOM host ──────────────────────────────────────────────────────────
-// All widget DOM and styles live inside a shadow root attached to a plain div
-// appended to document.body. This isolates widget styles and elements from
-// host-page CSS resets, class-name conflicts, and specificity wars.
-//
-// mode: 'open' so host pages (operators) can reach shadowRoot via
-// hostEl.shadowRoot for diagnostic inspection or testing — intentional for
-// the embeddable use case.
-let _shadowRoot = null
-let _hostEl = null
-
-/**
- * Scoped querySelector — searches inside the shadow root only.
- * Returns null if the shadow root hasn't been mounted yet.
- */
-function _$(sel) { return _shadowRoot ? _shadowRoot.querySelector(sel) : null }
-
-/**
- * Scoped getElementById — searches inside the shadow root only.
- * Returns null if the shadow root hasn't been mounted yet.
- */
-function _byId(id) { return _shadowRoot ? _shadowRoot.getElementById(id) : null }
-
-/**
- * Create the host element, attach an open shadow root, and inject the base
- * widget stylesheet into it. Idempotent — safe to call more than once.
- *
- * IMPORTANT: the host element must not have transform, filter, opacity, or
- * will-change set on it. Those properties create a new stacking context that
- * would trap the fixed-positioned button/pane at a z-index level below
- * host-page elements. Keep the host element a plain, unstyled container.
- */
-function mountShadowHost() {
-  if (_shadowRoot) return _shadowRoot
-  _hostEl = document.createElement('div')
-  _hostEl.id = 'rbot-widget-host'
-  document.body.appendChild(_hostEl)
-  _shadowRoot = _hostEl.attachShadow({ mode: 'open' })
-  const styleEl = document.createElement('style')
-  styleEl.textContent = widgetStyles
-  _shadowRoot.appendChild(styleEl)
-  return _shadowRoot
-}
+// Inject CSS into page
+const styleEl = document.createElement('style')
+styleEl.textContent = widgetStyles
+document.head.appendChild(styleEl)
 
 // Apply custom theme colors and size via CSS variable overrides
 let _themeStyleEl = null
 function applyTheme(theme) {
-  if (!_shadowRoot) return
   const vars = []
   if (theme.primaryColor) {
     vars.push(`--rbot-primary: ${theme.primaryColor}`)
@@ -166,9 +108,7 @@ function applyTheme(theme) {
   if (theme.font) {
     vars.push(`--rbot-font: '${theme.font}', var(--rbot-font-fallback, 'DM Sans', sans-serif)`)
     vars.push(`--wc-font: '${theme.font}', var(--wc-font-fallback, 'DM Sans', sans-serif)`)
-    // Dynamically load Google Font — must stay in document.head because
-    // @font-face declarations from external stylesheets are document-global
-    // and cannot be scoped inside a shadow root.
+    // Dynamically load Google Font if not already loaded
     if (theme.font !== 'DM Sans' && !document.querySelector(`link[href*="fonts.googleapis.com"][href*="${encodeURIComponent(theme.font)}"]`)) {
       const link = document.createElement('link')
       link.rel = 'stylesheet'
@@ -192,18 +132,15 @@ function applyTheme(theme) {
   if (vars.length === 0) return
   if (_themeStyleEl) _themeStyleEl.remove()
   _themeStyleEl = document.createElement('style')
-  // `:host` targets the shadow host element; custom properties declared on it
-  // cascade into all shadow-tree descendants — the shadow equivalent of `:root`.
-  _themeStyleEl.textContent = `:host { ${vars.join('; ')} }`
-  _shadowRoot.appendChild(_themeStyleEl)
+  _themeStyleEl.textContent = `:root { ${vars.join('; ')} }`
+  document.head.appendChild(_themeStyleEl)
 }
 
 // Apply size configuration via CSS variables
 function applySizeConfig(config) {
-  if (!_shadowRoot) return
   const sizeStyles = document.createElement('style')
   sizeStyles.textContent = `
-    :host {
+    :root {
       ${config.width ? `--widget-width: ${config.width};` : ''}
       ${config.maxWidth ? `--widget-max-width: ${config.maxWidth};` : ''}
       ${config.height ? `--widget-height: ${config.height};` : ''}
@@ -212,12 +149,11 @@ function applySizeConfig(config) {
       ${config.minHeight ? `--widget-min-height: ${config.minHeight};` : ''}
     }
   `
-  _shadowRoot.appendChild(sizeStyles)
+  document.head.appendChild(sizeStyles)
 }
 
 // Apply custom position overrides for button and/or pane
 function applyPositionConfig(config) {
-  if (!_shadowRoot) return
   const rules = []
   if (config.buttonPosition) {
     const props = Object.entries(config.buttonPosition)
@@ -227,12 +163,7 @@ function applyPositionConfig(config) {
   }
   if (config.panePosition) {
     const props = Object.entries(config.panePosition)
-      // A `top`-anchored pane is positioned from the viewport top, so a fixed
-      // CMS bar (WordPress admin bar — see --rbot-top-inset) would clip its
-      // header. Add the measured inset to `top` so it always clears the bar.
-      .map(([k, v]) => k === 'top'
-        ? `${k}: calc(${v} + var(--rbot-top-inset, 0px)) !important;`
-        : `${k}: ${v} !important;`)
+      .map(([k, v]) => `${k}: ${v} !important;`)
       .join(' ')
     // Apply to the pane itself with position:fixed so it escapes the
     // backdrop's flex layout. Without this, anchor coords like `top: 50%`
@@ -247,7 +178,7 @@ function applyPositionConfig(config) {
   if (rules.length > 0) {
     const posStyles = document.createElement('style')
     posStyles.textContent = rules.join('\n')
-    _shadowRoot.appendChild(posStyles)
+    document.head.appendChild(posStyles)
   }
 }
 
@@ -256,10 +187,9 @@ let _customStyleEl = null
 function applyCustomCSS(css) {
   if (_customStyleEl) _customStyleEl.remove()
   if (!css) return
-  if (!_shadowRoot) return
   _customStyleEl = document.createElement('style')
   _customStyleEl.textContent = css
-  _shadowRoot.appendChild(_customStyleEl)
+  document.head.appendChild(_customStyleEl)
 }
 
 // Preview mode: accept config overrides via postMessage from admin editor.
@@ -308,25 +238,25 @@ window.addEventListener('message', (event) => {
   if (position) applyPositionConfig(position)
   if (customCSS !== undefined) applyCustomCSS(customCSS)
   if (buttonText !== undefined) {
-    const btn = _byId('rbot-widget-button')
+    const btn = document.getElementById('rbot-widget-button')
     // textContent (not innerHTML — see preamble) defuses the operator-XSS
     // path even on otherwise-malformed input.
     if (btn) btn.textContent = String(buttonText)
   }
   if (headerText !== undefined) {
-    const title = _$('.rbot-widget-title')
+    const title = document.querySelector('.rbot-widget-title')
     const safe = String(headerText) || _runtimeConfig?.name || widgetConfig.agentName
     if (title) title.textContent = safe
     widgetConfig.agentName = safe
   }
   if (welcomeMessage !== undefined) {
-    const input = _$('.rbot-widget-input')
+    const input = document.querySelector('.rbot-widget-input')
     if (input) input.placeholder = welcomeMessage
     widgetConfig.welcomeMessage = welcomeMessage
     // Welcome text is the input placeholder only — no chat bubble.
     // If a stale bubble exists (older widget release that minted one),
     // remove it so the live preview matches the new behavior.
-    const stale = _byId('rbot-widget-welcome-message')
+    const stale = document.getElementById('rbot-widget-welcome-message')
     if (stale) stale.remove()
   }
   if (autoOpen !== undefined) {
@@ -337,22 +267,21 @@ window.addEventListener('message', (event) => {
     // exactly what was happening. Compare against the previous value.
     const prev = window.__rbot_lastAutoOpen
     if (prev !== autoOpen) {
-      const btn = _byId('rbot-widget-button')
+      const btn = document.getElementById('rbot-widget-button')
       if (autoOpen && !isOpen && btn) btn.click()
-      if (!autoOpen && isOpen) { const c = _$('.rbot-widget-close'); if (c) c.click() }
+      if (!autoOpen && isOpen) { const c = document.querySelector('.rbot-widget-close'); if (c) c.click() }
       window.__rbot_lastAutoOpen = autoOpen
     }
   }
 })
 
 // API functions that support configurable baseUrl. _baseUrl is the
-// script-origin-validated API base — always use it, even if getWidgetConfig()
-// spread a window.RescueBotChat.baseUrl override into widgetConfig. The
-// override was already validated above; re-applying _baseUrl here closes any
-// remaining path by which the raw window value could enter API_BASE.
+// auto-derived origin (see _deriveBaseUrl) — we pass it through to
+// widgetConfig.baseUrl so anything that reads from getWidgetConfig() also
+// sees the resolved value.
 let widgetConfig = getWidgetConfig()
-widgetConfig.baseUrl = _baseUrl
-const API_BASE = _baseUrl ? `${_baseUrl}/api` : '/api'
+if (!widgetConfig.baseUrl && _baseUrl) widgetConfig.baseUrl = _baseUrl
+const API_BASE = widgetConfig.baseUrl ? `${widgetConfig.baseUrl}/api` : '/api'
 
 async function createSession() {
   const response = await fetch(`${API_BASE}/sessions`, {
@@ -427,23 +356,8 @@ function _shouldHideForCMS(embedOptions) {
   })
 }
 
-// Config-independent check: are we inside a page-builder editor (Divi Visual
-// Builder, Elementor, …)? Uses LOCAL DOM signals only, so it works even when
-// /api/config can't load — which it often can't inside a builder, the exact
-// case where the config-driven _shouldHideForCMS silently no-ops.
-function _inBuilderEditor() {
-  return inPageBuilderEditor({
-    search: typeof window !== 'undefined' ? window.location.search : '',
-    bodyClassList: document.body ? Array.from(document.body.classList) : [],
-    htmlClassList: document.documentElement ? Array.from(document.documentElement.classList) : [],
-  })
-}
-
 // Initialize widget
 async function initWidget() {
-  // NEVER mount inside a page-builder editor. Checked first, with no network
-  // dependency, so it holds even when /api/config fails to load in the builder.
-  if (_inBuilderEditor()) return
   widgetConfig = getWidgetConfig()
 
   // Multi-tenant: fetch runtime config for branding
@@ -452,7 +366,7 @@ async function initWidget() {
     if (rc && !rc.platform) {
       // Visibility check happens BEFORE any DOM mount. If the widget
       // shouldn't show on this page, bail out cleanly — no button, no pane,
-      // no listeners.
+      // no listeners. CSS injected at module load is harmless without DOM.
       const eo = rc.widget_theme?.embedOptions
       if (_shouldHideForCMS(eo)) return
       // Override widget config with tenant branding
@@ -505,10 +419,6 @@ async function initWidget() {
       widgetConfig.welcomeMessage = wt.welcomeMessage || 'Describe what you\'re seeing'
     }
   }
-
-  // All bail-out checks have passed. Create the shadow host now, before any
-  // style-apply or DOM-creation functions that target _shadowRoot.
-  mountShadowHost()
 
   // Apply data-attribute overrides (highest priority after window.RescueBotChat)
   if (_dataAttrs.primaryColor || _dataAttrs.secondaryColor) {
@@ -567,21 +477,17 @@ function createWidgetUI() {
   button.addEventListener('click', () => {
     isOpen ? closeWidget() : openWidget()
   })
-  _shadowRoot.appendChild(button)
+  document.body.appendChild(button)
 
   // Create widget container (hidden by default)
   const container = document.createElement('div')
   container.id = 'rbot-widget-container'
   container.className = 'rbot-widget-container'
   const resizableClass = widgetConfig.resizable !== false ? ' rbot-widget-resizable' : ''
-  // Static scaffold only — NO operator-supplied strings interpolated here.
-  // agentName and welcomeMessage come from tenant config and must be set via
-  // .textContent / .placeholder AFTER insertion to avoid stored XSS on
-  // widget-embedded pages (H-2: innerHTML injection).
   container.innerHTML = `
     <div class="rbot-widget-pane${resizableClass}">
       <div class="rbot-widget-header">
-        <span class="rbot-widget-title"></span>
+        <span class="rbot-widget-title">${widgetConfig.agentName}</span>
         <div class="rbot-widget-header-actions">
           <button class="rbot-widget-new" title="Start new conversation">↻</button>
           <button class="rbot-widget-close" title="Close">×</button>
@@ -608,17 +514,14 @@ function createWidgetUI() {
         <textarea
           class="rbot-widget-input"
           id="rbot-widget-input"
+          placeholder="${(widgetConfig.welcomeMessage || 'Describe the animal and situation...').replace(/"/g, '&quot;')}"
           rows="1"
         ></textarea>
         <button class="rbot-widget-send" id="rbot-widget-send">Send</button>
       </div>
     </div>
   `
-  _shadowRoot.appendChild(container)
-  // Set operator-supplied text via safe DOM properties (never innerHTML).
-  container.querySelector('.rbot-widget-title').textContent = widgetConfig.agentName
-  container.querySelector('#rbot-widget-input').placeholder =
-    widgetConfig.welcomeMessage || 'Describe the animal and situation...'
+  document.body.appendChild(container)
 
   // Close button
   container.querySelector('.rbot-widget-close').addEventListener('click', closeWidget)
@@ -661,48 +564,24 @@ function createWidgetUI() {
   initializeChat()
 }
 
-// WordPress (and similar CMSes) render a FIXED admin bar pinned to the top of
-// the viewport for logged-in users. The widget now shows for logged-in admins,
-// so the open chat pane's title could sit UNDER that bar. Measure the bar and
-// expose its height as --rbot-top-inset; the overlay pads its top by that much
-// so the pane (and its header) always clears it. 0 when no bar is present.
-//
-// --rbot-top-inset is set on the shadow host element; custom properties
-// inherit across the shadow boundary so all shadow-tree descendants see it.
-function updateTopInset() {
-  let inset = 0
-  const bar = document.getElementById('wpadminbar')  // host-page element, keep on document
-  if (bar) {
-    const r = bar.getBoundingClientRect()
-    // Only count a bar actually pinned to the very top of the viewport.
-    if (r.height > 0 && r.top <= 1 && r.bottom > 0) inset = Math.ceil(r.bottom)
-  }
-  if (_hostEl) _hostEl.style.setProperty('--rbot-top-inset', inset + 'px')
-}
-
-// The admin bar height changes at WP's 783px breakpoint (32px ↔ 46px); keep the
-// inset current while the pane is open.
-window.addEventListener('resize', () => { if (isOpen) updateTopInset() })
-
 function openWidget() {
   isOpen = true
-  updateTopInset()
-  const container = _byId('rbot-widget-container')
+  const container = document.getElementById('rbot-widget-container')
   container.classList.add('rbot-widget-open')
-  _byId('rbot-widget-button').style.display = 'none'
+  document.getElementById('rbot-widget-button').style.display = 'none'
 }
 
 function closeWidget() {
   isOpen = false
-  const container = _byId('rbot-widget-container')
+  const container = document.getElementById('rbot-widget-container')
   container.classList.remove('rbot-widget-open')
-  _byId('rbot-widget-button').style.display = 'block'
+  document.getElementById('rbot-widget-button').style.display = 'block'
 }
 
 async function initializeChat() {
-  const messagesEl = _byId('rbot-widget-messages')
-  const input = _byId('rbot-widget-input')
-  const sendBtn = _byId('rbot-widget-send')
+  const messagesEl = document.getElementById('rbot-widget-messages')
+  const input = document.getElementById('rbot-widget-input')
+  const sendBtn = document.getElementById('rbot-widget-send')
 
   try {
     // Check for existing session
@@ -764,7 +643,7 @@ async function initializeChat() {
 }
 
 async function createNewSession() {
-  const messagesEl = _byId('rbot-widget-messages')
+  const messagesEl = document.getElementById('rbot-widget-messages')
   const session = await createSession()
   currentSessionId = session.id
   currentSessionToken = session.session_token ?? null
@@ -794,7 +673,7 @@ async function refreshSessionToken() {
  * this tenant. Driven by presence of session_token.
  */
 function applyPhotoUploadVisibility() {
-  const paperclip = _byId('rbot-widget-paperclip')
+  const paperclip = document.getElementById('rbot-widget-paperclip')
   const enabled = Boolean(currentSessionToken)
   if (paperclip) paperclip.hidden = !enabled
   if (paperclip) {
@@ -882,7 +761,7 @@ async function startNewConversation() {
   await createNewSession()
 
   // Focus input
-  const input = _byId('rbot-widget-input')
+  const input = document.getElementById('rbot-widget-input')
   if (input) input.focus()
 }
 
@@ -916,8 +795,8 @@ async function handlePhotoSelected(file) {
   }
 
   isStreaming = true
-  const sendBtn = _byId('rbot-widget-send')
-  const input = _byId('rbot-widget-input')
+  const sendBtn = document.getElementById('rbot-widget-send')
+  const input = document.getElementById('rbot-widget-input')
   if (sendBtn) sendBtn.disabled = true
   if (input) input.disabled = true
 
@@ -1046,7 +925,7 @@ async function handlePhotoSelected(file) {
  * DevTools for the underlying cause.
  */
 function addPhotoErrorMessage(message) {
-  const messagesEl = _byId('rbot-widget-messages')
+  const messagesEl = document.getElementById('rbot-widget-messages')
   if (!messagesEl) return
   const div = document.createElement('div')
   div.className = 'rbot-widget-message rbot-widget-message-system rbot-widget-photo-error'
@@ -1066,7 +945,7 @@ function addPhotoErrorMessage(message) {
  * Click the X → confirm → server delete → remove bubble + decrement cap.
  */
 function addPhotoBubble(photoId, imgSrc, opts = {}) {
-  const messagesEl = _byId('rbot-widget-messages')
+  const messagesEl = document.getElementById('rbot-widget-messages')
   if (!messagesEl) return null
   const wrap = document.createElement('div')
   const uploadingClass = opts.uploading ? ' rbot-widget-photo-bubble-uploading' : ''
@@ -1114,8 +993,8 @@ function addPhotoBubble(photoId, imgSrc, opts = {}) {
 async function handleSendMessage() {
   if (isStreaming || !currentSessionId) return
 
-  const input = _byId('rbot-widget-input')
-  const sendBtn = _byId('rbot-widget-send')
+  const input = document.getElementById('rbot-widget-input')
+  const sendBtn = document.getElementById('rbot-widget-send')
   const message = input.value.trim()
 
   if (!message) return
@@ -1128,6 +1007,7 @@ async function handleSendMessage() {
 
   const userMessageId = `msg-${currentSessionId}-${messageIdCounter++}`
   addMessage('user', message, userMessageId)
+  saveMessageMetadata(currentSessionId, userMessageId, 'user', message, Date.now())
 
   const typingEl = addTypingIndicator()
 
@@ -1154,15 +1034,14 @@ async function handleSendMessage() {
       updateMessage(assistantEl, fullContent)
     }
 
+    saveMessageMetadata(currentSessionId, assistantMessageId, 'assistant', fullContent, Date.now())
+
     if (assistantEl) {
       addThumbRating(assistantEl, assistantMessageId, fullContent)
     }
   } catch (error) {
     reportError(error, { function: 'handleSendMessage', widget: true })
     if (typingEl) typingEl.remove()
-    const phone = _runtimeConfig?.phone || null
-    const callLine = phone ? ` You can also call us directly at ${phone}.` : ''
-    addSystemMessage(`We're having trouble connecting right now. Please try again in a moment.${callLine}`)
   } finally {
     isStreaming = false
     input.disabled = false
@@ -1172,7 +1051,7 @@ async function handleSendMessage() {
 }
 
 function addMessage(role, content, messageId = null) {
-  const messagesEl = _byId('rbot-widget-messages')
+  const messagesEl = document.getElementById('rbot-widget-messages')
   const messageDiv = document.createElement('div')
   messageDiv.className = `rbot-widget-message rbot-widget-message-${role}`
   if (messageId) {
@@ -1200,12 +1079,12 @@ function addMessage(role, content, messageId = null) {
 function updateMessage(messageEl, content) {
   const contentDiv = messageEl.querySelector('.rbot-widget-message-content')
   contentDiv.innerHTML = renderMarkdown(content)
-  const messagesEl = _byId('rbot-widget-messages')
+  const messagesEl = document.getElementById('rbot-widget-messages')
   messagesEl.scrollTop = messagesEl.scrollHeight
 }
 
 function addSystemMessage(content) {
-  const messagesEl = _byId('rbot-widget-messages')
+  const messagesEl = document.getElementById('rbot-widget-messages')
   const messageDiv = document.createElement('div')
   messageDiv.className = 'rbot-widget-message rbot-widget-message-system'
 
@@ -1219,7 +1098,7 @@ function addSystemMessage(content) {
 }
 
 function addTypingIndicator() {
-  const messagesEl = _byId('rbot-widget-messages')
+  const messagesEl = document.getElementById('rbot-widget-messages')
   const messageDiv = document.createElement('div')
   messageDiv.className = 'rbot-widget-message rbot-widget-message-assistant'
 
@@ -1269,6 +1148,24 @@ function addThumbRating(messageEl, messageId, messageContent) {
       saved.style.display = 'inline'
     })
   })
+}
+
+function saveMessageMetadata(sessionId, messageId, role, content, timestamp, timing = null) {
+  try {
+    fetch(`${API_BASE}/messages`, {
+      method: 'POST',
+      headers: _tenantHeaders({ 'Content-Type': 'application/json' }),
+      body: JSON.stringify({
+        sessionId,
+        messageId,
+        role,
+        content,
+        timestamp,
+        testerName: null,
+        timing,
+      }),
+    }).catch((e) => { console.error('Failed to save message metadata:', e) })
+  } catch (e) { console.error('Failed to save message metadata:', e) }
 }
 
 function saveFeedback(sessionId, messageId, rating, feedback, tags, messageContent = '') {

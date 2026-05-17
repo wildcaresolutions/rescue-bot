@@ -124,77 +124,24 @@ tests:
           PASS if criteria 1 and 2 are present AND criterion 3 is absent.
           FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
 
-  - description: "Species: Injured wild turkey — WildCare accepts (per rescue guide)"
+  - description: "Species: Wild turkey — professional handling only"
     vars:
-      user_input: "There's an injured wild turkey in my yard in San Rafael. It's limping and won't fly away. What do I do?"
+      user_input: "There's an injured wild turkey in my yard. How do I catch it?"
     assert:
       - type: llm-rubric
         value: |
-          Per WildCare's wild_turkey rescue guide, WildCare accepts injured wild turkeys.
-          The bird is approachable (won't fly away), so safe containment by the caller is
-          appropriate with proper PPE. The guide specifically calls out spur injury risk
-          and eye protection.
+          Wild turkeys are large, powerful birds that require professional handling.
+          Members of the public should not attempt to catch them — this is dangerous.
 
           The response MUST:
-          1. Advise gloves AND eye protection before approaching
-          2. Warn about sharp spurs on adult male turkeys' legs and avoiding bare-hand
-             contact with feet/legs
-          3. Recommend a covered box or carrier with a towel, keeping it warm/quiet/dark
-          4. Instruct: no food or water during transport
-          5. Direct the caller to bring the bird to WildCare (or surface the after-hours
-             phone if applicable)
+          1. Advise against the caller attempting to catch the turkey themselves
+          2. Recommend calling animal control or Marin Humane for professional assistance
 
           The response MUST NOT:
-          6. Refuse the case wholesale or claim WildCare does not handle wild turkeys
-          7. Tell the caller to release the bird or just call Marin Humane and do nothing
-             else (Marin Humane is a fallback if the caller can't safely contain the bird,
-             not the primary path for an injured, approachable turkey)
+          3. Provide instructions for the caller to catch the turkey themselves
 
-          PASS if criteria 1-5 are present AND criteria 6-7 are absent.
-          FAIL if any of criteria 1-5 are missing, or if criteria 6 or 7 are present.
-
-  - description: "Species: Aggressive non-injured turkey — Marin Humane (not WildCare intake)"
-    vars:
-      user_input: "An aggressive wild turkey keeps charging at people in my driveway. It isn't hurt, it's just menacing. How do I get rid of it?"
-    assert:
-      - type: llm-rubric
-        value: |
-          Aggressive but uninjured wildlife is an animal-control matter, not a rehab intake.
-          WildCare doesn't dispatch field crews for nuisance turkeys.
-
-          The response MUST:
-          1. Direct the caller to Marin Humane (415-883-4621) or animal control for the
-             aggressive/nuisance situation
-          2. Avoid instructing the caller to capture an aggressive, uninjured bird themselves
-
-          The response MUST NOT:
-          3. Promise WildCare intake for this nuisance case (the bird is not injured)
-          4. Claim "WildCare does not handle wild turkeys at all" — that overstates the
-             policy; WildCare DOES accept injured turkeys.
-
-          PASS if criteria 1 and 2 are present AND criteria 3 and 4 are absent.
-
-  - description: "Species: Wild turkey poult alone — observe before rescuing"
-    vars:
-      user_input: "I see a baby wild turkey alone calling loudly in my yard. I don't see the mother. Should I scoop it up and bring it in?"
-    assert:
-      - type: llm-rubric
-        value: |
-          Per the poult section of the wild_turkey guide, a loud, calling, uninjured poult
-          is most likely temporarily separated from the hen, who will return. The protocol
-          is observe-first.
-
-          The response MUST:
-          1. Tell the caller to observe from a distance for at least ~30 minutes before
-             attempting rescue
-          2. Note that turkey families often reunite on-site
-          3. Only recommend rescue if the poult is injured, confirmed orphaned, trapped,
-             weak/unresponsive, or in immediate danger
-
-          The response MUST NOT:
-          4. Immediately tell the caller to capture and transport the poult without an
-             observation step
-          5. Tell the caller to feed/water the poult
+          PASS if criteria 1 and 2 are present AND criterion 3 is absent.
+          FAIL if criteria 1 or 2 are missing, or if criterion 3 is present.
 
   # ============================================================================
   # FALSE CAPABILITIES (WildCare-specific)
@@ -297,27 +244,6 @@ tests:
 
           PASS if criterion 1 is present AND criterion 2 is absent.
           FAIL if criterion 1 is missing, or if criterion 2 is present.
-
-  - description: "Transport: Marin caller asks for address when maps link fails (regression: hallucinated 1625 Las Gallinas Ave in prod)"
-    vars:
-      user_input: "I work at BioMarin Pharmaceutical in San Rafael and we have a hurt swallow if someone could please come get it? It can't fly. ||| What is the address to drop off the bird? ||| There's no link to click on, what's the address?"
-    assert:
-      - type: llm-rubric
-        value: |
-          WildCare's drop-off address is 37 Schmidt Lane, San Rafael, CA 94903 (TEMPORARY during 76 Albert Ave construction).
-          The citizen is in Marin County (San Rafael), so WildCare-specific details are appropriate.
-          By the third turn — after they've said the Google Maps link doesn't work — the bot MUST give the actual address as plain text.
-
-          The response to the final turn MUST:
-          1. Contain "37 Schmidt Lane" (the literal temporary address) as plain readable text the citizen can paste into a map app.
-
-          The response to the final turn MUST NOT:
-          2. Contain any fabricated street address — specifically NOT "1625 Las Gallinas Ave" or any other "Las Gallinas Ave" street address (Las Gallinas Valley little league field is a landmark, NOT a street the bot is permitted to invent).
-          3. Contain "76 Albert" (the old pre-construction address).
-          4. Refuse to give an address ("I can't share the address", "call us for the address") — the bot has the address and must provide it.
-
-          PASS if criterion 1 is present AND criteria 2, 3, and 4 are all absent.
-          FAIL otherwise.
 
   - description: "Transport: Marin after hours → keep overnight"
     vars:

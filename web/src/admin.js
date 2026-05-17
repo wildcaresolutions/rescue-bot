@@ -23,7 +23,6 @@ import {
   notifyTenantConfigChanged,
 } from './admin/api.js'
 import { renderLoginPage } from './admin/login.js'
-import speciesCatalog from '../../shared/species-catalog.json'
 import {
   expandAgent,
   collapseAgent,
@@ -41,7 +40,6 @@ import {
 import {
   getTenantConfig,
   setTenantConfig,
-  onTenantConfigChange,
   getAgentMessages,
   setAgentMessages,
   isAgentStreaming,
@@ -49,7 +47,7 @@ import {
   getOnboardingPending,
   setOnboardingPending,
 } from './admin/state.js'
-import { bindSettings } from './admin/settings.js'
+import { openSettings, closeSettings, bindSettings } from './admin/settings.js'
 import { renderReportsView, bindReports } from './admin/reports.js'
 import { renderHelpView, bindHelp } from './admin/help.js'
 import {
@@ -82,11 +80,6 @@ initErrorReporting()
 // ── State ────────────────────────────────────────────────────────────────────
 
 let activeView = 'feed'     // feed | reports
-// Set by dispatchToolResult when the copilot mutates tenant config during an
-// exchange. checkSetupCompletion uses it to re-render the Playbook with fresh
-// server state ONLY when something actually changed — so a pure Q&A turn never
-// clobbers the operator's unsaved edits on the page.
-let _kbDirty = false
 // agentMessages / agentStreaming / onboardingPending live in
 // web/src/admin/state.js so the deterministic onboarding module and the
 // copilot dispatch path can read/write them without parameter threading.
@@ -138,11 +131,14 @@ async function renderAdminPortal() {
             <button class="header-nav-link active" id="dashboardBtn">Home</button>
             <button class="header-nav-link" id="previewBotBtn">Preview</button>
             <button class="header-nav-link" id="kbBtn">Playbook</button>
-            <button class="header-nav-link" id="testBotBtn">Check your bot</button>
+            <button class="header-nav-link" id="testBotBtn">Test Cases</button>
             <button class="header-nav-link" id="reportsBtn">Reports</button>
           </nav>
           <button class="header-icon-btn" id="helpIconBtn" title="Help & Documentation">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg>
+          </button>
+          <button class="header-icon-btn" id="settingsBtn" title="Settings">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
           </button>
           <div class="profile-menu" id="profileMenu">
             <button class="header-icon-btn profile-btn" id="profileBtn" title="Profile">
@@ -182,20 +178,21 @@ async function renderAdminPortal() {
         </div>
       </header>
 
-      <!-- Global Publish bar — one place to take ALL staged edits (config +
-           widget) live. Driven by has_unpublished_changes from /api/config and
-           the tenant's onboarded flag (first publish). Replaces the Preview
-           tab's old per-tab publish bar. -->
-      <div class="global-publish-bar" id="globalPublishBar" style="display:none">
-        <span class="gpb-label" id="gpbLabel">&#9679; Unpublished changes</span>
-        <span class="gpb-status setup-msg" id="gpbStatus"></span>
-        <button class="btn btn-secondary btn-sm" id="gpbDiscard">Discard</button>
-        <button class="btn btn-primary btn-sm" id="gpbPublish">Publish</button>
-      </div>
-
       <div class="admin-body">
-        <!-- Settings drawer retired — its contents (org info, domains, team,
-             daily report) now live in the Playbook tabs (Setup + Account). -->
+        <!-- Settings drawer + overlay -->
+        <div class="settings-overlay" id="settingsOverlay"></div>
+        <aside class="settings-drawer" id="settingsDrawer">
+          <div class="settings-drawer-header">
+            <h2>Settings</h2>
+            <div style="display:flex;gap:8px;align-items:center">
+              <button class="settings-maximize-btn" id="settingsMaximize" title="Maximize">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
+              </button>
+              <button class="settings-close-btn" id="settingsClose">&times;</button>
+            </div>
+          </div>
+          <div class="settings-drawer-content" id="settingsContent"></div>
+        </aside>
 
         <!-- Main content area -->
         <div class="main-content" id="mainContent">
@@ -478,29 +475,24 @@ async function renderAdminPortal() {
     }
   })
 
-  // Global Publish bar — wire buttons + keep it in sync with config.
-  document.getElementById('gpbPublish').addEventListener('click', doGlobalPublish)
-  document.getElementById('gpbDiscard').addEventListener('click', doGlobalDiscard)
-  // Re-render the bar whenever tenantConfig is replaced (every save flow does
-  // `setTenantConfig(await refreshSiteConfig({}))` after staging).
-  onTenantConfigChange(updateGlobalPublishBar)
-  // Some staging paths (copilot tools, /platform/setup mutations) only dispatch
-  // the tenant-config-changed event without refreshing config themselves. Catch
-  // those, refresh, and the listener above updates the bar.
-  window.addEventListener('tenant-config-changed', async () => {
-    try {
-      const fresh = await refreshSiteConfig({})
-      if (fresh) setTenantConfig(fresh)
-    } catch (e) { console.error('[global-bar] config refresh failed', e) }
+  // Settings drawer
+  document.getElementById('settingsBtn').addEventListener('click', openSettings)
+  document.getElementById('settingsOverlay').addEventListener('click', closeSettings)
+  document.getElementById('settingsClose').addEventListener('click', closeSettings)
+  document.getElementById('settingsMaximize').addEventListener('click', () => {
+    document.getElementById('settingsDrawer').classList.toggle('maximized')
   })
-  // Cmd/Ctrl+S publishes when there are staged changes.
+
+  // Close settings drawer on Escape
   document.addEventListener('keydown', (e) => {
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-      const bar = document.getElementById('globalPublishBar')
-      if (bar && bar.style.display !== 'none') { e.preventDefault(); doGlobalPublish() }
+    if (e.key === 'Escape') {
+      const drawer = document.getElementById('settingsDrawer')
+      if (drawer?.classList.contains('open')) {
+        closeSettings()
+        e.stopPropagation()
+      }
     }
   })
-  updateGlobalPublishBar()
 
   // Agent panel
   document.getElementById('agentCollapsedBar').addEventListener('click', expandAgent)
@@ -623,7 +615,6 @@ function showFeed() {
   document.getElementById('feedView').style.display = ''
   document.getElementById('dashboardBtn')?.classList.add('active')
   updateAgentContext()
-  updateGlobalPublishBar()
 }
 
 function showReports() {
@@ -633,7 +624,6 @@ function showReports() {
   document.getElementById('reportsBtn')?.classList.add('active')
   renderReportsView()
   updateAgentContext()
-  updateGlobalPublishBar()
 }
 
 function showTestView() {
@@ -643,7 +633,6 @@ function showTestView() {
   document.getElementById('testBotBtn')?.classList.add('active')
   renderTestView()
   updateAgentContext()
-  updateGlobalPublishBar()
 }
 
 function showPreviewView() {
@@ -655,135 +644,6 @@ function showPreviewView() {
   // Preview needs full height — disable main-content scroll
   document.getElementById('mainContent').style.overflow = 'hidden'
   renderPreviewView()
-  // Refresh the bar so it notes the preview is running the draft.
-  updateGlobalPublishBar()
-}
-
-// ── Global Publish bar ───────────────────────────────────────────────────────
-// One bar to take ALL staged edits (config + widget) live. Operator edits
-// anywhere — Playbook, Settings, Preview, or via the copilot — stage into the
-// server-side draft (lib/draft.ts). The live bot keeps serving the last
-// published config until the operator clicks Publish here. Discard reverts.
-
-let _gpbDiscardConfirming = false
-
-// Re-render the active view after a publish/discard so it reflects the new
-// live (publish) or reverted (discard) config. Preview rebuilds editorState
-// from the refreshed tenantConfig; Playbook/Reports reload their data.
-function rerenderActiveView() {
-  if (activeView === 'preview') renderPreviewView()
-  else if (activeView === 'kb') showKbView()
-  else if (activeView === 'reports') renderReportsView()
-  else if (activeView === 'feed') renderFeed()
-}
-
-function updateGlobalPublishBar() {
-  const bar = document.getElementById('globalPublishBar')
-  if (!bar) return
-  const cfg = getTenantConfig() || {}
-  const hasDraft = !!cfg.has_unpublished_changes
-  const notPublished = !cfg.onboarded
-  // Visible whenever there are staged edits OR the tenant has never published
-  // (first-publish CTA — operator needs to find Publish even with no edits).
-  const visible = hasDraft || notPublished
-  bar.style.display = visible ? 'flex' : 'none'
-  const label = document.getElementById('gpbLabel')
-  if (label) {
-    let text = notPublished && !hasDraft
-      ? '&#9679; Ready to publish your bot'
-      : notPublished && hasDraft
-        ? '&#9679; Ready to publish — with your latest edits'
-        : '&#9679; Unpublished changes'
-    // On Preview, make clear the widget below is running the draft you're editing.
-    if (hasDraft && activeView === 'preview') text += ' — the preview is running them'
-    label.innerHTML = text
-  }
-  // Discard only makes sense when there's actually a draft to throw away.
-  const discardBtn = document.getElementById('gpbDiscard')
-  if (discardBtn) discardBtn.style.display = hasDraft ? '' : 'none'
-}
-
-async function doGlobalPublish() {
-  const btn = document.getElementById('gpbPublish')
-  const status = document.getElementById('gpbStatus')
-  if (!btn) return
-  btn.disabled = true
-  btn.textContent = 'Publishing…'
-  if (status) { status.textContent = ''; status.className = 'gpb-status setup-msg' }
-  try {
-    const res = await apiFetch('/admin/publish', { method: 'POST' })
-    if (!res.ok) {
-      let msg = 'Couldn’t publish right now. Try again in a moment.'
-      try { const b = await res.json(); if (b?.error) msg = b.error } catch { /* no body */ }
-      if (res.status === 401) msg = 'Your session expired. Refresh the page to sign in again.'
-      if (status) { status.textContent = msg; status.className = 'gpb-status setup-msg error' }
-      return
-    }
-    const result = await res.json().catch(() => ({}))
-    invalidateSetupStateCache()
-    // Refresh config (clears has_unpublished_changes, flips onboarded) — the
-    // setTenantConfig listener re-renders this bar.
-    const fresh = await refreshSiteConfig({})
-    if (fresh) setTenantConfig(fresh)
-    checkBotStatus(getTenantConfig())
-    rerenderActiveView()
-    if (status) {
-      status.textContent = result.first_publish ? 'Published — your bot is live!' : 'Published'
-      status.className = 'gpb-status setup-msg success'
-      setTimeout(() => { status.textContent = ''; status.className = 'gpb-status setup-msg' }, result.first_publish ? 5000 : 3000)
-    }
-    // First publish: surface the embed snippet so the operator knows how to
-    // get the widget onto their site.
-    if (result.first_publish) {
-      appendAssistantMessage('You’re live! Open the Preview tab → Embed Code to copy the `<script>` snippet, and paste it just before `</body>` on every page where you want the chat widget to appear.')
-    }
-  } catch (e) {
-    console.error('[global-publish] network error', e)
-    if (status) { status.textContent = 'Couldn’t reach the server. Check your connection and try again.'; status.className = 'gpb-status setup-msg error' }
-  } finally {
-    btn.disabled = false
-    btn.textContent = 'Publish'
-  }
-}
-
-async function doGlobalDiscard() {
-  const btn = document.getElementById('gpbDiscard')
-  const status = document.getElementById('gpbStatus')
-  if (!btn) return
-  // Two-click confirm — discarding throws away staged work.
-  if (!_gpbDiscardConfirming) {
-    _gpbDiscardConfirming = true
-    btn.textContent = 'Discard all changes?'
-    setTimeout(() => {
-      if (_gpbDiscardConfirming) { _gpbDiscardConfirming = false; const b = document.getElementById('gpbDiscard'); if (b) b.textContent = 'Discard' }
-    }, 4000)
-    return
-  }
-  _gpbDiscardConfirming = false
-  btn.textContent = 'Discard'
-  btn.disabled = true
-  if (status) { status.textContent = ''; status.className = 'gpb-status setup-msg' }
-  try {
-    const res = await apiFetch('/admin/discard', { method: 'POST' })
-    if (!res.ok) {
-      if (status) { status.textContent = 'Couldn’t discard right now. Try again.'; status.className = 'gpb-status setup-msg error' }
-      return
-    }
-    invalidateSetupStateCache()
-    const fresh = await refreshSiteConfig({})
-    if (fresh) setTenantConfig(fresh)
-    rerenderActiveView()
-    if (status) {
-      status.textContent = 'Changes discarded'
-      status.className = 'gpb-status setup-msg'
-      setTimeout(() => { status.textContent = '' }, 2500)
-    }
-  } catch (e) {
-    console.error('[global-discard] network error', e)
-    if (status) { status.textContent = 'Couldn’t reach the server. Try again.'; status.className = 'gpb-status setup-msg error' }
-  } finally {
-    btn.disabled = false
-  }
 }
 
 
@@ -1316,14 +1176,6 @@ async function checkSetupCompletion() {
     } else {
       setTenantConfig(newConfig)
     }
-    // Copilot is the primary way to fill in the Playbook, so if the operator
-    // is looking at it while the assistant edits config, re-render with the
-    // fresh server state so the change shows up in the form live — but only
-    // when this exchange actually changed config (see _kbDirty).
-    if (_kbDirty) {
-      _kbDirty = false
-      if (activeView === 'kb') renderKbView()
-    }
   } catch { /* ignore */ }
 }
 
@@ -1740,10 +1592,27 @@ function promptForSpeciesHandling(notes, savedSummary = '') {
   setAgentInputPlaceholder('Example: We handle native wildlife, but redirect deer to 311.')
 }
 
-// Derived from shared/species-catalog.json. The free-text matching here is
-// looser than rag.ts SPECIES_PATTERNS (which uses regex); operator-typed
-// onboarding answers ("we handle hawks and owls") map to canonical labels.
-const ONBOARDING_SPECIES_TERMS = speciesCatalog.species.map(s => [s.name, s.onboarding_terms])
+const ONBOARDING_SPECIES_TERMS = [
+  ['Heron & Egret', ['heron', 'egret']],
+  ['Bat', ['bat']],
+  ['Bobcat', ['bobcat']],
+  ['Coyote', ['coyote']],
+  ['Deer & Fawn', ['deer', 'fawn']],
+  ['Duck & Goose', ['duck', 'goose', 'waterfowl']],
+  ['Fox', ['fox']],
+  ['Gull', ['gull']],
+  ['Hummingbird', ['hummingbird']],
+  ['Opossum', ['opossum', 'possum']],
+  ['Raccoon', ['raccoon']],
+  ['Raptor', ['raptor', 'hawk', 'owl', 'eagle']],
+  ['Raven', ['raven', 'crow']],
+  ['Rodent', ['rodent', 'mouse', 'rat']],
+  ['Skunk', ['skunk']],
+  ['Snake', ['snake']],
+  ['Songbird', ['songbird', 'bird']],
+  ['Squirrel', ['squirrel']],
+  ['Entangled Animal', ['entangled']],
+]
 
 function extractRedirectDestination(text) {
   const cleaned = text.replace(/\s+/g, ' ').trim()
@@ -2199,7 +2068,6 @@ function dispatchToolResult(toolResult) {
   else if (toolName === 'save_protocols') {
     showCopilotToast('Protocols saved!')
     appendChangeChip('Saved custom protocols.')
-    _kbDirty = true
   }
   else if (toolName === 'create_test_scenario') {
     // Show what the scenario actually IS — description + the visitor message
@@ -2219,26 +2087,10 @@ function dispatchToolResult(toolResult) {
     if (activeView === 'test') loadEvalScenarios()
     const status = result?.scoring_status || result?.pass_status
     if (status) {
-      // Auto-grade is ADVISORY — label it as a hint, not a verdict, so the
-      // operator knows their 👍/👎 is what actually counts.
-      const label = status === 'pass' ? 'looks good' : status === 'fail' ? 'maybe off' : 'not scored'
+      const label = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : 'NOT SCORED'
       const desc = (result.description || '').slice(0, 60)
-      appendChangeChip(`Checked “${desc}” — auto-hint: ${label}`)
+      appendChangeChip(`Test case [${label}]: ${desc}`)
     }
-  }
-  else if (toolName === 'update_test_scenario') {
-    appendChangeChip(`Edited test case: ${(result?.description || '').slice(0, 60)}`)
-    if (activeView === 'test') loadEvalScenarios()
-  }
-  else if (toolName === 'delete_test_scenario') {
-    appendChangeChip('Deleted test case.')
-    if (activeView === 'test') loadEvalScenarios()
-  }
-  else if (toolName === 'mark_test_reviewed') {
-    const v = result?.review_status
-    const label = v === 'approved' ? '👍 approved' : v === 'rejected' ? '👎 needs work' : 'cleared'
-    appendChangeChip(`Test verdict: ${label}`)
-    if (activeView === 'test') loadEvalScenarios()
   }
   else if (toolName === 'resolve_action_item') {
     showCopilotToast(result?.resolved ? 'Action item resolved!' : 'Item not found')
@@ -2248,11 +2100,9 @@ function dispatchToolResult(toolResult) {
     // "Configuration updated" with no detail is unhelpful — show fields actually saved.
     const summary = summarizeConfigUpdate(result)
     appendChangeChip(summary && summary !== 'Saved' ? summary : 'Config saved (no fields)')
-    _kbDirty = true
   }
   else if (toolName === 'update_org_info') {
     appendChangeChip(summarizeConfigUpdate(result) || 'Org info updated.')
-    _kbDirty = true
   }
   else if (toolName === 'update_colors') {
     const c = result?.applied || {}
@@ -2264,17 +2114,17 @@ function dispatchToolResult(toolResult) {
   }
   else if (toolName === 'add_custom_species') {
     appendChangeChip(`Added custom species: ${result?.species || result?.message || ''}`.trim())
-    _kbDirty = true
+    if (activeView === 'kb') renderKbView()
   }
   else if (toolName === 'update_species_config') {
     appendChangeChip(`${result?.species || 'Species'} → ${result?.mode || ''}${result?.message?.includes('redirect') ? ' (with redirect)' : ''}`.trim())
-    _kbDirty = true
+    if (activeView === 'kb') renderKbView()
   }
   else if (toolName === 'bulk_skip_other_species') {
     const kept = (result?.kept || []).join(', ') || '(none)'
     const n = result?.skipped_count ?? (result?.skipped?.length || 0)
     appendChangeChip(`Bulk: kept ${kept}, set ${n} others to skip → ${result?.redirect || ''}`.trim())
-    _kbDirty = true
+    if (activeView === 'kb') renderKbView()
   }
   else if (toolName === 'get_species_config') { /* read-only: no chip */ }
   else if (toolName === 'extract_brand_colors') {
@@ -2451,7 +2301,6 @@ function showKbView() {
   document.getElementById('kbBtn')?.classList.add('active')
   renderKbView()
   updateAgentContext()
-  updateGlobalPublishBar()
 }
 
 function showHelpView() {
@@ -2462,7 +2311,6 @@ function showHelpView() {
   document.getElementById('helpIconBtn')?.classList.add('active')
   renderHelpView()
   updateAgentContext()
-  updateGlobalPublishBar()
 }
 
 

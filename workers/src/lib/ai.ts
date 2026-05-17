@@ -1,9 +1,8 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import type { Env } from './types'
-import { logError } from './logger'
 
-export const DEFAULT_MAIN_CHAT_MODEL = 'anthropic/claude-sonnet-4-6'
+export const DEFAULT_MAIN_CHAT_MODEL = 'workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 export const DEFAULT_EVAL_JUDGE_MODEL = 'workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 export const DEFAULT_PHOTO_RECOGNIZER_MODEL = 'openai/gpt-4.1-mini'
 export const DEFAULT_AI_GATEWAY_ID = 'default'
@@ -231,14 +230,26 @@ export async function runGatewayChatText(opts: {
   maxOutputTokens?: number
 }): Promise<{ text: string; usage: unknown; raw: unknown }> {
   let result: Record<string, any>
-  if (opts.model.startsWith('openai/') || opts.model.startsWith('anthropic/') || opts.model.startsWith('google/') || opts.model.startsWith('google-ai-studio/') || opts.model.startsWith('workers-ai/')) {
-    // google-ai-studio/ intentionally routes through /compat (Unified Billing), NOT the
-    // native Google AI Studio endpoint. The native path requires a Google API key even
-    // when Unified Billing is enabled — /compat handles provider auth automatically.
+  if (opts.model.startsWith('openai/') || opts.model.startsWith('anthropic/') || opts.model.startsWith('google/') || opts.model.startsWith('workers-ai/')) {
     result = await runGatewayCompatRequest(opts.env, {
       model: opts.model,
       messages: openAiMessages(opts.system, opts.messages),
       ...(opts.maxOutputTokens ? { max_tokens: opts.maxOutputTokens } : {}),
+    })
+  } else if (opts.model.startsWith('google-ai-studio/')) {
+    const messages: GatewayMessage[] = [
+      ...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []),
+      ...opts.messages,
+    ]
+    const model = googleStudioModelName(opts.model)
+    result = await runGatewayRequest(opts.env, {
+      provider: 'google-ai-studio',
+      endpoint: `v1beta/models/${model}:generateContent`,
+      headers: { 'Content-Type': 'application/json' },
+      query: {
+        ...googleContents(messages),
+        ...(opts.maxOutputTokens ? { generationConfig: { maxOutputTokens: opts.maxOutputTokens } } : {}),
+      },
     })
   } else {
     throw new Error(`Unsupported AI Gateway model prefix: ${opts.model}`)
@@ -249,115 +260,6 @@ export async function runGatewayChatText(opts: {
     usage: result.usage ?? result.usageMetadata ?? null,
     raw: result,
   }
-}
-
-// ── Streaming variant ─────────────────────────────────────────────────────────
-//
-// Typed interface for OpenAI-compatible SSE stream events.
-// Matches the shape emitted by the Cloudflare AI Gateway /compat endpoint.
-interface OpenAIStreamEvent {
-  choices?: Array<{ delta?: { content?: string } }>
-  usage?: { prompt_tokens?: number; completion_tokens?: number }
-}
-
-// Opens an SSE chat-completions stream against /compat with `stream: true`,
-// parses the delta events, and returns a ReadableStream of text-only chunks
-// the caller can pipe into a streaming HTTP response. Usage tokens (when the
-// provider includes them in the final SSE event) are surfaced via the optional
-// `onUsage` callback so the caller can log them after the stream closes.
-//
-// Caller responsibility: handle the fetch-time error (bad token, 4xx/5xx)
-// before piping to the response. Errors discovered DURING streaming are
-// logged and close the inner stream cleanly so the partial response still
-// reaches the user.
-export async function openGatewayChatStream(opts: {
-  env: Env
-  model: string
-  system?: string
-  messages: Array<{ role: 'user' | 'assistant'; content: string }>
-  maxOutputTokens?: number
-  onUsage?: (usage: unknown) => void
-}): Promise<ReadableStream<string>> {
-  const supported = opts.model.startsWith('openai/')
-    || opts.model.startsWith('anthropic/')
-    || opts.model.startsWith('google/')
-    || opts.model.startsWith('google-ai-studio/')
-    || opts.model.startsWith('workers-ai/')
-  if (!supported) {
-    throw new Error(`Streaming not supported for model prefix: ${opts.model}`)
-  }
-
-  const token = getAiGatewayToken(opts.env)
-  if (!token) {
-    throw new Error('Cloudflare AI Gateway token is not configured. Set AI_GATEWAY_TOKEN.')
-  }
-
-  const response = await fetch(`${getAiGatewayBaseURL(opts.env)}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'cf-aig-authorization': `Bearer ${token}`,
-    },
-    body: JSON.stringify({
-      model: opts.model,
-      messages: openAiMessages(opts.system, opts.messages),
-      stream: true,
-      ...(opts.maxOutputTokens ? { max_tokens: opts.maxOutputTokens } : {}),
-    }),
-  })
-
-  if (!response.ok) {
-    const errBody = await response.text().catch(() => '')
-    throw new Error(redactSensitive(`Gateway ${response.status}: ${errBody.slice(0, 500)}`))
-  }
-  if (!response.body) {
-    throw new Error('Gateway streaming response had no body')
-  }
-
-  const decoder = new TextDecoder()
-  const upstream = response.body
-  const onUsage = opts.onUsage
-
-  return new ReadableStream<string>({
-    async start(controller) {
-      const reader = upstream.getReader()
-      let buffer = ''
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          buffer += decoder.decode(value, { stream: true })
-          let nlIdx
-          while ((nlIdx = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.slice(0, nlIdx).trim()
-            buffer = buffer.slice(nlIdx + 1)
-            if (!line.startsWith('data:')) continue
-            const data = line.slice(5).trim()
-            if (data === '[DONE]') {
-              controller.close()
-              return
-            }
-            try {
-              const ev = JSON.parse(data) as OpenAIStreamEvent
-              const delta = ev.choices?.[0]?.delta?.content
-              if (typeof delta === 'string' && delta.length > 0) {
-                controller.enqueue(delta)
-              }
-              if (ev.usage && onUsage) onUsage(ev.usage)
-            } catch {
-              // Skip malformed SSE event — providers sometimes send keepalives
-            }
-          }
-        }
-        controller.close()
-      } catch (e) {
-        logError('ai/sse-stream-error', { error: redactSensitive(String(e)) })
-        controller.close()
-      } finally {
-        try { reader.releaseLock() } catch { /* already released */ }
-      }
-    },
-  })
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -443,7 +345,7 @@ export async function runGatewayImageObject<T>(opts: {
       })
     }
   } catch (e) {
-    logError('ai/gateway-image-failed', { error: errorMessage(e) })
+    console.error('[ai] Gateway image failed; failing closed without inferred metadata:', errorMessage(e))
     return {
       object: null,
       usage: null,

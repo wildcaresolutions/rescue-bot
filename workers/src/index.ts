@@ -1,23 +1,19 @@
 import { Hono } from 'hono'
-import type { Context } from 'hono'
 import type { Env, Tenant, Variables } from './lib/types'
 import {
   resolveSession, isDevAuthBypass, tenantCookiePrefix, PLATFORM_COOKIE_PREFIX,
 } from './lib/auth'
 import { generateReport } from './lib/report'
 import { loadTenantBySlug } from './lib/tenant-loader'
-import { extractSlug, isAdminHost, hostFirstLabel } from './lib/routing'
-import { getEmbedHost, getPlatformName } from './lib/platform'
+import { extractSlug, isAdminHost } from './lib/routing'
+import { getPlatformName } from './lib/platform'
 import chat from './routes/chat'
 import admin from './routes/admin'
 import platform from './routes/platform'
 import agent from './routes/agent'
 import authRoutes from './routes/auth'
 import type { HealthResponse, HealthStatus, HealthCheckKey } from './types/health'
-import { getCachedDomains, cacheDomains } from './lib/cache'
 import { parseOrgConfig } from './lib/tenant-loader'
-import { overlayTenant, hasDraft } from './lib/draft'
-import { logWarn, logError } from './lib/logger'
 
 // Sentinel tenantId for platform-admin sessions (admin.<root>).
 const PLATFORM_TENANT_ID = 'platform'
@@ -35,18 +31,45 @@ export type { Env }
 //     org might see 5-10 chats/min at peak; 60 leaves comfortable headroom
 //     while still capping a runaway loop.
 //
-// Rate limiting uses CF's native binding (per-colo, eventually-consistent).
-// This is intentionally not globally exact — it's a cost-DoS guard, not a
-// billing meter. See design doc: fix/rate-limiting PR.
+// Module-level map survives across requests within a warm Worker isolate.
+// Resets on cold start, which is acceptable for the IP layer (sustained
+// attacks keep the isolate warm) and conservative for the tenant layer
+// (a cold start gives a tenant a "fresh minute" sooner than they should
+// get one; bounded by isolate eviction cadence, typically minutes).
+//
+// Audit P3-29 noted this in-memory approach doesn't survive across
+// isolates — a multi-isolate attacker can dodge the limit. Durable Object-
+// backed counters are the right next step; tracked as future work. The
+// in-memory layer remains useful for the common single-isolate case and
+// for short-term burst protection.
 
+const RATE_WINDOW_MS = 60_000           // 1 minute
+const RATE_LIMIT_CHAT = 15              // max chat messages per IP per minute
+const RATE_LIMIT_SESSION = 10           // max session creates per IP per minute
+const RATE_LIMIT_TENANT_CHAT = 60       // max chat messages per TENANT per minute (P3-29)
 const PHOTO_RESERVATION_TTL_MS = 15 * 60_000
 const PHOTO_STANDARD_RETENTION_MS = 30 * 86_400_000
 const PHOTO_CLINICAL_RETENTION_MS = 90 * 86_400_000
 
-function clientIp(c: Context<{ Bindings: Env; Variables: Variables }>): string {
-  return c.req.header('CF-Connecting-IP')
-    || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim()
-    || 'unknown'
+const rateLimitMap = new Map<string, number[]>()
+
+function checkRateLimit(ip: string, limit: number): boolean {
+  const now = Date.now()
+  const key = `${ip}:${limit}`
+  const timestamps = rateLimitMap.get(key) || []
+  const recent = timestamps.filter(t => now - t < RATE_WINDOW_MS)
+  if (recent.length >= limit) return false
+  recent.push(now)
+  rateLimitMap.set(key, recent)
+  // Prevent memory leak: prune old entries periodically
+  if (rateLimitMap.size > 10_000) {
+    for (const [k, v] of rateLimitMap) {
+      const filtered = v.filter(t => now - t < RATE_WINDOW_MS)
+      if (filtered.length === 0) rateLimitMap.delete(k)
+      else rateLimitMap.set(k, filtered)
+    }
+  }
+  return true
 }
 
 async function deletePhotoObjects(env: Env, row: { r2_key: string; thumbnail_key?: string | null }) {
@@ -136,7 +159,7 @@ app.use('*', async (c, next) => {
       // DB error (e.g., missing tenants table on a fresh local D1) shouldn't
       // 500 the request. Log + treat as unknown tenant — downstream code
       // either serves marketing or 401s on auth-gated paths.
-      logError('tenant-resolver/db-lookup-failed', { error: e })
+      console.error('[tenant-resolver] DB lookup failed:', e)
       c.set('tenant', null)
     }
   } else {
@@ -173,18 +196,11 @@ async function isOriginAllowed(origin: string, tenant: Tenant | null, db: D1Data
   if (!tenant) return false
 
   try {
-    // L-7: use cross-request domains cache to avoid a D1 round-trip on every
-    // CORS-eligible request. Cache is invalidated when domains are added or
-    // removed via the admin API (admin-misc.ts: addDomain/removeDomain).
-    let domains = getCachedDomains(tenant.id)
-    if (domains === null) {
-      const { results } = await db.prepare(
-        'SELECT domain FROM allowed_domains WHERE tenant_id = ?',
-      ).bind(tenant.id).all()
-      domains = results.map(r => r.domain as string)
-      cacheDomains(tenant.id, domains)
-    }
-    for (const d of domains) {
+    const { results } = await db.prepare(
+      'SELECT domain FROM allowed_domains WHERE tenant_id = ?',
+    ).bind(tenant.id).all()
+    for (const row of results) {
+      const d = row.domain as string
       if (originHost === d || originHost.endsWith('.' + d)) return true
     }
   } catch { /* fail closed */ }
@@ -192,32 +208,12 @@ async function isOriginAllowed(origin: string, tenant: Tenant | null, db: D1Data
   return false
 }
 
-/**
- * M-6: within-request memoization for isOriginAllowed.
- *
- * For a normal cross-origin POST to /api/sessions the auth middleware runs
- * during next() (computing + caching the boolean), then the CORS post-next
- * header block reads the cached value — eliminating the second D1 query.
- * Origin and tenant are constant per request, so the boolean is safe to memo.
- */
-async function isOriginAllowedCached(
-  c: { get: (k: 'originAllowed') => boolean | undefined; set: (k: 'originAllowed', v: boolean) => void; env: { DB: D1Database } },
-  origin: string,
-  tenant: Tenant | null,
-): Promise<boolean> {
-  const cached = c.get('originAllowed')
-  if (cached !== undefined) return cached
-  const result = await isOriginAllowed(origin, tenant, c.env.DB)
-  c.set('originAllowed', result)
-  return result
-}
-
 app.use('*', async (c, next) => {
   const origin = c.req.header('Origin')
 
   if (c.req.method === 'OPTIONS') {
     const tenant = c.get('tenant')
-    const allowed = origin ? await isOriginAllowedCached(c, origin, tenant) : false
+    const allowed = origin ? await isOriginAllowed(origin, tenant, c.env.DB) : false
 
     return new Response(null, {
       status: 204,
@@ -234,7 +230,7 @@ app.use('*', async (c, next) => {
 
   if (origin) {
     const tenant = c.get('tenant')
-    const allowed = await isOriginAllowedCached(c, origin, tenant)
+    const allowed = await isOriginAllowed(origin, tenant, c.env.DB)
 
     if (allowed) {
       c.res.headers.set('Access-Control-Allow-Origin', origin)
@@ -296,7 +292,7 @@ app.use('/api/*', async (c, next) => {
     if (isDevAuthBypass(c.env)) return next()
     const origin = c.req.header('Origin')
     if (!origin) return c.json({ error: 'Origin header required' }, 403)
-    const allowed = await isOriginAllowedCached(c, origin, tenant)
+    const allowed = await isOriginAllowed(origin, tenant, c.env.DB)
     if (allowed) return next()
     // Allow the admin's own preview iframe: its Origin is the tenant admin
     // host (e.g. wildcare.wildcaresolutions.org), which we deliberately don't
@@ -376,7 +372,6 @@ app.get('/health', async (c) => {
     vectorize: 'unhealthy',
     storage: 'unhealthy',
     media_storage: 'unhealthy',
-    ai: 'unhealthy',
   }
 
   // D1
@@ -384,7 +379,7 @@ app.get('/health', async (c) => {
     await c.env.DB.prepare('SELECT 1').run()
     checks.database = 'healthy'
   } catch (e) {
-    logError('health/db-check-failed', { error: e })
+    console.error('[health] DB check failed:', e)
   }
 
   // Vectorize (768d cosine index)
@@ -392,7 +387,7 @@ app.get('/health', async (c) => {
     await c.env.VECTORIZE.query(new Array(768).fill(0), { topK: 1 })
     checks.vectorize = 'healthy'
   } catch (e) {
-    logError('health/vectorize-check-failed', { error: e })
+    console.error('[health] Vectorize check failed:', e)
   }
 
   // R2: head() returns null for missing keys without throwing. Any thrown error
@@ -403,29 +398,14 @@ app.get('/health', async (c) => {
     await c.env.R2.head('_health_check_nonexistent')
     checks.storage = 'healthy'
   } catch (e) {
-    logError('health/r2-check-failed', { error: e })
+    console.error('[health] R2 check failed:', e)
   }
 
   try {
     await c.env.MEDIA_BUCKET.head('_health_check_nonexistent')
     checks.media_storage = 'healthy'
   } catch (e) {
-    logError('health/media-bucket-check-failed', { error: e })
-  }
-
-  // Workers AI — minimal embeddings call to verify the AI binding is live.
-  // M-12: if the binding is unconfigured or the model fails, mark degraded
-  // so health returns 503 instead of 200 while every chat request fails.
-  // 3-second timeout via Promise.race so a slow binding doesn't stall /health.
-  try {
-    const probe = (c.env.AI.run('@cf/baai/bge-base-en-v1.5', { text: 'health' }) as Promise<{ data?: number[][] }>)
-    const timeout = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error('ai probe timeout')), 3000),
-    )
-    const r = await Promise.race([probe, timeout])
-    if (r?.data?.length) checks.ai = 'healthy'
-  } catch (e) {
-    console.error('[health] AI check failed:', e)
+    console.error('[health] MEDIA_BUCKET check failed:', e)
   }
 
   const allOk = Object.values(checks).every(s => s === 'healthy')
@@ -456,33 +436,28 @@ app.get('/api/config', async (c) => {
     })
   }
 
+  const logoUrl = tenant.logo_r2_key ? `/assets/${tenant.logo_r2_key}` : null
+
   // Authed payload includes editable config; check via Bearer or cookie.
   const verified = await resolveSession(c.req.raw, tenantCookiePrefix(tenant.slug), c.env)
   const isAuthed = !!verified && verified.tenantId === tenant.id
 
-  // The operator's admin (authed, same-origin cookie) sees their DRAFT; the
-  // public embedded widget (cross-origin, unauthed) sees LIVE/published. The
-  // split is automatic: unauthed → editing === the live row. Publish markers
-  // (onboarded) are never draftable, so they always read from the live row.
-  const editing = isAuthed ? overlayTenant(tenant) : tenant
-  const logoUrl = editing.logo_r2_key ? `/assets/${editing.logo_r2_key}` : null
-
   return c.json({
     platform: false,
     platform_name: getPlatformName(c.env),
-    name: editing.name,
-    phone: editing.phone,
-    url: editing.url,
-    email: editing.email,
+    name: tenant.name,
+    phone: tenant.phone,
+    url: tenant.url,
+    email: tenant.email,
     location: {
-      county: editing.location_county,
-      state: editing.location_state,
-      service_area: editing.location_service_area,
+      county: tenant.location_county,
+      state: tenant.location_state,
+      service_area: tenant.location_service_area,
     },
     branding: {
-      primary_color: editing.color_primary,
-      secondary_color: editing.color_secondary,
-      accent_color: editing.color_accent,
+      primary_color: tenant.color_primary,
+      secondary_color: tenant.color_secondary,
+      accent_color: tenant.color_accent,
     },
     logo_url: logoUrl,
     cookie_prefix: tenantCookiePrefix(tenant.slug),
@@ -491,21 +466,13 @@ app.get('/api/config', async (c) => {
     onboarded: !!tenant.onboarded,
     turnstile_site_key: turnstileSiteKey,
     dev_auth_bypass: devAuthBypass,
-    custom_instruction: isAuthed ? (editing.custom_instruction ?? '') : undefined,
-    org_config: isAuthed ? parseOrgConfig(editing.org_config) : undefined,
-    bot_overrides: isAuthed ? parseOrgConfig<Record<string, unknown>>(editing.bot_overrides) : undefined,
-    house_rules: isAuthed ? (editing.house_rules ?? '') : undefined,
-    report_recipients: isAuthed ? (editing.report_recipients ?? '') : undefined,
-    daily_reports_enabled: isAuthed ? Boolean(editing.daily_reports_enabled) : undefined,
-    // Unpublished-changes signal for the global Discard/Publish bar.
-    has_unpublished_changes: isAuthed ? hasDraft(tenant) : undefined,
-    draft_updated_at: isAuthed ? tenant.draft_updated_at : undefined,
-    widget_custom_css: editing.widget_custom_css ?? null,
-    widget_theme: editing.widget_theme ? parseOrgConfig<Record<string, unknown>>(editing.widget_theme) : null,
-    // CDN-cached embed host the operator points partners at, when configured
-    // (PLATFORM_EMBED_HOST in org.env). Null = fork hasn't wired one; the
-    // admin Publish UI falls back to the worker-origin `/widget.js`.
-    embed_host: getEmbedHost(c.env),
+    custom_instruction: isAuthed ? (tenant.custom_instruction ?? '') : undefined,
+    org_config: isAuthed ? parseOrgConfig(tenant.org_config) : undefined,
+    bot_overrides: isAuthed ? parseOrgConfig<Record<string, unknown>>(tenant.bot_overrides) : undefined,
+    report_recipients: isAuthed ? (tenant.report_recipients ?? '') : undefined,
+    daily_reports_enabled: isAuthed ? Boolean(tenant.daily_reports_enabled) : undefined,
+    widget_custom_css: tenant.widget_custom_css ?? null,
+    widget_theme: tenant.widget_theme ? parseOrgConfig<Record<string, unknown>>(tenant.widget_theme) : null,
   })
 })
 
@@ -557,51 +524,49 @@ app.get('/assets/*', async (c) => {
   return new Response(object.body, { headers })
 })
 
-// Fail-open helper: if the binding throws (misconfigured namespace, transient
-// platform fault), allow the request and log — this is a cost-DoS guard, not
-// an auth gate. A misconfigured binding should not take the service down.
-async function rlCheck(binding: RateLimit, key: string): Promise<boolean> {
-  try {
-    return (await binding.limit({ key })).success
-  } catch (err) {
-    logWarn('rate-limit-binding-error', { key, error: String(err) })
-    return true  // fail open
-  }
-}
-
 // ── Rate limiting middleware for public chat endpoints ────────────────────────
 
-// POST /api/sessions/* — chat messages (per-IP + per-tenant)
 app.use('/api/sessions/*', async (c, next) => {
   if (c.req.method !== 'POST') return next()
-  const ip = clientIp(c)
-  if (!(await rlCheck(c.env.RL_IP_CHAT, ip))) {
-    return c.json({ error: 'Rate limit exceeded. Please wait before sending more messages.' }, 429,
-      { 'Retry-After': '60' })
+  const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || 'unknown'
+  if (!checkRateLimit(ip, RATE_LIMIT_CHAT)) {
+    return c.json({ error: 'Rate limit exceeded. Please wait before sending more messages.' }, 429)
   }
+  // Per-tenant ceiling (audit P3-29). One client hitting from many IPs
+  // would dodge the IP-layer; the tenant layer caps aggregate volume per
+  // tenant per minute. Slipping past both requires hitting a fresh tenant
+  // AND a fresh IP simultaneously, which a real attacker can't engineer
+  // at scale against a multi-tenant SaaS.
   const tenant = c.get('tenant')
   if (tenant) {
-    if (!(await rlCheck(c.env.RL_TENANT, `chat:${tenant.id}`))) {
-      return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429,
-        { 'Retry-After': '60' })
+    const tenantKey = `tenant:${tenant.id}:chat`
+    if (!checkRateLimit(tenantKey, RATE_LIMIT_TENANT_CHAT)) {
+      return c.json({
+        error: 'Tenant rate limit exceeded. The org is sending too many chat messages too quickly; try again in a minute.',
+        scope: 'tenant',
+      }, 429)
     }
   }
   return next()
 })
 
-// POST /api/sessions — session creation (per-IP + per-tenant)
 app.use('/api/sessions', async (c, next) => {
   if (c.req.method !== 'POST') return next()
-  const ip = clientIp(c)
-  if (!(await rlCheck(c.env.RL_IP_SESSION, ip))) {
-    return c.json({ error: 'Rate limit exceeded. Please wait before creating new sessions.' }, 429,
-      { 'Retry-After': '60' })
+  const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || 'unknown'
+  if (!checkRateLimit(ip, RATE_LIMIT_SESSION)) {
+    return c.json({ error: 'Rate limit exceeded. Please wait before creating new sessions.' }, 429)
   }
+  // Per-tenant session-create ceiling (audit P3-29). Same shape as the
+  // per-tenant chat limit — defends against an attacker spreading across
+  // IPs to burn one tenant's session budget.
   const tenant = c.get('tenant')
   if (tenant) {
-    if (!(await rlCheck(c.env.RL_TENANT, `sess:${tenant.id}`))) {
-      return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429,
-        { 'Retry-After': '60' })
+    const tenantKey = `tenant:${tenant.id}:session`
+    if (!checkRateLimit(tenantKey, RATE_LIMIT_TENANT_CHAT)) {
+      return c.json({
+        error: 'Tenant rate limit exceeded. The org is creating sessions too quickly; try again in a minute.',
+        scope: 'tenant',
+      }, 429)
     }
   }
   return next()
@@ -669,25 +634,7 @@ export default {
     const rewrittenUrl = new URL(url)
     const devBypass = isDevAuthBypass(env)
 
-    if (hostFirstLabel(host) === 'smoke') {
-      // Smoke test page — highest priority, before tenant/slug routing so a
-      // ?tenant= query param doesn't accidentally route to login.html.
-      // Serves the embed widget at a stable non-localhost origin so CI can
-      // test CORS with a real allowed_domains DB lookup.
-      // smoke.wildcaresolutions.org must be seeded in allowed_domains for the
-      // tenant under test (idempotent INSERT OR IGNORE in the `smoke` CI job).
-      const embedHost = getEmbedHost(env)
-      const scriptSrc = embedHost ? `https://${embedHost}/v1.js` : '/widget.js'
-      const tenantSlug = url.searchParams.get('tenant') ?? 'wildcare'
-      return new Response(
-        `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
-        `<title>smoke</title></head><body>` +
-        `<script src="${scriptSrc}" data-tenant="${tenantSlug}"></script>` +
-        `</body></html>`,
-        { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
-      )
-
-    } else if (isAdminHost(host)) {
+    if (isAdminHost(host)) {
       // Platform admin host. Cookie is wc_platform_*.
       const session = devBypass ? null
         : await resolveSession(request, PLATFORM_COOKIE_PREFIX, env)
@@ -704,7 +651,7 @@ export default {
         // DB lookup failed (missing table on fresh local D1, transient
         // outage, etc.). Don't 500 — fall through to the unknown-tenant
         // path below and serve marketing.
-        logError('asset-router/tenant-lookup-failed', { error: e })
+        console.error('[asset-router] tenant lookup failed:', e)
       }
 
       if (!tenant) {
@@ -748,55 +695,43 @@ export default {
 
     const isReportCron = cron === '0 14 * * *'
     try {
-      // Cleanup expired auth tokens — fire-and-forget, not blocking.
       ctx.waitUntil(
         env.DB.prepare('DELETE FROM citizen_session_tokens WHERE expires_at < ?')
           .bind(Date.now())
           .run()
-          .catch(e => logError('scheduled/session-token-cleanup-failed', { error: e })),
-      )
-      // M-14: purge expired magic link tokens (accumulate indefinitely otherwise;
-      // previously cleaned only when the same email requested a new token).
-      ctx.waitUntil(
-        env.DB.prepare("DELETE FROM magic_tokens WHERE expires_at < datetime('now')")
-          .run()
-          .catch(e => console.error('[scheduled] magic_tokens cleanup failed:', e)),
+          .catch(e => console.error('[scheduled] Session-token cleanup failed:', e)),
       )
       const { results: tenants } = await env.DB.prepare(
         'SELECT id, message_retention_days, analysis_retention_days, daily_reports_enabled FROM tenants',
       ).all()
-
-      // L-15: process tenant retention in sequential batches of 10 to avoid
-      // spawning hundreds of concurrent D1 writes on large deployments.
-      // Reports remain fire-and-forget (ctx.waitUntil) inside each tenant task.
-      const retentionTasks = tenants.map(t => async () => {
+      for (const t of tenants) {
+        // Reports — only on the 14:00 UTC tick AND only for tenants who
+        // explicitly opted in via the admin console toggle (default is OFF).
         if (isReportCron && (t.daily_reports_enabled as number) === 1) {
           ctx.waitUntil(
             generateReport(env, t.id as string, false).catch(e =>
-              logError('scheduled/report-failed', { tenantId: t.id, error: e }),
+              console.error(`[scheduled] Report failed for tenant ${t.id}:`, e),
             ),
           )
         }
+        // Data retention: purge old messages and scrub PII from old analysis.
+        // Runs on both crons — idempotent, low cost.
         const msgDays = (t.message_retention_days as number) || 90
         const analysisDays = (t.analysis_retention_days as number) || 30
-        await Promise.all([
-          env.DB.prepare(
-            `DELETE FROM messages WHERE tenant_id = ? AND timestamp < ?`,
-          ).bind(t.id, Date.now() - msgDays * 86_400_000).run(),
-          env.DB.prepare(
-            `UPDATE session_analysis SET contact_info = NULL WHERE tenant_id = ? AND contact_info IS NOT NULL AND analyzed_at < datetime('now', '-' || ? || ' days')`,
-          ).bind(t.id, analysisDays).run(),
-          runPhotoRetention(env, t.id as string),
-        ]).catch(e => logError('scheduled/retention-cleanup-failed', { tenantId: t.id, error: e }))
-      })
-
-      ctx.waitUntil((async () => {
-        for (let i = 0; i < retentionTasks.length; i += 10) {
-          await Promise.all(retentionTasks.slice(i, i + 10).map(fn => fn()))
-        }
-      })())
+        ctx.waitUntil(
+          Promise.all([
+            env.DB.prepare(
+              `DELETE FROM messages WHERE tenant_id = ? AND timestamp < ?`,
+            ).bind(t.id, Date.now() - msgDays * 86_400_000).run(),
+            env.DB.prepare(
+              `UPDATE session_analysis SET contact_info = NULL WHERE tenant_id = ? AND contact_info IS NOT NULL AND analyzed_at < datetime('now', '-' || ? || ' days')`,
+            ).bind(t.id, analysisDays).run(),
+            runPhotoRetention(env, t.id as string),
+          ]).catch(e => console.error(`[scheduled] Retention cleanup failed for tenant ${t.id}:`, e)),
+        )
+      }
     } catch (e) {
-      logError('scheduled/query-tenants-failed', { error: e })
+      console.error('[scheduled] Failed to query tenants for reports:', e)
     }
   },
 }

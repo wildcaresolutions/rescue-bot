@@ -14,15 +14,8 @@ marked.setOptions({
 // tapping "ahnow.org" doesn't replace the chat. DOMPurify's default
 // allowlist permits the resulting target/rel attributes.
 const linkRenderer = new marked.Renderer()
-// MUST be a regular function (not an arrow): marked copies this method onto its
-// own renderer and sets `this.parser` there at parse time. An arrow function
-// closes over the original `linkRenderer` instance, whose `.parser` is never
-// set — so parseInline was skipped and EVERY link rendered with EMPTY text
-// (markdown links lost their words; bare URLs became invisible anchors — e.g.
-// the bot's "navigate here: <maps link>" showed no clickable link in prod).
-// Using `this.parser` + an `|| href` fallback keeps link text visible.
-linkRenderer.link = function link({ href, title, tokens }) {
-  const text = this.parser?.parseInline(tokens) || href
+linkRenderer.link = ({ href, title, tokens }) => {
+  const text = linkRenderer.parser?.parseInline(tokens) ?? ''
   const titleAttr = title ? ` title="${title}"` : ''
   return `<a href="${href}" target="_blank" rel="noopener noreferrer"${titleAttr}>${text}</a>`
 }

@@ -12,9 +12,6 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
-  // Exclude the cross-origin widget spec — it runs under its own config
-  // (playwright-widget.config.ts) because it has no wrangler dependency.
-  testIgnore: 'widget-embed.spec.ts',
   fullyParallel: false,             // single Wrangler dev server, no parallel writes
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,
@@ -35,9 +32,6 @@ export default defineConfig({
   ],
 
   // Spin up the dev server for the test run. Reuse if already running locally.
-  // Required by apply.spec.ts. The widget spec (e2e/widget-embed.spec.ts) is
-  // self-contained — it boots its own HTTP server and points at the prod
-  // embed bundle, so it doesn't depend on this dev server.
   webServer: {
     command: 'cd workers && npx wrangler dev --local',
     url: 'http://localhost:8787/health',

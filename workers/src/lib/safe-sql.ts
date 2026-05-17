@@ -34,16 +34,6 @@
 //      `tenant_id != :tenant_id` and `tenant_id = 'attacker-tenant'`.
 //   7. Existing checks preserved: no comments, no multi-statement, no
 //      mutating DDL/DML keywords.
-//   8. (v2.1) Ban OR entirely — OR anywhere in the WHERE clause creates an
-//      alternative result set that bypasses the tenant_id = :tenant_id
-//      conjunct, e.g. `tenant_id = :tenant_id OR 1=1` returns ALL rows.
-//      Analytics queries need only AND-chains; OR has no safe use here.
-//   9. (v2.1) Ban standalone boolean NOT — `NOT tenant_id = :tenant_id`
-//      negates the mandatory tenant scope predicate, returning every OTHER
-//      tenant's rows. "Standalone" means NOT used as a boolean prefix to a
-//      comparison or grouping. Operator-NOT forms (IS NOT NULL, NOT IN,
-//      NOT LIKE, NOT BETWEEN, NOT GLOB, NOT REGEXP, NOT MATCH) are still
-//      allowed because they don't negate the tenant scoping.
 //
 // Limitations (documented intentionally — flagged for future tightening):
 //   - We do not parse to a real AST. A pathological input that survives the
@@ -73,12 +63,6 @@ const FORBIDDEN_KEYWORDS = [
   //            tool needs cross-table reads (then re-enable with explicit
   //            per-alias tenant_id checking).
   'UNION', 'INTERSECT', 'EXCEPT', 'WITH', 'JOIN',
-  // Boolean logic bypass vectors (audit ralph-2 / H-1):
-  //   OR  — creates an alternative result set that bypasses the mandatory
-  //          tenant_id = :tenant_id conjunct. `tenant_id = :t OR 1=1`
-  //          returns ALL tenants' rows. No legitimate analytics query needs
-  //          OR that can't be rewritten as two separate queries.
-  'OR',
 ] as const
 
 const TENANT_PLACEHOLDER = ':tenant_id'
@@ -207,49 +191,6 @@ function checkTenantIdPredicates(strippedSql: string): { ok: true } | { ok: fals
   return { ok: true }
 }
 
-/**
- * Reject standalone boolean NOT used to negate a predicate. This closes the
- * bypass `WHERE NOT tenant_id = :tenant_id` which the per-occurrence walker
- * allows (each tenant_id token IS followed by `= :tenant_id`) but which
- * semantically returns every OTHER tenant's rows.
- *
- * Allowed NOT forms (operator-NOT, cannot negate the tenant conjunct):
- *   IS NOT NULL  — preceded by IS
- *   NOT IN       — followed by IN
- *   NOT LIKE     — followed by LIKE
- *   NOT NULL     — followed by NULL (edge: `x NOT NULL` constraint)
- *   NOT BETWEEN  — followed by BETWEEN
- *   NOT GLOB     — followed by GLOB
- *   NOT REGEXP   — followed by REGEXP
- *   NOT MATCH    — followed by MATCH
- *
- * Rejected: NOT used as a bare boolean prefix to a comparison or parenthetical
- *   (`NOT tenant_id = :tenant_id`, `NOT (col = 1)`, `NOT 1=1`).
- */
-function checkStandaloneNot(strippedSql: string): { ok: true } | { ok: false; reason: string } {
-  const notRe = /\bNOT\b/gi
-  let m: RegExpExecArray | null
-  while ((m = notRe.exec(strippedSql)) !== null) {
-    const before = strippedSql.slice(0, m.index)
-    const after = strippedSql.slice(m.index + 3) // skip past 'NOT'
-
-    // Allow IS NOT (covers `IS NOT NULL`, `IS NOT :placeholder`, etc.)
-    if (/\bIS\s*$/i.test(before)) continue
-
-    // Allow operator-NOT forms: NOT followed immediately by IN/LIKE/NULL/BETWEEN/GLOB/REGEXP/MATCH
-    if (/^\s+(?:IN|LIKE|NULL|BETWEEN|GLOB|REGEXP|MATCH)\b/i.test(after)) continue
-
-    // Everything else is a standalone boolean NOT — reject.
-    const sample = (before.trimEnd().split(/\s+/).slice(-2).join(' ') + ' NOT' +
-      after.slice(0, 20)).replace(/\s+/g, ' ').trim()
-    return {
-      ok: false,
-      reason: `standalone boolean NOT is not allowed (use IS NOT NULL / NOT IN / NOT LIKE for value tests); got: …${sample}…`,
-    }
-  }
-  return { ok: true }
-}
-
 export function validateAnalyticsSql(rawInput: string): ValidationResult {
   if (typeof rawInput !== 'string') return { ok: false, reason: 'sql must be a string' }
 
@@ -331,15 +272,6 @@ export function validateAnalyticsSql(rawInput: string): ValidationResult {
   const predicateCheck = checkTenantIdPredicates(stripped)
   if (!predicateCheck.ok) return { ok: false, reason: predicateCheck.reason }
 
-  // Standalone boolean NOT check (audit H-1): reject any `NOT` used as a
-  // boolean negation operator (e.g. `NOT tenant_id = :tenant_id`,
-  // `NOT (col = val)`) because it can negate the mandatory tenant scope
-  // predicate. Operator-NOT forms — IS NOT, NOT IN, NOT LIKE, NOT NULL,
-  // NOT BETWEEN, NOT GLOB, NOT REGEXP, NOT MATCH — are still permitted;
-  // they refine a value comparison and cannot negate the tenant conjunct.
-  const notCheck = checkStandaloneNot(stripped)
-  if (!notCheck.ok) return { ok: false, reason: notCheck.reason }
-
   // Defense-in-depth: even if the walker passed, the literal :tenant_id must
   // appear in the SQL we ship to D1 (we substitute it for `?` below). The
   // walker reads the literal-stripped form, so this final check is on the
@@ -367,9 +299,7 @@ export const ANALYTICS_SCHEMA_DESCRIPTION = `
 You can query the following SQLite tables via the run_analytics_query tool. EVERY
 query MUST be tenant-scoped using the :tenant_id placeholder — never a literal
 tenant id. Results are capped at 100 rows. Read-only (single SELECT, no
-subqueries, no UNION, no WITH/CTEs, no JOINs). Use AND-only filters — OR and
-standalone NOT are rejected. Operator-NOT forms (IS NOT NULL, NOT IN, NOT LIKE)
-are still allowed.
+subqueries, no UNION, no WITH/CTEs, no JOINs).
 
 Timestamps named "timestamp" are unix-ms integers (use datetime(timestamp/1000,'unixepoch')).
 Timestamps named "*_at" are ISO text (e.g. analyzed_at, created_at).

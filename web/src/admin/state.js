@@ -21,21 +21,7 @@ export function getActiveView() { return state.activeView }
 export function setActiveView(v) { state.activeView = v }
 
 export function getTenantConfig() { return state.tenantConfig }
-
-// Listeners fired whenever tenantConfig is replaced. The global Publish bar
-// subscribes so it re-renders the moment any save flow refreshes config
-// (nearly every save does `setTenantConfig(await refreshSiteConfig({}))`).
-const _tenantConfigListeners = new Set()
-export function onTenantConfigChange(fn) {
-  _tenantConfigListeners.add(fn)
-  return () => _tenantConfigListeners.delete(fn)
-}
-export function setTenantConfig(v) {
-  state.tenantConfig = v
-  for (const fn of _tenantConfigListeners) {
-    try { fn(v) } catch (e) { console.error('[state] tenantConfig listener failed', e) }
-  }
-}
+export function setTenantConfig(v) { state.tenantConfig = v }
 
 // Agent chat / onboarding state shared across the chat input, copilot
 // dispatch, deterministic onboarding flow, and the renderAgentMessages

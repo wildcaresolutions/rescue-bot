@@ -29,6 +29,7 @@ import type { Env } from './types'
 
 const DEFAULT_PLATFORM_NAME = 'rescue-bot'
 const DEFAULT_SUPPORT_EMAIL = 'support@example.com'
+const DEFAULT_EMBED_HOST = 'embed.example.com'
 
 /**
  * Return the platform's display name. Empty / unset / stub-mode values
@@ -59,38 +60,13 @@ export function getPlatformSupportEmail(env: Env): string {
 /**
  * Return the canonical embed host used in the `<script src=...>` snippet
  * the copilot hands operators. Audit ralph-1 M11 found this hardcoded to
- * `embed.wildcaresolutions.org`. Set PLATFORM_EMBED_HOST in org.env when
- * a CDN/R2-cached entry point (e.g. `embed.<deployment>.example/v1.js`)
- * is available. Returns null when unconfigured — callers should fall back
- * to the worker origin (`/widget.js`), which Workers Assets serves today.
+ * `embed.wildcaresolutions.org`. Set PLATFORM_EMBED_HOST in org.env.
  */
-export function getEmbedHost(env: Env): string | null {
+export function getEmbedHost(env: Env): string {
   const raw = env.PLATFORM_EMBED_HOST?.trim()
-  if (!raw) return null
-  if (raw === 'REPLACE_VIA_GEN_WRANGLER') return null
+  if (!raw) return DEFAULT_EMBED_HOST
+  if (raw === 'REPLACE_VIA_GEN_WRANGLER') return DEFAULT_EMBED_HOST
   return raw
-}
-
-/**
- * FROM address for transactional auth mail (magic-link sign-in, invitee
- * welcome). Distinct from REPORT_FROM_EMAIL because the daily-report sender
- * is often a role address (reports@<domain>) that looks wrong as the sender
- * of a sign-in invite.
- *
- * Resolution order:
- *   1. PLATFORM_FROM_EMAIL (operator override)
- *   2. noreply@<REPORT_FROM_EMAIL domain> (derived — works for any deployment
- *      that has the report sender configured, no extra secret needed)
- *   3. noreply@example.com (last-resort fallback for un-configured forks)
- */
-export function getAuthFromEmail(env: Env): string {
-  const raw = env.PLATFORM_FROM_EMAIL?.trim()
-  if (raw) return raw
-  const report = env.REPORT_FROM_EMAIL?.trim()
-  if (report && report.includes('@')) {
-    return `noreply@${report.split('@')[1]}`
-  }
-  return 'noreply@example.com'
 }
 
 /**

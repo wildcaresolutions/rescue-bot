@@ -7,28 +7,22 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
     "types": "wrangler types",
-    "test": "vitest run",
-    "test:integration": "vitest run --config vitest.integration.config.ts"
+    "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.84",
-    "@ai-sdk/openai": "3.0.71",
-    "ai": "6.0.205",
-    "hono": "4.12.25",
+    "@ai-sdk/anthropic": "3.0.71",
+    "@ai-sdk/openai": "3.0.58",
+    "ai": "6.0.168",
+    "hono": "4.12.18",
     "zod": "^4.4.1"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.16.15",
-    "@cloudflare/workers-types": "4.20260619.1",
-    "@types/node": "25.9.3",
-    "@vitest/coverage-v8": "^4.1.8",
+    "@cloudflare/vitest-pool-workers": "0.14.7",
+    "@cloudflare/workers-types": "4.20260418.1",
+    "@types/node": "25.6.0",
     "pg": "^8.20.0",
     "typescript": "6.0.3",
-    "vitest": "4.1.8",
-    "wrangler": "^4.103.0"
-  },
-  "overrides": {
-    "esbuild": "^0.28.1",
-    "ws": "^8.20.1"
+    "vitest": "4.1.4",
+    "wrangler": "4.83.0"
   }
 }

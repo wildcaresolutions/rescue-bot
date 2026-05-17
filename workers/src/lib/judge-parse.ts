@@ -41,12 +41,8 @@ export function extractJudgeJson(text: string): { passed: boolean; reasoning?: s
         .replace(/[‘’]/g, "'")
         .replace(/,\s*([}\]])/g, '$1')
       const parsed = JSON.parse(cleaned)
-      const p = parsed.passed
-      if (typeof p === 'boolean' || typeof p === 'string' || typeof p === 'number') {
-        // Accept the spread of shapes judge models actually emit:
-        // true/false, "true"/"pass"/"yes", or 1/0. Anything else is a miss.
-        const passed = p === true || p === 1
-          || (typeof p === 'string' && /^(true|pass|passed|yes|y)$/i.test(p.trim()))
+      if (typeof parsed.passed === 'boolean' || typeof parsed.passed === 'string') {
+        const passed = parsed.passed === true || parsed.passed === 'true' || parsed.passed === 'pass'
         return { passed, reasoning: typeof parsed.reasoning === 'string' ? parsed.reasoning : '' }
       }
     } catch { /* try next candidate */ }

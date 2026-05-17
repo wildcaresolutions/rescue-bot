@@ -56,12 +56,13 @@ export async function computeSetupReadiness(
     blockers.push(`These skipped species have no redirect destination: ${signals.skipSpeciesMissingRedirect.join(', ')}. Operators need somewhere to send callers — add a redirect for each.`)
   }
 
-  // Tests are NEVER a blocker. "Check your bot" is an advisory tool the
-  // operator drives — their 👍/👎 is the verdict, and an ungradeable or
-  // failing auto-grade must never trap them from publishing. (Previously a
-  // zero/failing/unrun test count blocked here, which is exactly the trap the
-  // Check-your-bot redesign removes.) We still surface the counts for context.
   const tests = await loadTestSummary(db, tenantId)
+  if (tests.total === 0) {
+    blockers.push('No test cases exist. Create at least 3 covering common situations, after-hours, and any species you marked skip.')
+  } else {
+    if (tests.unrun > 0) blockers.push(`${tests.unrun} test case(s) have not been run yet — run them and confirm they pass.`)
+    if (tests.failing > 0) blockers.push(`${tests.failing} test case(s) are failing. Fix the underlying playbook or configuration until they pass.`)
+  }
 
   if (opts.requireWidgetPublished !== false && !tenantNow.onboarded && !tenantNow.widget_published_at) {
     blockers.push('Widget has not been published yet. Visit Preview and click Publish.')

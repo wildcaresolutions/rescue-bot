@@ -30,7 +30,6 @@ export default defineConfig(({ command: _command, mode }) => ({
     rollupOptions: mode === 'widget' ? {
       input: 'src/widget.js',
       output: {
-        format: 'iife',
         entryFileNames: 'widget.js',
         assetFileNames: 'widget.[ext]',
       },

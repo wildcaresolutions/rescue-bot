@@ -4,15 +4,13 @@ import type { Env, Tenant, Variables } from '../lib/types'
 import { detectSpecies } from '../lib/rag'
 import { buildChatPrompt } from '../lib/chat-prompt'
 import { clamp } from '../lib/utils'
-import { quickAnalyzeSession } from '../lib/analyze-session'
-import { logUsage } from '../lib/usage-log'
+import { matchTriage, type TenantTriageRule } from '../lib/match-triage'
 import { mintSessionToken, validateSessionToken } from '../lib/photo-auth'
 import { photoUploadsEnabled } from '../lib/feature-flags'
 import { validateUploadKind } from '../lib/file-type'
 import {
   getMainChatModelName,
   getPhotoRecognizerModelName,
-  openGatewayChatStream,
   runGatewayChatText,
   runGatewayImageObject,
 } from '../lib/ai'
@@ -24,34 +22,12 @@ import {
   sanitizeVisionField,
   type PhotoMetadata,
 } from '../lib/vision'
-import { dbError, badRequest, notFound, unauthorized, forbidden } from '../lib/errors'
-import { logWarn, logError } from '../lib/logger'
-import { overlayTenant } from '../lib/draft'
-import { resolveSession, tenantCookiePrefix } from '../lib/auth'
-
-/**
- * Draft preview: the admin preview iframe sends X-Preview-Draft so the operator
- * can chat with their UNPUBLISHED config. This is the ONE place a draft touches
- * the chat path, and it's gated hard: we ONLY overlay when the request also
- * carries a valid admin session cookie for THIS tenant. A public embed has no
- * such cookie, so the header is ignored and it always serves live/published.
- * Returns the live tenant unchanged unless both conditions hold.
- */
-async function maybeDraftOverlay(c: ChatContext, tenant: Tenant): Promise<Tenant> {
-  if (c.req.header('X-Preview-Draft') !== '1') return tenant
-  try {
-    const verified = await resolveSession(c.req.raw, tenantCookiePrefix(tenant.slug), c.env)
-    if (verified && verified.tenantId === tenant.id) return overlayTenant(tenant)
-  } catch { /* fall through to live */ }
-  return tenant
-}
+import { parseOrgConfig } from '../lib/tenant-loader'
+import { dbError } from '../lib/errors'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const HISTORY_LIMIT = 20
-// Hard cap on user turns per session. A persistent caller cannot drive a session
-// beyond this, preventing runaway AI-Gateway quota consumption.
-const MAX_SESSION_TURNS = 50
 
 const MAX_MESSAGE_LEN = 8_000
 const MAX_CONTENT_LEN = 32_000
@@ -125,7 +101,7 @@ async function buildRecentPhotoContext(
     ).bind(sessionId, tenantId).all() as { results: Row[] }
     rows = results
   } catch (e) {
-    logWarn('chat/photo-context-load-failed', { error: e })
+    console.warn('[chat] photo context load failed:', e)
     return ''
   }
   if (!rows.length) return ''
@@ -201,7 +177,7 @@ async function loadChatHistory(
     ).bind(sessionId, tenantId, HISTORY_LIMIT).all() as { results: Array<{ role: string; content: string }> }
     return results.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content }))
   } catch (e) {
-    logError('chat/load-history-failed', { error: e })
+    console.error('[chat] Failed to load history — starting fresh:', e)
     return []
   }
 }
@@ -223,6 +199,28 @@ async function buildMainSystemPrompt(opts: {
     privateContext: privateSections || undefined,
   })
   return systemPrompt
+}
+
+function usageTokens(usage: unknown): { promptTokens: number; completionTokens: number } {
+  const u = usage as Record<string, number | undefined> | undefined
+  return {
+    promptTokens: u?.promptTokens ?? u?.inputTokens ?? 0,
+    completionTokens: u?.completionTokens ?? u?.outputTokens ?? 0,
+  }
+}
+
+async function logUsage(
+  env: Env,
+  tenantId: string,
+  model: string,
+  usage: unknown,
+): Promise<void> {
+  const { promptTokens, completionTokens } = usageTokens(usage)
+  const today = new Date().toISOString().slice(0, 10)
+  await env.DB.prepare(
+    `INSERT INTO usage_log (tenant_id, date, model, prompt_tokens, completion_tokens, request_count)
+     VALUES (?, ?, ?, ?, ?, 1)`,
+  ).bind(tenantId, today, model, promptTokens, completionTokens).run()
 }
 
 async function runMainChat(
@@ -254,85 +252,50 @@ async function runMainChat(
         .bind(userMsgId, opts.linkPhotoId).run()
     }
   } catch (e) {
-    logError('chat/persist-user-message-failed', { error: e })
+    console.error('[chat] Failed to persist user message:', e)
     return new Response('Failed to record message', { status: 500 })
   }
 
   const messageWithTime = `[Current time: ${pacificNowString()}]\n\n${opts.modelUserMessage ?? opts.visibleUserMessage}`
   const modelName = getMainChatModelName(c.env)
-
-  // Open the SSE stream against the gateway. If the upstream errors at this
-  // step (auth failure, model not found, etc.) we return a clean 502 BEFORE
-  // any response body has been sent to the client — the widget's catch path
-  // then shows the friendly "having trouble connecting" message.
-  let capturedUsage: unknown = null
-  let textStream: ReadableStream<string>
+  let result: { text: string; usage: unknown }
   try {
-    textStream = await openGatewayChatStream({
+    result = await runGatewayChatText({
       env: c.env,
       model: modelName,
       system: systemPrompt,
       messages: [...history, { role: 'user', content: messageWithTime }],
-      onUsage: (u: unknown) => { capturedUsage = u },
     })
   } catch (e) {
-    logError('chat/ai-gateway-stream-open-failed', { error: e })
+    console.error('[chat] AI Gateway call failed:', e)
     return new Response('Assistant temporarily unavailable', { status: 502 })
   }
 
-  // Forward each text delta to the client as it arrives. Accumulate the full
-  // text so we can persist + analyze after the stream closes. waitUntil keeps
-  // the worker alive past the response so the post-stream DB writes complete.
-  const encoder = new TextEncoder()
-  let fullText = ''
-  const sessionId = opts.sessionId
-  const tenantId = opts.tenantId
-  const ua = c.req.header('User-Agent') || ''
+  c.executionCtx.waitUntil(
+    Promise.resolve(result.text).then((text) => {
+      if (!text) return
+      const msgId = `msg-${crypto.randomUUID()}`
+      return c.env.DB.prepare(
+        `INSERT INTO messages (session_id, message_id, role, content, timestamp, message_type, tenant_id)
+         VALUES (?, ?, 'assistant', ?, ?, 'chat', ?) ON CONFLICT (message_id) DO NOTHING`,
+      ).bind(opts.sessionId, msgId, text.slice(0, MAX_CONTENT_LEN), Date.now(), opts.tenantId).run()
+        .then(() => {
+          const ua = c.req.header('User-Agent') || ''
+          const deviceType = /Mobile|Android|iPhone|iPad/i.test(ua)
+            ? (/iPad|Tablet/i.test(ua) ? 'tablet' : 'mobile') : 'desktop'
+          return quickAnalyzeSession(c.env.DB, opts.tenantId, opts.sessionId, deviceType)
+        })
+        .catch(e => console.error('[chat] Failed to persist assistant message or analyze:', e))
+    }),
+  )
 
-  const outStream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = textStream.getReader()
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          fullText += value
-          controller.enqueue(encoder.encode(value))
-        }
-      } catch (e) {
-        logError('chat/ai-gateway-stream-read-failed', { error: e })
-      } finally {
-        try { reader.releaseLock() } catch { /* already released */ }
-        controller.close()
-      }
+  c.executionCtx.waitUntil(
+    Promise.resolve(result.usage)
+      .then((usage) => usage ? logUsage(c.env, opts.tenantId, modelName, usage) : undefined)
+      .catch(e => console.error('[chat] Failed to log usage:', e)),
+  )
 
-      // Persist the assistant message + run the regex triage analyzer once
-      // streaming is done. Using waitUntil so this completes even if the
-      // client disconnects mid-stream.
-      if (fullText) {
-        c.executionCtx.waitUntil((async () => {
-          const msgId = `msg-${crypto.randomUUID()}`
-          try {
-            await c.env.DB.prepare(
-              `INSERT INTO messages (session_id, message_id, role, content, timestamp, message_type, tenant_id)
-               VALUES (?, ?, 'assistant', ?, ?, 'chat', ?) ON CONFLICT (message_id) DO NOTHING`,
-            ).bind(sessionId, msgId, fullText.slice(0, MAX_CONTENT_LEN), Date.now(), tenantId).run()
-            const deviceType = /Mobile|Android|iPhone|iPad/i.test(ua)
-              ? (/iPad|Tablet/i.test(ua) ? 'tablet' : 'mobile') : 'desktop'
-            await quickAnalyzeSession(c.env.DB, tenantId, sessionId, deviceType)
-          } catch (e) {
-            logError('chat/persist-assistant-message-failed', { error: e })
-          }
-          if (capturedUsage) {
-            await logUsage(c.env, tenantId, modelName, capturedUsage).catch(e =>
-              logError('chat/log-usage-failed', { error: e }))
-          }
-        })())
-      }
-    },
-  })
-
-  return new Response(outStream, {
+  return new Response(result.text, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
   })
 }
@@ -357,7 +320,7 @@ chat.post('/api/sessions', async (c) => {
     try {
       session_token = await mintSessionToken(c.env, id, tenant.id)
     } catch (e) {
-      logWarn('sessions/session-token-mint-failed', { error: e })
+      console.warn('[sessions/post] session token mint failed (continuing):', e)
     }
   }
 
@@ -366,7 +329,7 @@ chat.post('/api/sessions', async (c) => {
 
 chat.get('/api/sessions/:id', async (c) => {
   const sessionId = c.req.param('id')
-  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
+  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
 
   const tenant = c.get('tenant')
   const tenantId = tenant!.id
@@ -429,24 +392,24 @@ chat.get('/api/sessions/:id', async (c) => {
  */
 chat.post('/api/sessions/:id/photo', async (c) => {
   const sessionId = c.req.param('id')
-  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
+  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
 
   const tenant = c.get('tenant')
-  if (!tenant) return badRequest(c, 'Tenant required')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
   const tenantId = tenant.id
 
   if (!photoUploadsEnabled(tenant)) {
-    return forbidden(c, 'Photo uploads not enabled for this tenant')
+    return c.json({ error: 'Photo uploads not enabled for this tenant' }, 403)
   }
   if (!(await validateSessionToken(c.env, c.req.raw, sessionId, tenantId))) {
-    return unauthorized(c, 'Invalid session token')
+    return c.json({ error: 'Invalid session token' }, 401)
   }
 
   let formData: FormData
   try {
     formData = await c.req.formData()
   } catch {
-    return badRequest(c, 'Expected multipart/form-data with photo field')
+    return c.json({ error: 'Expected multipart/form-data with photo field' }, 400)
   }
 
   const fileEntry = formData.get('photo')
@@ -454,7 +417,7 @@ chat.post('/api/sessions/:id/photo', async (c) => {
   // FormDataEntryValue is `File | string`. We need a Blob-like with .size,
   // .type, and .stream(). string entries fail the typeof check.
   if (!fileEntry || typeof fileEntry === 'string') {
-    return badRequest(c, 'photo field must be a file')
+    return c.json({ error: 'photo field must be a file' }, 400)
   }
   const file = fileEntry as Blob & { type?: string; name?: string }
   const kind: 'image' | 'video' = kindRaw === 'video' ? 'video' : 'image'
@@ -478,7 +441,7 @@ chat.post('/api/sessions/:id/photo', async (c) => {
   // client's file.type is discarded for storage purposes.
   const sniff = await validateUploadKind(file, kind)
   if (!sniff.ok) {
-    return badRequest(c, `photo content rejected: ${sniff.reason}`)
+    return c.json({ error: `photo content rejected: ${sniff.reason}` }, 400)
   }
   const contentType = sniff.type!.mime
 
@@ -507,7 +470,7 @@ chat.post('/api/sessions/:id/photo', async (c) => {
       httpMetadata: { contentType },
     })
   } catch (e) {
-    logError('photo-upload/r2-put-failed', { error: e })
+    console.error('[photo-upload] R2 put failed:', e)
     return c.json({ error: 'Failed to store photo' }, 500)
   }
 
@@ -518,7 +481,7 @@ chat.post('/api/sessions/:id/photo', async (c) => {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'processing')`,
     ).bind(photoId, sessionId, tenantId, key, kind, now, now).run()
   } catch (e) {
-    logError('photo-upload/db-insert-failed', { error: e })
+    console.error('[photo-upload] DB insert failed:', e)
     // Roll back R2 — orphaned bytes aren't a security issue but waste storage.
     c.executionCtx.waitUntil(c.env.MEDIA_BUCKET.delete(key).catch(() => {}))
     return c.json({ error: 'Failed to record photo' }, 500)
@@ -534,15 +497,15 @@ chat.post('/api/sessions/:id/photo', async (c) => {
 chat.delete('/api/sessions/:id/photo/:photoId', async (c) => {
   const sessionId = c.req.param('id')
   const photoId = c.req.param('photoId')
-  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
-  if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo ID')
+  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
+  if (!validSessionId(photoId)) return c.json({ error: 'Invalid photo ID' }, 400)
 
   const tenant = c.get('tenant')
-  if (!tenant) return badRequest(c, 'Tenant required')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
   const tenantId = tenant.id
 
   if (!(await validateSessionToken(c.env, c.req.raw, sessionId, tenantId))) {
-    return unauthorized(c, 'Invalid session token')
+    return c.json({ error: 'Invalid session token' }, 401)
   }
 
   const row = await c.env.DB.prepare(
@@ -552,7 +515,7 @@ chat.delete('/api/sessions/:id/photo/:photoId', async (c) => {
     .bind(photoId, sessionId, tenantId)
     .first<{ r2_key: string; thumbnail_key: string | null; deleted_at: number | null }>()
 
-  if (!row) return notFound(c, 'photo')
+  if (!row) return c.json({ error: 'Not found' }, 404)
   if (row.deleted_at !== null) return new Response(null, { status: 204 })
 
   try {
@@ -561,7 +524,7 @@ chat.delete('/api/sessions/:id/photo/:photoId', async (c) => {
       row.thumbnail_key ? c.env.MEDIA_BUCKET.delete(row.thumbnail_key) : Promise.resolve(),
     ])
   } catch (e) {
-    logError('photo-delete/r2-delete-failed', { error: e })
+    console.error('[photo-delete] R2 delete failed:', e)
     return c.json({ error: 'Failed to delete photo' }, 500)
   }
 
@@ -581,36 +544,16 @@ chat.delete('/api/sessions/:id/photo/:photoId', async (c) => {
 
 chat.post('/api/sessions/:id', async (c) => {
   const sessionId = c.req.param('id')
-  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
+  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
 
   const tenant = c.get('tenant')
   const tenantId = tenant!.id
-
-  // M-9: Per-session message cap — checked before any expensive work (RAG/LLM).
-  // Counts user-role chat messages so each round-trip (user turn) is counted once.
-  // message_type = 'chat' keeps this consistent with loadChatHistory and
-  // quickAnalyzeSession, which both filter on the same predicate.
-  const turnRow = await c.env.DB.prepare(
-    "SELECT COUNT(*) as count FROM messages WHERE session_id = ? AND tenant_id = ? AND role = 'user' AND message_type = 'chat'"
-  ).bind(sessionId, tenantId).first<{ count: number }>()
-  if ((turnRow?.count ?? 0) >= MAX_SESSION_TURNS) {
-    return c.json({
-      error: 'Session limit reached',
-      message: 'This session has reached its message limit. Please start a new conversation.',
-    }, 429)
-  }
-
-  // Admin draft preview: serve this turn from the operator's draft when (and
-  // only when) the request is a verified admin preview. Same tenant id, so
-  // persistence/RAG are unaffected — only the compiled prompt changes.
-  const effectiveTenant = await maybeDraftOverlay(c, tenant!)
-  c.set('tenant', effectiveTenant)
 
   let body: { message?: string; photo_id?: string }
   try {
     body = await c.req.json()
   } catch {
-    return badRequest(c, 'Invalid JSON body')
+    return c.json({ error: 'Invalid JSON body' }, 400)
   }
 
   const userMessage = typeof body?.message === 'string' ? body.message.trim() : ''
@@ -624,9 +567,9 @@ chat.post('/api/sessions/:id', async (c) => {
     return handlePhotoMessage(c, sessionId, tenantId, photoId, userMessage)
   }
 
-  if (!userMessage) return badRequest(c, 'message required')
+  if (!userMessage) return c.json({ error: 'message required' }, 400)
   if (userMessage.length > MAX_MESSAGE_LEN) {
-    return badRequest(c, `Message too long (max ${MAX_MESSAGE_LEN} characters)`)
+    return c.json({ error: `Message too long (max ${MAX_MESSAGE_LEN} characters)` }, 400)
   }
 
   return runMainChat(c, {
@@ -720,20 +663,20 @@ async function handlePhotoMessage(
   photoId: string,
   userMessage: string,
 ): Promise<Response> {
-  if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo_id')
+  if (!validSessionId(photoId)) return c.json({ error: 'Invalid photo_id' }, 400)
   const tenant = c.get('tenant')!
 
   if (!photoUploadsEnabled(tenant)) {
-    return forbidden(c, 'Photo uploads not enabled for this tenant')
+    return c.json({ error: 'Photo uploads not enabled for this tenant' }, 403)
   }
   if (!(await validateSessionToken(c.env, c.req.raw, sessionId, tenantId))) {
-    return unauthorized(c, 'Invalid session token')
+    return c.json({ error: 'Invalid session token' }, 401)
   }
   // userMessage is optional in vision flow — citizen can upload a photo with
   // no text and the bot speaks first ("photo opens the conversation"). Cap
   // length defensively.
   if (userMessage.length > MAX_MESSAGE_LEN) {
-    return badRequest(c, `Message too long (max ${MAX_MESSAGE_LEN} characters)`)
+    return c.json({ error: `Message too long (max ${MAX_MESSAGE_LEN} characters)` }, 400)
   }
 
   // Look up the photo. Must belong to session + tenant + have an uploaded_at
@@ -754,7 +697,7 @@ async function handlePhotoMessage(
       message_id: string | null
     }>()
 
-  if (!photoRow) return notFound(c, 'photo')
+  if (!photoRow) return c.json({ error: 'Photo not found' }, 404)
   if (photoRow.deleted_at !== null) return c.json({ error: 'Photo deleted' }, 410)
   if (photoRow.message_id) {
     return c.json({ error: 'Photo has already been attached to a chat turn' }, 409)
@@ -794,11 +737,11 @@ async function handlePhotoMessage(
     c.executionCtx.waitUntil(
       recognition.usage
         ? logUsage(c.env, tenantId, recognition.model, recognition.usage)
-          .catch(e => logError('chat/photo-log-vision-usage-failed', { error: e }))
+          .catch(e => console.error('[chat/photo] Failed to log vision usage:', e))
         : Promise.resolve(),
     )
   } catch (e) {
-    logError('chat/photo-metadata-extraction-failed', { error: e })
+    console.error('[chat/photo] metadata extraction failed:', e)
   }
 
   if (metadata) {
@@ -823,12 +766,12 @@ async function handlePhotoMessage(
         )
         .run()
     } catch (e) {
-      logError('chat/photo-persist-metadata-failed', { error: e })
+      console.error('[chat/photo] persist photo metadata failed:', e)
     }
   } else {
     await c.env.DB.prepare(`UPDATE photos SET metadata_status = 'metadata_failed' WHERE id = ?`)
       .bind(photoId).run()
-      .catch((e) => logError('chat/photo-mark-metadata-failed', { error: e }))
+      .catch((e) => console.error('[chat/photo] mark metadata_failed failed:', e))
   }
 
   return runMainChat(c, {
@@ -850,12 +793,12 @@ chat.post('/api/messages', async (c) => {
   const tenantId = tenant!.id
 
   let body: Record<string, unknown>
-  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
 
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
   const role = typeof body.role === 'string' ? body.role : ''
-  if (!sessionId || !validSessionId(sessionId)) return badRequest(c, 'Valid sessionId required')
-  if (role !== 'user' && role !== 'assistant') return badRequest(c, 'role must be user or assistant')
+  if (!sessionId || !validSessionId(sessionId)) return c.json({ error: 'Valid sessionId required' }, 400)
+  if (role !== 'user' && role !== 'assistant') return c.json({ error: 'role must be user or assistant' }, 400)
 
   const messageId = typeof body.messageId === 'string' && body.messageId
     ? body.messageId.slice(0, 128) : `msg-${crypto.randomUUID()}`
@@ -892,13 +835,13 @@ chat.post('/api/feedback', async (c) => {
   const tenantId = tenant!.id
 
   let body: Record<string, unknown>
-  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
 
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
-  if (!sessionId || !validSessionId(sessionId)) return badRequest(c, 'Valid sessionId required')
+  if (!sessionId || !validSessionId(sessionId)) return c.json({ error: 'Valid sessionId required' }, 400)
 
   const rating = body.rating
-  if (rating !== 0 && rating !== 1) return badRequest(c, 'rating must be 0 or 1')
+  if (rating !== 0 && rating !== 1) return c.json({ error: 'rating must be 0 or 1' }, 400)
 
   const testerName = clamp(body.testerName as string, MAX_TEXT_FIELD_LEN)
   const isTester = testerName ? 1 : 0
@@ -927,5 +870,107 @@ chat.post('/api/feedback', async (c) => {
     return dbError(c, 'feedback/feedback', 'DB error', e)
   }
 })
+
+// ── Post-session quick analysis (no LLM — regex only) ────────────────────────
+
+export async function quickAnalyzeSession(db: D1Database, tenantId: string, sessionId: string, deviceType = 'unknown') {
+  const { results: msgs } = await db.prepare(
+    `SELECT role, content FROM messages WHERE session_id = ? AND tenant_id = ? AND message_type = 'chat' ORDER BY timestamp ASC LIMIT 50`,
+  ).bind(sessionId, tenantId).all()
+
+  // Threshold is <2 (not <3) because callers sometimes dump a full report —
+  // species, situation, name, phone — into a single user message, bot replies
+  // once, conversation ends. Skipping those at <3 hides legitimate action
+  // items (e.g. callers who left contact info in one block).
+  if (msgs.length < 2) return
+
+  const allContent = msgs.map(m => (m.content as string || '').toLowerCase()).join(' ')
+  const userContent = msgs.filter(m => m.role === 'user').map(m => (m.content as string || '').toLowerCase()).join(' ')
+
+  // Detect contact info (callback requested)
+  const hasPhone = /\b\d{3}[-.]?\d{3}[-.]?\d{4}\b/.test(allContent) &&
+    msgs.some(m => m.role === 'user' && /\d{3}[-.]?\d{3}[-.]?\d{4}/.test(m.content as string))
+  const hasEmail = /\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b/.test(userContent)
+  const requestsCallback = /call me|contact me|please call|my (name|number|email|phone) is|reach me/i.test(userContent)
+  const hasContactInfo = hasPhone || hasEmail || requestsCallback
+
+  // Extract contact info
+  let contactInfo: string | null = null
+  if (hasContactInfo) {
+    const phoneMatch = userContent.match(/\b(\d{3}[-.]?\d{3}[-.]?\d{4})\b/)
+    const emailMatch = userContent.match(/\b([a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,})\b/)
+    const nameMatch = userContent.match(/my name is ([a-z]+ ?[a-z]*)/i)
+    contactInfo = JSON.stringify({
+      phone: phoneMatch?.[1] || null,
+      email: emailMatch?.[1] || null,
+      name: nameMatch?.[1] || null,
+    })
+  }
+
+  // Detect urgency — tenant rules override defaults, defaults fill in gaps
+  const tenantRow = await db.prepare('SELECT org_config FROM tenants WHERE id = ?').bind(tenantId).first<{ org_config: string | null }>()
+  const orgCfg = parseOrgConfig(tenantRow?.org_config)
+  const tenantRules = orgCfg.triage_config as TenantTriageRule[] | undefined
+
+  const triage = matchTriage(userContent, tenantRules)
+  const urgency = triage.urgency
+  const triageHint: string | null = triage.hint
+
+  // Detect animal type
+  let animal: string | null = null
+  const animalPatterns: Array<[RegExp, string]> = [
+    [/raccoon|coon/i, 'raccoon'], [/bat\b/i, 'bat'], [/hawk|owl|eagle|raptor|falcon/i, 'raptor'],
+    [/squirrel/i, 'squirrel'], [/opossum|possum/i, 'opossum'], [/deer|fawn/i, 'deer'],
+    [/hummingbird/i, 'hummingbird'], [/snake|rattlesnake/i, 'snake'], [/coyote/i, 'coyote'],
+    [/pelican/i, 'pelican'], [/goose|duck/i, 'waterfowl'], [/gull|seagull/i, 'gull'],
+    [/bird|robin|sparrow|finch|jay|crow|dove|pigeon/i, 'songbird'],
+    [/heron|egret/i, 'heron/egret'],
+  ]
+  for (const [pattern, name] of animalPatterns) {
+    if (pattern.test(userContent)) { animal = name; break }
+  }
+
+  // Simple outcome detection
+  let outcome = 'unknown'
+  const lastAssistant = msgs.filter(m => m.role === 'assistant').pop()
+  const lastContent = (lastAssistant?.content as string || '').toLowerCase()
+  if (/call us|bring.*to|come to|intake/i.test(lastContent)) outcome = 'bringing_in'
+  else if (/leave.*alone|monitor|watch|mom.*return|reunif/i.test(lastContent)) outcome = 'resolved'
+  else if (/outside.*service|not.*our.*area|redirect|peninsula|sacramento/i.test(lastContent)) outcome = 'redirected'
+
+  // Check feedback
+  const hasFeedback = await db.prepare(
+    'SELECT rating FROM feedback WHERE session_id = ? AND tenant_id = ? LIMIT 1',
+  ).bind(sessionId, tenantId).first()
+
+  // Determine if this needs action.
+  //
+  // Per WildCare ops: front-desk only follows up on conversations where the
+  // caller left contact info (name/phone/email or explicit callback request).
+  // Urgency labels are still computed (and visible in the report) but they
+  // don't gate "needs follow-up" — without contact info there's no one to
+  // follow up with.
+  //
+  // A negative feedback rating still flags for follow-up so we can review
+  // bad bot answers even when the caller didn't share contact info.
+  const needsAction = (hasContactInfo || (hasFeedback && hasFeedback.rating === 0)) ? 1 : 0
+
+  // Generate a brief situation summary
+  const firstUserMsg = msgs.find(m => m.role === 'user')?.content as string || ''
+  const situation = firstUserMsg.slice(0, 200)
+
+  // Detect service area (simple: check if redirected)
+  const inServiceArea = outcome === 'redirected' ? 0 : 1
+
+  // Delete + insert (no unique constraint migration dependency)
+  await db.prepare(
+    'DELETE FROM session_analysis WHERE session_id = ? AND tenant_id = ?',
+  ).bind(sessionId, tenantId).run()
+
+  await db.prepare(`
+    INSERT INTO session_analysis (session_id, tenant_id, urgency, outcome, animal, situation, in_service_area, needs_action, contact_info, device_type, triage_hint, analyzed_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, datetime('now'))
+  `).bind(sessionId, tenantId, urgency, outcome, animal, situation, inServiceArea, needsAction, contactInfo, deviceType, triageHint).run()
+}
 
 export default chat

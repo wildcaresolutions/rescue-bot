@@ -9,17 +9,14 @@ import {
   resolveSession,
   tenantCookiePrefix,
   PLATFORM_COOKIE_PREFIX,
-  timingSafeCompare,
-  ADMIN_TOKEN_TTL_DAYS,
   type Role,
 } from '../lib/auth'
 import { sendEmail } from '../lib/email'
-import { getAuthFromEmail, getPlatformName } from '../lib/platform'
+import { getPlatformName } from '../lib/platform'
 import { verifyTurnstile } from '../lib/turnstile'
-import { badRequest, notFound, unauthorized } from '../lib/errors'
-import { logError, logInfo } from '../lib/logger'
 
 const TOKEN_EXPIRY_MINUTES = 15
+const SESSION_EXPIRY_DAYS = 30
 
 const auth = new Hono<{ Bindings: Env; Variables: Variables }>()
 
@@ -63,7 +60,7 @@ function generic200(): Response {
  *
  * tenantId=null marks a platform-admin login (only used at admin.<root>).
  */
-export async function issueMagicLink(
+async function issueMagicLink(
   env: Env,
   opts: { email: string; tenantId: string | null; tenantSlug: string; host: string },
 ): Promise<string> {
@@ -113,18 +110,18 @@ export async function issueMagicLink(
 
   const protocol = opts.host.includes('localhost') ? 'http' : 'https'
   return opts.tenantSlug
-    ? `${protocol}://${opts.host}/api/auth/verify?token=${token}&tenant=${opts.tenantSlug}&email=${encodeURIComponent(opts.email)}`
-    : `${protocol}://${opts.host}/api/auth/verify?token=${token}&email=${encodeURIComponent(opts.email)}`
+    ? `${protocol}://${opts.host}/api/auth/verify?token=${token}&tenant=${opts.tenantSlug}`
+    : `${protocol}://${opts.host}/api/auth/verify?token=${token}`
 }
 
 /** Request a magic link. Sends an email with a login token. */
 auth.post('/api/auth/request', async (c) => {
   let body: { email?: string; turnstile_token?: string }
-  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
 
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   if (!email || !emailValid(email)) {
-    return badRequest(c, 'Valid email required')
+    return c.json({ error: 'Valid email required' }, 400)
   }
 
   // Turnstile (skip in local dev when DEV_AUTH_BYPASS is on).
@@ -132,7 +129,7 @@ auth.post('/api/auth/request', async (c) => {
     const ip = c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For') ?? null
     const t = await verifyTurnstile(body.turnstile_token, ip, c.env.TURNSTILE_SECRET_KEY)
     if (!t.ok) {
-      logError('auth/turnstile-rejected', { reason: t.reason, details: t.details })
+      console.error('[auth/request] turnstile rejected:', t)
       // 'missing_secret' is an env misconfiguration on our side — surface as 503
       // so we notice. Other failures are client-side; respond 400.
       if (t.reason === 'missing_secret' || t.reason === 'network') {
@@ -188,7 +185,7 @@ auth.post('/api/auth/request', async (c) => {
     ).bind(email).run().catch(() => {}),
   )
 
-  const fromEmail = getAuthFromEmail(c.env)
+  const fromEmail = c.env.REPORT_FROM_EMAIL || 'noreply@wildcaresolutions.org'
   const subject = `Sign in to ${tenantName}`
   const emailHtml = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
@@ -219,7 +216,7 @@ auth.post('/api/auth/request', async (c) => {
   // magic-link URL in the worker log AND in the response so the operator
   // doesn't have to dig through /var/folders to find it.
   if (isDevAuthBypass(c.env)) {
-    logInfo('auth/dev-magic-link', { email, loginUrl })
+    console.log(`[auth/request] DEV magic link for ${email}: ${loginUrl}`)
     return c.json({
       success: true,
       message: 'Development mode: email "sent" but use the link below directly.',
@@ -242,20 +239,15 @@ auth.post('/api/auth/request', async (c) => {
 auth.get('/api/auth/verify', async (c) => {
   const magicToken = c.req.query('token')
   const tenantSlug = c.req.query('tenant') ?? ''
-  const email = (c.req.query('email') ?? '').trim().toLowerCase()
 
-  if (!magicToken || !email || !emailValid(email)) return c.text('Invalid link', 400)
+  if (!magicToken) return c.text('Invalid link', 400)
 
-  // Soft check: does any unexpired, unused token for this email constant-time
-  // match the submitted token? Fetching by email (non-secret) + comparing
-  // in app code avoids exposing the token to the DB index timing path (M-7).
-  const { results: candidates } = await c.env.DB.prepare(
-    "SELECT token FROM magic_tokens WHERE email = ? AND used = 0 AND expires_at > datetime('now') ORDER BY created_at DESC",
-  ).bind(email).all<{ token: string }>()
+  // Soft check — does the token exist and is unused? Don't consume yet.
+  const row = await c.env.DB.prepare(
+    "SELECT email FROM magic_tokens WHERE token = ? AND used = 0 AND expires_at > datetime('now')",
+  ).bind(magicToken).first<{ email: string }>()
 
-  const matched = (candidates ?? []).some(r => timingSafeCompare(r.token, magicToken))
-
-  if (!matched) {
+  if (!row) {
     return c.html(`
       <html><body style="font-family: -apple-system, sans-serif; text-align: center; padding: 80px 20px;">
         <h2>Link expired or already used</h2>
@@ -286,7 +278,6 @@ auth.get('/api/auth/verify', async (c) => {
   <form method="POST" action="/api/auth/verify">
     <input type="hidden" name="token" value="${escapeAttr(magicToken)}" />
     <input type="hidden" name="tenant" value="${escapeAttr(tenantSlug)}" />
-    <input type="hidden" name="email" value="${escapeAttr(email)}" />
     <button type="submit">Sign in</button>
   </form>
 </div>
@@ -297,19 +288,16 @@ auth.get('/api/auth/verify', async (c) => {
 auth.post('/api/auth/verify', async (c) => {
   let magicToken = ''
   let tenantSlug = ''
-  let email = ''
   const ct = c.req.header('Content-Type') ?? ''
   if (ct.includes('application/x-www-form-urlencoded')) {
     const form = await c.req.formData()
     magicToken = String(form.get('token') ?? '')
     tenantSlug = String(form.get('tenant') ?? '')
-    email = String(form.get('email') ?? '')
   } else if (ct.includes('application/json')) {
     try {
-      const body = await c.req.json<{ token?: string; tenant?: string; email?: string }>()
+      const body = await c.req.json<{ token?: string; tenant?: string }>()
       magicToken = body.token ?? ''
       tenantSlug = body.tenant ?? ''
-      email = body.email ?? ''
     } catch { return c.text('Invalid JSON', 400) }
   } else {
     // Some clients POST without Content-Type; try form first, fall back to JSON.
@@ -317,29 +305,16 @@ auth.post('/api/auth/verify', async (c) => {
       const form = await c.req.formData()
       magicToken = String(form.get('token') ?? '')
       tenantSlug = String(form.get('tenant') ?? '')
-      email = String(form.get('email') ?? '')
     } catch {
       return c.text('Missing token', 400)
     }
   }
 
-  email = email.trim().toLowerCase()
-  if (!magicToken || !email || !emailValid(email)) return c.text('Invalid request', 400)
+  if (!magicToken) return c.text('Invalid request', 400)
 
-  // M-7: Fetch candidate rows by email + expiry (non-secret), then compare
-  // the submitted token constant-time in application code. This removes the
-  // DB index timing oracle that the previous WHERE token = ? approach exposed.
-  const { results: candidates } = await c.env.DB.prepare(
-    "SELECT id, token, email, tenant_id FROM magic_tokens WHERE email = ? AND used = 0 AND expires_at > datetime('now') ORDER BY created_at DESC",
-  ).bind(email).all<{ id: string; token: string; email: string; tenant_id: string | null }>()
-
-  let row: { id: string; email: string; tenant_id: string | null } | null = null
-  for (const r of candidates ?? []) {
-    if (timingSafeCompare(r.token, magicToken)) {
-      row = { id: r.id, email: r.email, tenant_id: r.tenant_id }
-      break
-    }
-  }
+  const row = await c.env.DB.prepare(
+    "SELECT * FROM magic_tokens WHERE token = ? AND used = 0 AND expires_at > datetime('now')",
+  ).bind(magicToken).first<{ email: string; tenant_id: string | null }>()
 
   if (!row) {
     return c.html(`
@@ -352,9 +327,8 @@ auth.post('/api/auth/verify', async (c) => {
   }
 
   // Mark token consumed BEFORE issuing the session — even if the rest fails,
-  // the magic link is single-use. Use the row id (non-secret PK) rather than
-  // the token itself so the token value never appears in a write path.
-  await c.env.DB.prepare('UPDATE magic_tokens SET used = 1 WHERE id = ?').bind(row.id).run()
+  // the magic link is single-use.
+  await c.env.DB.prepare('UPDATE magic_tokens SET used = 1 WHERE token = ?').bind(magicToken).run()
 
   // Decide role + tenant scope based on the email and the magic_tokens row.
   const platformAdmin = isPlatformAdminEmail(row.email, c.env)
@@ -393,9 +367,7 @@ auth.post('/api/auth/verify', async (c) => {
   // `_tester_email` cookie. /api/auth/me PUT now reads from verifiedToken.email.
   const sessionToken = await generateToken(sessionTenantId, role, c.env, row.email)
 
-  // M-2: In this verify flow, role is always 'admin' or 'platform' (never
-  // 'viewer') — so cookie Max-Age is always ADMIN_TOKEN_TTL_DAYS (1 day).
-  const maxAge = ADMIN_TOKEN_TTL_DAYS * 24 * 60 * 60
+  const maxAge = SESSION_EXPIRY_DAYS * 24 * 60 * 60
   const secure = !c.req.header('Host')?.includes('localhost')
   // _token holds the signed session — HttpOnly so JS can't read it (defense
   // against XSS exfiltration). _auth and _tester_email are presence flags for
@@ -480,20 +452,20 @@ auth.post('/api/auth/verify', async (c) => {
 /** Add a user to a tenant (admin only). */
 auth.post('/api/auth/users', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return badRequest(c, 'Tenant required')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
 
   let body: { email?: string; role?: string }
-  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
 
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   if (!email || !emailValid(email)) {
-    return badRequest(c, 'Valid email required')
+    return c.json({ error: 'Valid email required' }, 400)
   }
 
   // Refuse to insert a platform admin into tenant_users — they're a hidden
   // role and shouldn't appear in tenant-visible user lists.
   if (isPlatformAdminEmail(email, c.env)) {
-    return badRequest(c, 'This email is reserved')
+    return c.json({ error: 'This email is reserved' }, 400)
   }
 
   const role = body.role === 'viewer' ? 'viewer' : 'admin'
@@ -503,7 +475,7 @@ auth.post('/api/auth/users', async (c) => {
       'INSERT INTO tenant_users (id, tenant_id, email, role) VALUES (?, ?, ?, ?)',
     ).bind(crypto.randomUUID(), tenant.id, email, role).run()
 
-    const fromEmail = getAuthFromEmail(c.env)
+    const fromEmail = c.env.REPORT_FROM_EMAIL || 'noreply@wildcaresolutions.org'
     const host = c.req.header('Host') ?? 'localhost:8787'
     // Bake a real magic link into the invite so the first click signs them in.
     // Otherwise the invitee lands on the login page and has to request their
@@ -514,17 +486,15 @@ auth.post('/api/auth/users', async (c) => {
       tenantSlug: tenant.slug,
       host,
     })
-    const platformName = getPlatformName(c.env)
-    const roleLabel = role === 'admin' ? 'an admin' : 'a viewer'
     c.executionCtx.waitUntil(
       sendEmail(c.env, {
-        from: { name: `${tenant.name} via ${platformName}`, email: fromEmail },
+        from: { name: tenant.name, email: fromEmail },
         to: email,
-        subject: `${platformName}: your invite to ${tenant.name}'s rescue bot`,
+        subject: `You've been invited to ${tenant.name}`,
         html: `
           <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-            <h2 style="color: #333; margin-bottom: 8px;">Sign in to ${tenant.name} on ${platformName}</h2>
-            <p style="color: #666; margin-bottom: 24px;">You've been added as ${roleLabel} of ${tenant.name}'s rescue bot on the ${platformName} platform. Click below to sign in — this link expires in ${TOKEN_EXPIRY_MINUTES} minutes.</p>
+            <h2 style="color: #333; margin-bottom: 8px;">You're invited to ${tenant.name}</h2>
+            <p style="color: #666; margin-bottom: 24px;">You've been added as ${role === 'admin' ? 'an admin' : 'a viewer'} for the ${tenant.name} rescue bot. Click below to sign in — this link expires in ${TOKEN_EXPIRY_MINUTES} minutes.</p>
             <a href="${loginUrl}" style="display: inline-block; background: #6B7F5E; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Sign In</a>
             <p style="color: #999; font-size: 13px; margin-top: 32px;">If the link expires, just visit <a href="https://${host}/" style="color:#6B7F5E">the portal</a> and request a new sign-in link with this email.</p>
           </div>
@@ -543,7 +513,7 @@ auth.post('/api/auth/users', async (c) => {
 /** List users for a tenant (admin only). Platform admins never appear here. */
 auth.get('/api/auth/users', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return badRequest(c, 'Tenant required')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
 
   const { results } = await c.env.DB.prepare(
     'SELECT id, email, role, created_at FROM tenant_users WHERE tenant_id = ? ORDER BY created_at',
@@ -555,7 +525,7 @@ auth.get('/api/auth/users', async (c) => {
 /** Remove a user from a tenant (admin only). */
 auth.delete('/api/auth/users/:userId', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return badRequest(c, 'Tenant required')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
 
   const userId = c.req.param('userId')
   await c.env.DB.prepare(
@@ -586,11 +556,11 @@ async function resolveCallerEmail(
 /** Get current user's profile. Platform admins are stored in platform_users. */
 auth.get('/api/auth/me', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return badRequest(c, 'Tenant required')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
 
   const cookiePrefix = tenantCookiePrefix(tenant.slug)
   const decodedEmail = await resolveCallerEmail(c, cookiePrefix)
-  if (!decodedEmail) return unauthorized(c, 'Not signed in')
+  if (!decodedEmail) return c.json({ error: 'Not signed in' }, 401)
 
   const platformAdmin = isPlatformAdminEmail(decodedEmail, c.env)
 
@@ -611,7 +581,7 @@ auth.get('/api/auth/me', async (c) => {
     'SELECT email, display_name, avatar_url, role FROM tenant_users WHERE tenant_id = ? AND email = ?',
   ).bind(tenant.id, decodedEmail).first<{ email: string; display_name: string | null; avatar_url: string | null; role: string }>()
 
-  if (!user) return notFound(c, 'user')
+  if (!user) return c.json({ error: 'User not found' }, 404)
 
   return c.json({
     email: user.email,
@@ -625,7 +595,7 @@ auth.get('/api/auth/me', async (c) => {
 /** Update current user's profile. */
 auth.put('/api/auth/me', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return badRequest(c, 'Tenant required')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
 
   const cookiePrefix = tenantCookiePrefix(tenant.slug)
   // Audit ralph-1 C4: identity for writes comes from the signed session
@@ -633,12 +603,12 @@ auth.put('/api/auth/me', async (c) => {
   // verifiedToken.email and falls back to the legacy cookie only for v1
   // tokens still in flight.
   const decodedEmail = await resolveCallerEmail(c, cookiePrefix)
-  if (!decodedEmail) return unauthorized(c, 'Not signed in')
+  if (!decodedEmail) return c.json({ error: 'Not signed in' }, 401)
 
   const platformAdmin = isPlatformAdminEmail(decodedEmail, c.env)
 
   let body: { display_name?: string; avatar_url?: string | null }
-  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
 
   const displayName = typeof body.display_name === 'string' ? body.display_name.trim().slice(0, 100) : null
   // avatar_url: accept null to clear, or a trimmed URL up to 1024 chars. We
@@ -647,7 +617,7 @@ auth.put('/api/auth/me', async (c) => {
   if (typeof body.avatar_url === 'string') {
     const trimmed = body.avatar_url.trim().slice(0, 1024)
     if (trimmed && !/^https?:\/\//i.test(trimmed)) {
-      return badRequest(c, 'avatar_url must be an http(s) URL')
+      return c.json({ error: 'avatar_url must be an http(s) URL' }, 400)
     }
     avatarUrl = trimmed || null
   }

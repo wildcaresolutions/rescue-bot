@@ -19,8 +19,6 @@
  * stream parts are discriminated by `type` and we only read the fields
  * the protocol cares about.
  */
-import { logError } from './logger'
-
 type FullStreamPart =
   | { type: 'text-delta'; text: string }
   | { type: 'tool-input-start'; id: string; toolName: string }
@@ -56,7 +54,7 @@ export function buildAgentStream(fullStream: AsyncIterable<FullStreamPart>): Res
           }
         }
       } catch (e) {
-        logError('agent/stream-error', { error: e })
+        console.error('[agent] stream error:', e)
       } finally {
         controller.close()
       }

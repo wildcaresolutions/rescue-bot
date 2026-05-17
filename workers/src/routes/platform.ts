@@ -1,19 +1,13 @@
 import { Hono } from 'hono'
 import type { Env, Tenant, Variables } from '../lib/types'
 import { hashPassword, generateToken, verifyToken, isDevAuthBypass, resolveSession, tenantCookiePrefix } from '../lib/auth'
-import { invalidateTenantCache, invalidateDomainsCache } from '../lib/cache'
+import { invalidateTenantCache } from '../lib/cache'
 import { clamp } from '../lib/utils'
-import type { OrgConfig, BotOverrides } from '../lib/compile-instruction'
+import { compileInstruction } from '../lib/compile-instruction'
 import { verifyTurnstile } from '../lib/turnstile'
 import { sanitizeCustomCss } from '../lib/css-sanitize'
-import { loadTenantBySlug } from '../lib/tenant-loader'
-import { stageConfigChange, type DraftConfig } from '../lib/draft'
+import { parseOrgConfig, loadTenantBySlug, loadTenantById } from '../lib/tenant-loader'
 import { dbError } from '../lib/errors'
-import { logError } from '../lib/logger'
-import { sendEmail } from '../lib/email'
-import { getPlatformName, getAuthFromEmail } from '../lib/platform'
-import { tenantHostFor, tenantPortalUrl } from '../lib/routing'
-import { issueMagicLink } from './auth'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -39,13 +33,6 @@ const ALLOWED_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp'])
 /** Sanitize a filename to prevent path traversal. */
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128)
-}
-
-/** Escape user-supplied text for safe interpolation into transactional
- *  email HTML (org/contact names come straight off the public apply form). */
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
 /** Derive safe content type from file extension. SVG intentionally absent
@@ -97,7 +84,7 @@ platform.post('/platform/apply', async (c) => {
       // Always log — site/secret mismatches and timeout-or-duplicate rejections
       // were silent before, which made the form's "Captcha verification failed"
       // banner impossible to root-cause.
-      logError('platform/apply-turnstile-rejected', { reason: tr.reason })
+      console.error('[platform/apply] turnstile rejected:', tr)
       if (tr.reason === 'missing_secret' || tr.reason === 'network') {
         return c.json({ error: 'Captcha service unavailable' }, 503)
       }
@@ -137,28 +124,6 @@ platform.post('/platform/apply', async (c) => {
       clamp(body.ref as string, 128),
     ).run()
 
-    // Confirmation to the applicant — best effort. Before this, a public
-    // submit returned 200 and then went silent: the applicant had no signal
-    // it worked and would re-submit or assume the form was broken. A mail
-    // failure must NOT fail the application, so this rides waitUntil.
-    // Confirm to the applicant. sendEmail never throws (it catches its own
-    // errors and reports via the result), so a mail problem can't fail the
-    // submit — we just don't block the 201 on a perfect send. With no EMAIL
-    // binding (local/dev) it logs the would-be message and no-ops.
-    const platformName = getPlatformName(c.env)
-    await sendEmail(c.env, {
-      from: { name: platformName, email: getAuthFromEmail(c.env) },
-      to: contactEmail,
-      subject: `We received your ${platformName} application`,
-      html: `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-            <h2 style="color: #333; margin-bottom: 8px;">Thanks, ${escapeHtml(contactName)}!</h2>
-            <p style="color: #666; margin-bottom: 16px;">We've received ${escapeHtml(orgName)}'s application to join ${platformName}. Our team will review it and follow up by email — usually within a couple of business days.</p>
-            <p style="color: #999; font-size: 13px; margin-top: 24px;">You don't need to do anything else right now. If you have questions, just reply to this email.</p>
-          </div>
-        `,
-    })
-
     return c.json({ success: true, id }, 201)
   } catch (e) {
     return dbError(c, 'platform/apply', 'DB error', e)
@@ -174,8 +139,9 @@ platform.post('/platform/signup', async (c) => {
 
   const slug = typeof body.slug === 'string' ? body.slug.toLowerCase().trim() : ''
   const name = typeof body.name === 'string' ? body.name.trim() : ''
+  const password = typeof body.password === 'string' ? body.password : ''
   const phone = clamp(body.phone as string, 32)
-  const email = (typeof body.email === 'string' ? body.email.trim().toLowerCase() : '')
+  const email = clamp(body.email as string, 256)
   const url = clamp(body.url as string, 512)
   const locationCounty = clamp(body.location_county as string, 128)
   const locationState = clamp(body.location_state as string, 64)
@@ -189,16 +155,12 @@ platform.post('/platform/signup', async (c) => {
   if (!validSlug(slug)) {
     return c.json({ error: 'Invalid slug. Use 3-50 lowercase letters, numbers, and hyphens.' }, 400)
   }
-  // Magic-link onboarding: the contact email is the sign-in identity, not a
-  // password to read out. No operator-chosen password — we set a random one
-  // just to satisfy the NOT NULL column; nobody uses legacy password login.
-  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
-    return c.json({ error: 'A valid contact email is required' }, 400)
+  if (!password || password.length < 6) {
+    return c.json({ error: 'Password must be at least 6 characters' }, 400)
   }
 
   const id = crypto.randomUUID()
-  const randomPassword = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(36).slice(-1)).join('')
-  const passwordHash = await hashPassword(randomPassword)
+  const passwordHash = await hashPassword(password)
 
   try {
     await c.env.DB.prepare(
@@ -212,46 +174,8 @@ platform.post('/platform/signup', async (c) => {
       colorPrimary, colorSecondary, colorAccent, passwordHash,
     ).run()
 
-    // The contact becomes the tenant's first admin user, so they can request a
-    // magic link. Mirror of the approval flow.
-    await c.env.DB.prepare(
-      'INSERT OR IGNORE INTO tenant_users (id, tenant_id, email, role) VALUES (?, ?, ?, ?)',
-    ).bind(crypto.randomUUID(), id, email, 'admin').run()
-
-    const adminToken = await generateToken(id, true, c.env, email)
-
-    // Email the contact a one-click sign-in link to their portal. Awaited so
-    // we can report whether it sent and surface a dev link when there's no
-    // EMAIL binding.
-    const reqHost = c.req.header('Host') ?? 'localhost:8787'
-    const platformName = getPlatformName(c.env)
-    const portalUrl = tenantPortalUrl(reqHost, slug)
-    const loginUrl = await issueMagicLink(c.env, { email, tenantId: id, tenantSlug: slug, host: tenantHostFor(reqHost, slug) })
-    const emailResult = await sendEmail(c.env, {
-      from: { name: platformName, email: getAuthFromEmail(c.env) },
-      to: email,
-      subject: `Your ${name} rescue bot is ready on ${platformName}`,
-      html: `
-        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-          <h2 style="color: #333; margin-bottom: 8px;">You're set up 🎉</h2>
-          <p style="color: #666; margin-bottom: 24px;">${escapeHtml(name)}'s rescue assistant is ready on ${platformName}. Click below to sign in to your admin console — this link expires in 15 minutes.</p>
-          <a href="${loginUrl}" style="display: inline-block; background: #6B7F5E; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open your console</a>
-          <p style="color: #999; font-size: 13px; margin-top: 32px;">If the link expires, visit <a href="${portalUrl}" style="color:#6B7F5E">your portal</a> and request a new sign-in link with this email (${escapeHtml(email)}).</p>
-        </div>`,
-    })
-    if (emailResult.sent === false && emailResult.reason !== 'no_binding') {
-      logError('platform/signup-welcome-email-failed', { emailResult })
-    }
-
-    return c.json({
-      success: true,
-      tenant: { id, slug, name },
-      admin_token: adminToken,
-      contact_email: email,
-      portal_url: portalUrl,
-      email_sent: emailResult.sent === true,
-      ...(emailResult.sent === false && emailResult.reason === 'no_binding' ? { dev_login_url: loginUrl } : {}),
-    }, 201)
+    const adminToken = await generateToken(id, true, c.env)
+    return c.json({ success: true, tenant: { id, slug, name }, admin_token: adminToken }, 201)
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e)
     if (errMsg.includes('UNIQUE constraint failed') || errMsg.includes('tenants.slug')) {
@@ -301,11 +225,8 @@ platform.post('/platform/setup/:slug', async (c) => {
       await c.env.R2.put(r2Key, logo.stream(), {
         httpMetadata: { contentType: safeContentType(ext) },
       })
-      // Blob is written to R2 immediately (binary can't sit in a JSON draft),
-      // but the logo_r2_key is STAGED — the live widget keeps the old logo
-      // until Publish. (Reference docs below index immediately — that's RAG,
-      // intentionally live, and labeled "applies immediately" in the UI.)
-      await stageConfigChange(c.env.DB, tenant, { logo_r2_key: r2Key })
+      await c.env.DB.prepare("UPDATE tenants SET logo_r2_key = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(r2Key, tenant.id).run()
       results.logo = { key: r2Key, url: `/assets/${r2Key}` }
     }
 
@@ -341,7 +262,7 @@ platform.post('/platform/setup/:slug', async (c) => {
         }
         indexedDocs.push(safeName)
       } catch (e) {
-        logError('platform/setup-index-doc-failed', { docName: doc.name, error: e })
+        console.error(`[setup] Failed to index doc ${doc.name}:`, e)
       }
     }
     if (indexedDocs.length) results.docs = indexedDocs
@@ -350,51 +271,138 @@ platform.post('/platform/setup/:slug', async (c) => {
     return c.json({ success: true, ...results })
   }
 
-  // JSON body: STAGE config changes into the tenant's draft. Nothing here
-  // touches the live columns the bot serves — that only happens at Publish
-  // (POST /admin/publish → lib/publish.ts), which also re-runs the instruction
-  // compile. Each field maps to a DraftConfig patch key (same clamps/sanitize
-  // as before; JSON columns stay objects, serialized at publish).
+  // JSON body: update tenant fields
   let body: Record<string, unknown>
   try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
 
-  const patch: DraftConfig = {}
-  if (typeof body.custom_instruction === 'string') patch.custom_instruction = body.custom_instruction.slice(0, 10_000)
-  if (typeof body.phone === 'string') patch.phone = clamp(body.phone, 32)
-  if (typeof body.email === 'string') patch.email = clamp(body.email, 256)
-  if (typeof body.url === 'string') patch.url = clamp(body.url, 512)
-  if (typeof body.location_county === 'string') patch.location_county = clamp(body.location_county, 128)
-  if (typeof body.location_state === 'string') patch.location_state = clamp(body.location_state, 64)
-  if (typeof body.location_service_area === 'string') patch.location_service_area = clamp(body.location_service_area, 512)
-  if (typeof body.color_primary === 'string') { const v = clamp(body.color_primary, 7); if (v) patch.color_primary = v }
-  if (typeof body.color_secondary === 'string') { const v = clamp(body.color_secondary, 7); if (v) patch.color_secondary = v }
-  if (typeof body.color_accent === 'string') { const v = clamp(body.color_accent, 7); if (v) patch.color_accent = v }
-  if (typeof body.widget_theme === 'object' && body.widget_theme !== null) patch.widget_theme = body.widget_theme as Record<string, unknown>
-  if (typeof body.widget_custom_css === 'string' || body.widget_custom_css === null) {
-    // Sanitize before staging (audit P1-21) — null clears.
-    const raw = body.widget_custom_css as string | null
-    patch.widget_custom_css = raw === null ? null : sanitizeCustomCss(raw).css
-  }
-  if (typeof body.org_config === 'object' && body.org_config !== null) patch.org_config = body.org_config as OrgConfig
-  if (typeof body.bot_overrides === 'object' && body.bot_overrides !== null) patch.bot_overrides = body.bot_overrides as BotOverrides
-  if (typeof body.report_recipients === 'string' || body.report_recipients === null) {
-    const cleaned = ((body.report_recipients ?? '') as string).split(',').map(s => s.trim()).filter(Boolean).join(',')
-    patch.report_recipients = cleaned ? clamp(cleaned, 1024) : null
-  }
-  if (typeof body.daily_reports_enabled === 'boolean') patch.daily_reports_enabled = body.daily_reports_enabled ? 1 : 0
-  if (typeof body.house_rules === 'string' || body.house_rules === null) patch.house_rules = (body.house_rules as string | null)?.slice(0, 10000) ?? null
-  if (typeof body.custom_instruction_locked === 'boolean') {
-    patch.custom_instruction_locked = body.custom_instruction_locked ? 1 : 0
-    patch.custom_instruction_locked_at = body.custom_instruction_locked ? new Date().toISOString() : null
-  }
-  // NOTE: `widget_published` is no longer handled here — publishing is the
-  // global POST /admin/publish action; the Preview button calls that.
+  const updates: string[] = []
+  const values: (string | number | null)[] = []
 
-  if (Object.keys(patch).length) {
+  if (typeof body.custom_instruction === 'string') {
+    updates.push('custom_instruction = ?')
+    values.push(body.custom_instruction.slice(0, 10_000))
+  }
+  if (typeof body.phone === 'string') { updates.push('phone = ?'); values.push(clamp(body.phone, 32)) }
+  if (typeof body.email === 'string') { updates.push('email = ?'); values.push(clamp(body.email, 256)) }
+  if (typeof body.url === 'string') { updates.push('url = ?'); values.push(clamp(body.url, 512)) }
+  if (typeof body.location_county === 'string') { updates.push('location_county = ?'); values.push(clamp(body.location_county, 128)) }
+  if (typeof body.location_state === 'string') { updates.push('location_state = ?'); values.push(clamp(body.location_state, 64)) }
+  if (typeof body.location_service_area === 'string') { updates.push('location_service_area = ?'); values.push(clamp(body.location_service_area, 512)) }
+  if (typeof body.color_primary === 'string') { updates.push('color_primary = ?'); values.push(clamp(body.color_primary, 7)) }
+  if (typeof body.color_secondary === 'string') { updates.push('color_secondary = ?'); values.push(clamp(body.color_secondary, 7)) }
+  if (typeof body.color_accent === 'string') { updates.push('color_accent = ?'); values.push(clamp(body.color_accent, 7)) }
+  if (typeof body.widget_theme === 'object' && body.widget_theme !== null) {
+    updates.push('widget_theme = ?')
+    values.push(JSON.stringify(body.widget_theme))
+  }
+  if (typeof body.widget_custom_css === 'string' || body.widget_custom_css === null) {
+    updates.push('widget_custom_css = ?')
+    // Sanitize before storage (audit P1-21). This is the second write path
+    // for widget_custom_css — agent.ts:update_custom_css is the other.
+    // Both must call sanitizeCustomCss or operator-authored CSS could
+    // smuggle url() exfil, @import chains, expression(), or </style>
+    // angle-bracket HTML injection through. Null bypasses sanitization
+    // (used to clear the field).
+    const raw = body.widget_custom_css as string | null
+    values.push(raw === null ? null : sanitizeCustomCss(raw).css)
+  }
+  if (body.widget_published === true) {
+    // Both fields parameterized. The previous shape mixed a literal
+    // `onboarded = 1` fragment with a values.push(1), leaving the bind
+    // count one ahead of the ? count and causing D1 to reject the query
+    // with "Wrong number of parameter bindings" — silently breaking
+    // first-publish for every tenant.
+    updates.push('widget_published_at = ?')
+    values.push(new Date().toISOString())
+    updates.push('onboarded = ?')
+    values.push(1)
+  }
+  if (typeof body.org_config === 'object' && body.org_config !== null) {
+    updates.push('org_config = ?')
+    values.push(JSON.stringify(body.org_config))
+  }
+  if (typeof body.bot_overrides === 'object' && body.bot_overrides !== null) {
+    updates.push('bot_overrides = ?')
+    values.push(JSON.stringify(body.bot_overrides))
+  }
+  if (typeof body.report_recipients === 'string' || body.report_recipients === null) {
+    const raw = (body.report_recipients ?? '') as string
+    const cleaned = raw
+      .split(',')
+      .map(s => s.trim())
+      .filter(s => s.length > 0)
+      .join(',')
+    updates.push('report_recipients = ?')
+    values.push(cleaned ? clamp(cleaned, 1024) : null)
+  }
+  if (typeof body.daily_reports_enabled === 'boolean') {
+    updates.push('daily_reports_enabled = ?')
+    values.push(body.daily_reports_enabled ? 1 : 0)
+  }
+
+  // House rules — append-only operator-pinned text. Always overwrites.
+  // 10000-char cap matches custom_instruction. Raised from 5000 alongside
+  // migration 0030 (Lock-1) so operators migrating off the lock flag don't
+  // lose hand-edited prompt content.
+  if (typeof body.house_rules === 'string' || body.house_rules === null) {
+    updates.push('house_rules = ?')
+    values.push((body.house_rules as string | null)?.slice(0, 10000) ?? null)
+  }
+
+  // Lock flag: when set true, custom_instruction edits are treated as raw
+  // operator-edited text — species_config / org_config changes will NOT
+  // recompile and overwrite. Setting back to false re-enables auto-compile
+  // on the next config change.
+  if (typeof body.custom_instruction_locked === 'boolean') {
+    updates.push('custom_instruction_locked = ?')
+    values.push(body.custom_instruction_locked ? 1 : 0)
+    updates.push('custom_instruction_locked_at = ?')
+    values.push(body.custom_instruction_locked ? new Date().toISOString() : null)
+  }
+
+  // If structured KB fields OR house_rules changed, recompile —
+  // unless the operator has locked custom_instruction.
+  const fieldChangedThatTriggersRecompile = body.org_config || body.bot_overrides || body.house_rules !== undefined
+  const explicitlyEditingRawPrompt = typeof body.custom_instruction === 'string'
+  if (fieldChangedThatTriggersRecompile && !explicitlyEditingRawPrompt) {
+    const fresh = await loadTenantById(c.env.DB, tenant.id)
+    if (fresh) {
+      // If the operator is currently writing custom_instruction_locked=true
+      // in this same call, respect it (use the new value, not the stale row).
+      const lockedNow = typeof body.custom_instruction_locked === 'boolean'
+        ? body.custom_instruction_locked
+        : fresh.custom_instruction_locked === 1
+      if (!lockedNow) {
+        const oc = body.org_config || (parseOrgConfig(fresh.org_config))
+        const bo = body.bot_overrides || (parseOrgConfig<Record<string, unknown>>(fresh.bot_overrides))
+        const houseRules = (typeof body.house_rules === 'string' ? body.house_rules : fresh.house_rules) || ''
+        const baseCompiled = compileInstruction(fresh, oc, bo)
+        const compiled = (baseCompiled + (houseRules.trim() ? `\n\n## House Rules (operator-defined)\n${houseRules.trim()}` : '')).trim()
+        if (compiled) {
+          updates.push('custom_instruction = ?')
+          values.push(compiled.slice(0, 10_000))
+        }
+      }
+    }
+  }
+
+  if (updates.length) {
+    updates.push("updated_at = datetime('now')")
     try {
-      await stageConfigChange(c.env.DB, tenant, patch)
+      await c.env.DB.prepare(`UPDATE tenants SET ${updates.join(', ')} WHERE id = ?`)
+        .bind(...values, tenant.id).run()
+      invalidateTenantCache(slug)
     } catch (e) {
-      logError('platform/setup-stage-failed', { slug, keys: Object.keys(patch), error: e })
+      // Log the technical detail to Workers observability — operators don't
+      // see it but on-call does. Client receives a generic "couldn't save"
+      // so internal SQL/binding errors never leak into the admin UI.
+      console.error('[platform/setup] D1 UPDATE failed:', e, {
+        slug,
+        update_count: updates.length,
+        // Don't log values verbatim (may contain prompt content); log shape only.
+        update_keys: updates.map(u => u.split(' = ')[0]),
+        published_flag: body.widget_published === true,
+      })
       return c.json({ error: 'Couldn’t save your changes. Try again in a moment — if this keeps happening, contact support.' }, 500)
     }
   }
@@ -494,81 +502,23 @@ platform.post('/platform/applications/:id/approve', async (c) => {
       await c.env.DB.prepare(
         'INSERT OR IGNORE INTO allowed_domains (tenant_id, domain) VALUES (?, ?)',
       ).bind(tenantId, application.hosting_domain).run()
-      invalidateDomainsCache(tenantId)
     }
 
     await c.env.DB.prepare(
       "UPDATE applications SET status = 'approved', tenant_id = ?, reviewed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
     ).bind(tenantId, appId).run()
 
-    // The approved contact becomes the tenant's first admin user. Without
-    // this row they can't request a magic link (the auth flow only issues
-    // links to known tenant_users), so before this fix a freshly-approved
-    // operator was provisioned but locked out. INSERT OR IGNORE so a re-run
-    // (or a slug collision retry) doesn't 500 on the UNIQUE(tenant,email).
-    const contactEmail = (application.contact_email || '').trim().toLowerCase()
-    if (contactEmail) {
-      await c.env.DB.prepare(
-        'INSERT OR IGNORE INTO tenant_users (id, tenant_id, email, role) VALUES (?, ?, ?, ?)',
-      ).bind(crypto.randomUUID(), tenantId, contactEmail, 'admin').run()
-    }
-
     // Audit ralph-2 H6: bake the contact email into the v2 token so the
     // first sign-in already has email identity, not a v1 fallback that
     // would require re-auth.
     const adminToken = await generateToken(tenantId, true, c.env, application.contact_email)
 
-    // Welcome the operator with a one-click sign-in link to THEIR portal
-    // (the approval runs on the platform-admin host, so the link must point
-    // at the tenant's own host/slug). Mirrors the invite flow in auth.ts —
-    // links expire in 15 min, so the email also tells them how to request a
-    // fresh one. Awaited (not waitUntil) so the platform admin sees whether
-    // the mail actually went out, and so dev (no EMAIL binding) can surface
-    // the link inline.
-    const reqHost = c.req.header('Host') ?? 'localhost:8787'
-    const platformName = getPlatformName(c.env)
-    const portalUrl = tenantPortalUrl(reqHost, slug)
-    let emailResult: Awaited<ReturnType<typeof sendEmail>> | null = null
-    let devLoginUrl: string | undefined
-    if (contactEmail) {
-      const loginUrl = await issueMagicLink(c.env, {
-        email: contactEmail,
-        tenantId,
-        tenantSlug: slug,
-        host: tenantHostFor(reqHost, slug),
-      })
-      devLoginUrl = loginUrl
-      emailResult = await sendEmail(c.env, {
-        from: { name: platformName, email: getAuthFromEmail(c.env) },
-        to: contactEmail,
-        subject: `Your ${application.org_name} rescue bot is ready on ${platformName}`,
-        html: `
-          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-            <h2 style="color: #333; margin-bottom: 8px;">You're approved 🎉</h2>
-            <p style="color: #666; margin-bottom: 24px;">${escapeHtml(application.org_name)}'s rescue assistant is set up on ${platformName}. Click below to sign in to your admin console and finish onboarding — this link expires in 15 minutes.</p>
-            <a href="${loginUrl}" style="display: inline-block; background: #6B7F5E; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open your console</a>
-            <p style="color: #999; font-size: 13px; margin-top: 32px;">If the link expires, visit <a href="${portalUrl}" style="color:#6B7F5E">your portal</a> and request a new sign-in link with this email address (${escapeHtml(contactEmail)}).</p>
-          </div>
-        `,
-      })
-      if (emailResult.sent === false && emailResult.reason !== 'no_binding') {
-        logError('platform/approve-welcome-email-failed', { emailResult })
-      }
-    }
-
     return c.json({
       success: true,
       tenant: { id: tenantId, slug, name: application.org_name },
+      password,
       admin_token: adminToken,
       contact_email: application.contact_email,
-      portal_url: portalUrl,
-      email_sent: emailResult?.sent === true,
-      // Surface the one-click link in the response when there's no EMAIL
-      // binding (local dev / unconfigured) so onboarding can be demoed
-      // without a working mail pipe.
-      ...(emailResult && emailResult.sent === false && emailResult.reason === 'no_binding'
-        ? { dev_login_url: devLoginUrl }
-        : {}),
     })
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e)

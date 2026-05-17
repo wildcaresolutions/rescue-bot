@@ -10,7 +10,7 @@
 export const RESERVED_HOST_SLUGS = new Set([
   'admin', 'api', 'platform', 'www', 'app', 'mail', 'ftp',
   'cdn', 'static', 'assets', 'embed', 'health', 'status',
-  'default', 'rescue', 'test', 'staging', 'dev', 'smoke',
+  'default', 'rescue', 'test', 'staging', 'dev',
 ])
 
 /** First label of the host (e.g. "admin" from "admin.wildcaresolutions.org"). */
@@ -42,40 +42,4 @@ export function extractSlug(host: string): string | null {
 /** True when the host is the platform admin host (e.g. admin.wildcaresolutions.org). */
 export function isAdminHost(host: string): boolean {
   return hostFirstLabel(host) === 'admin'
-}
-
-/** True when tenants are addressed via `?tenant=<slug>` on a shared host
- *  rather than their own subdomain. Mirrors the null cases in extractSlug:
- *  localhost, *.workers.dev, and any host with fewer than three labels. */
-export function isQueryParamHost(host: string): boolean {
-  const parts = host.split(':')[0].split('.')
-  if (parts.length < 3) return true
-  if (parts[parts.length - 1] === 'localhost') return true
-  if (parts[parts.length - 2] === 'workers' && parts[parts.length - 1] === 'dev') return true
-  return false
-}
-
-/**
- * Given the current request host (e.g. the platform-admin host an approval
- * runs on) and a tenant slug, return the host the tenant's portal lives on.
- * In subdomain mode (prod) that's `<slug>.<root>`; in query-param mode
- * (workers.dev / localhost / apex) it's the same host, with the tenant
- * carried via `?tenant=` instead. Pairs with extractSlug/isQueryParamHost so
- * a magic link minted during onboarding lands on the host that can read it.
- */
-export function tenantHostFor(reqHost: string, slug: string): string {
-  if (isQueryParamHost(reqHost)) return reqHost
-  const [hostname, port] = reqHost.split(':')
-  const root = hostname.split('.').slice(1).join('.')
-  return port ? `${slug}.${root}:${port}` : `${slug}.${root}`
-}
-
-/** Absolute base URL of a tenant's portal, including `?tenant=` in
- *  query-param mode. No trailing path beyond `/`. */
-export function tenantPortalUrl(reqHost: string, slug: string): string {
-  const host = tenantHostFor(reqHost, slug)
-  const proto = host.includes('localhost') ? 'http' : 'https'
-  return isQueryParamHost(reqHost)
-    ? `${proto}://${host}/?tenant=${encodeURIComponent(slug)}`
-    : `${proto}://${host}/`
 }

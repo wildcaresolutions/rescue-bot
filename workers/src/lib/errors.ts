@@ -29,7 +29,6 @@
 
 import type { Context } from 'hono'
 import type { Variables, Env } from './types'
-import { logError } from './logger'
 
 /** Hono Context typed to our env+vars; matches the routes' c: Context shape. */
 type C = Context<{ Bindings: Env; Variables: Variables }>
@@ -49,7 +48,7 @@ type C = Context<{ Bindings: Env; Variables: Variables }>
  * details (column names, query shape) to bad-actor callers.
  */
 export function dbError(c: C, route: string, action: string, err: unknown): Response {
-  logError('db/error', { route, action, error: err })
+  console.error(`[${route}] ${action}:`, err)
   return c.json({ error: 'Database error' }, 500)
 }
 

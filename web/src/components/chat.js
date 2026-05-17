@@ -69,19 +69,14 @@ function saveMessageMetadata(sessionId, messageId, role, content, timestamp, tim
     metadata.timing = timing
   }
 
-  // Save to localStorage (used by eval/export UI)
+  // Save to localStorage
   saveMessageMetadataItem(metadata)
 
-  // Only send user/assistant messages to the backend for system-level entries.
-  // The chat Worker already writes user + assistant rows to D1 during the
-  // streaming flow — sending them again from the client would create a second
-  // row per message (different message_id, so ON CONFLICT never fires).
-  if (role !== 'user' && role !== 'assistant') {
-    sendToBackend({
-      type: 'message',
-      ...metadata,
-    })
-  }
+  // Send to backend
+  sendToBackend({
+    type: 'message',
+    ...metadata,
+  })
 }
 
 // ---- UI helper functions ----
@@ -479,7 +474,7 @@ export async function handleSendMessage() {
   } catch (error) {
     console.error('Send message error:', error)
     if (typingEl) typingEl.remove()
-    showError('We\'re having trouble connecting right now. Please try again in a moment.')
+    showError('Failed to send message: ' + error.message)
   } finally {
     isStreaming = false
     chatInput.disabled = false

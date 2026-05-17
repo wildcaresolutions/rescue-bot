@@ -5,8 +5,7 @@
  * router-only.
  */
 import type { Env, Tenant } from './types'
-import { invalidateTenantCache, invalidateDomainsCache } from './cache'
-import { logError } from './logger'
+import { invalidateTenantCache } from './cache'
 import { getAiGatewayToken } from './ai'
 import { searchRAG } from './rag'
 import { BUILTIN_GUIDES } from '../guides'
@@ -55,7 +54,7 @@ export async function updateFeatureFlags(
     invalidateTenantCache(tenant.slug)
     return { feature_flags: current }
   } catch (e) {
-    logError('admin/feature-flags-db-error', { error: e })
+    console.error('[admin/feature-flags] DB error:', e)
     return { error: 'Database error', status: 500 }
   }
 }
@@ -75,7 +74,6 @@ export async function addDomain(env: Env, tenantId: string, raw: string): Promis
   await env.DB.prepare(
     'INSERT OR IGNORE INTO allowed_domains (tenant_id, domain) VALUES (?, ?)',
   ).bind(tenantId, domain).run()
-  invalidateDomainsCache(tenantId)
   return { ok: true }
 }
 
@@ -83,7 +81,6 @@ export async function removeDomain(env: Env, tenantId: string, id: string): Prom
   await env.DB.prepare(
     'DELETE FROM allowed_domains WHERE id = ? AND tenant_id = ?',
   ).bind(id, tenantId).run()
-  invalidateDomainsCache(tenantId)
 }
 
 // ── Knowledge base summary ───────────────────────────────────────────────────
@@ -139,7 +136,7 @@ export async function runRagSearch(
       })),
     }
   } catch (e) {
-    logError('admin/rag-search-error', { error: e })
+    console.error('[admin/rag-search] Error:', e)
     return { error: 'RAG search failed: ' + String(e), status: 500 }
   }
 }

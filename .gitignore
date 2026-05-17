@@ -18,16 +18,10 @@ web/public/widget.js
 # Environment variables
 .env
 .env.op
-.env.op.disabled
 .env.local
 .env.development.local
 .env.test.local
 .env.production.local
-
-# Private notes that must NEVER leak into the OSS repo.
-# audits/ contains security-audit findings (some unfixed) and the
-# `.env.op.disabled` references the 1Password vault paths.
-audits/
 
 # IDE/Editor files
 .vscode/
@@ -154,9 +148,6 @@ workers/scripts/migrate-data.sql
 # verify-stub job catches drift.
 org.env
 .gstack/
-
-# Compiled CLI binary (built from scripts/rescue-cli.js via esbuild/pkg or similar)
-bin/
 
 # Playwright runtime artifacts
 .playwright-cli/

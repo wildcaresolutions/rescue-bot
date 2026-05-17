@@ -15,7 +15,6 @@
  */
 import type { Env, Tenant } from './types'
 import { getEvalJudgeModelName, getMainChatModelName, runGatewayChatText } from './ai'
-import { logWarn, logError } from './logger'
 import { extractJudgeJson } from './judge-parse'
 import { parseOrgConfig } from './tenant-loader'
 
@@ -28,29 +27,6 @@ function responseHasPhone(response: string, phone: string | null): boolean {
   if (!phoneDigits) return true
   const responseDigits = digitsOnly(response)
   return responseDigits.includes(phoneDigits) || responseDigits.includes(phoneDigits.slice(-7))
-}
-
-/**
- * Did the bot include ANY phone-shaped contact path?
- *
- * Used in place of the strict tenant.phone check when a scenario expects
- * a phone redirect but the right number isn't always the tenant's own —
- * e.g. an after-hours scenario where surfacing Marin Humane (415-883-4621)
- * is also a valid answer, or a redirect scenario that hands the caller to
- * CDFW (1-888-DFG-CALS). Accepts the tenant's main phone, the
- * org_config.after_hours_phone, or any 10-digit US-style number /
- * vanity-number anywhere in the response.
- */
-function responseHasAnyPhone(response: string, tenant: Tenant): boolean {
-  if (responseHasPhone(response, tenant.phone)) return true
-  try {
-    const oc = parseOrgConfig(tenant.org_config)
-    const afterHours = typeof oc.after_hours_phone === 'string' ? oc.after_hours_phone : ''
-    if (afterHours && responseHasPhone(response, afterHours)) return true
-  } catch { /* ignore parse errors — fall through */ }
-  if (/\b\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/.test(response)) return true
-  if (/\b1-?\d{3}-?[A-Z]{3}-?[A-Z]{4}\b/i.test(response)) return true
-  return false
 }
 
 function extractHoursFromTenant(tenant: Tenant): string {
@@ -99,24 +75,11 @@ function deterministicJudge(
   // wrongly demanding the tenant's phone in the response, and redirect
   // scenarios were failing for it.)
   const expectsPhone = /\b(phone|contact path|call us|call our|rescue number|hotline)\b/.test(expected)
-  // Don't fire the phone check when the expected behavior explicitly says
-  // the bot should NOT ask for / surface the phone — e.g. an intake-gating
-  // scenario reading "Must NOT pivot to asking for the caller's
-  // name/email/phone in this first turn". Without this, the deterministic
-  // judge demanded the tenant phone in the response and false-negative'd
-  // every test that was about NOT capturing contact info (regression
-  // 2026-05-18 / wildcare-eval-012).
-  const expectedNegatesPhone = /(?:must not|should not|do not|never|avoid|no need to)[\s\S]{0,80}\b(?:phone|contact)\b/i.test(expected)
   // For redirect scenarios the bot is supposed to direct callers AWAY from
   // the tenant — requiring the tenant's own phone is the wrong check.
   const isRedirectScenario = /\b(redirect|out[- ]of[- ]area|outside (our|the) (service|coverage)|do not (provide intake|accept)|cannot (handle|accept))\b/.test(expected)
-  if (expectsPhone && !isRedirectScenario && !expectedNegatesPhone) {
-    // Liberal: accept the tenant's main phone, the after-hours phone, or
-    // ANY recognizable phone number (Marin Humane, CDFW vanity number,
-    // etc.) — the bot's system prompt enumerates the org's contacts, so
-    // any phone it emits is sourced from that list. Strict tenant.phone
-    // matching false-negative'd legitimate after-hours redirects.
-    if (responseHasAnyPhone(botResponse, tenant)) present.push('included a phone/contact path')
+  if (expectsPhone && !isRedirectScenario) {
+    if (responseHasPhone(botResponse, tenant.phone)) present.push('included the saved phone/contact path')
     else missing.push('saved phone/contact path')
   }
   if (/\b(hour|open|closed|after[- ]hours)\b/.test(expected)) {
@@ -160,23 +123,10 @@ function deterministicJudge(
   }
 }
 
-/** Parse a scenario's caller turns: the multi-turn `test_messages` JSON array
- *  when present, else the single `test_message`. Always ≥1 entry. */
-function scenarioTurns(scenario: { test_message: string; test_messages?: string | string[] | null }): string[] {
-  const raw = scenario.test_messages
-  let turns: string[] = []
-  if (Array.isArray(raw)) turns = raw
-  else if (typeof raw === 'string' && raw.trim()) {
-    try { const p = JSON.parse(raw); if (Array.isArray(p)) turns = p } catch { /* fall through */ }
-  }
-  turns = turns.map(t => (typeof t === 'string' ? t : '')).filter(Boolean)
-  return turns.length ? turns : [scenario.test_message]
-}
-
 export async function runEvalScenario(
   env: Env,
   tenant: Tenant,
-  scenario: { id: string; description: string; expected_behavior: string; test_message: string; test_messages?: string | string[] | null },
+  scenario: { id: string; description: string; expected_behavior: string; test_message: string },
 ): Promise<void> {
   try {
     // Use the SAME prompt-construction logic as the real chat handler so
@@ -186,56 +136,22 @@ export async function runEvalScenario(
     // bot gave care steps even though the real chat bot would correctly
     // redirect. The two paths must agree or onboarding tests are useless.
     const { buildChatPrompt } = await import('./chat-prompt')
+    const { systemPrompt } = await buildChatPrompt(env, tenant, scenario.test_message)
+
     const modelName = getMainChatModelName(env)
 
-    // Play the caller turns in order, just like a real conversation: each turn
-    // re-runs RAG + prompt construction (so species detection tracks the latest
-    // message) and the model sees the full history. The FINAL bot answer is what
-    // we grade; the whole transcript is kept for display + the judge's context.
-    const turns = scenarioTurns(scenario)
-    const convo: { role: 'user' | 'assistant'; content: string }[] = []
-    let botResponse = '(no response)'
-    for (const turn of turns) {
-      const { systemPrompt } = await buildChatPrompt(env, tenant, turn)
-      convo.push({ role: 'user', content: turn })
-      const botResult = await runGatewayChatText({
-        env,
-        model: modelName,
-        system: systemPrompt,
-        messages: convo,
-      })
-      botResponse = botResult.text || '(no response)'
-      convo.push({ role: 'assistant', content: botResponse })
-    }
+    const botResult = await runGatewayChatText({
+      env,
+      model: modelName,
+      system: systemPrompt,
+      messages: [{ role: 'user', content: scenario.test_message }],
+    })
 
-    const isMultiTurn = turns.length > 1
-    // What gets stored/displayed: a labeled transcript for multi-turn, or just
-    // the single answer otherwise.
-    const transcript = isMultiTurn
-      ? convo.map(m => `${m.role === 'user' ? '**Caller**' : '**Bot**'}: ${m.content}`).join('\n\n')
-      : botResponse
+    const botResponse = botResult.text || '(no response)'
 
     // Step 2: Judge the response through AI Gateway.
     let passed: number | null = null
     let judgeReasoning = ''
-
-    // When the LLM judge can't give us a verdict, fall back to a keyword
-    // heuristic — but DON'T let the heuristic emit a confident red FAIL.
-    // The deterministic check is brittle (it false-negatives good
-    // paraphrases), so a heuristic PASS is trustworthy enough to report,
-    // while a heuristic FAIL is recorded as NOT SCORED (passed=null) with a
-    // transparent note. Otherwise a perfectly good answer shows up as a hard
-    // failure the operator can't explain — the exact bug being fixed here.
-    const useFallback = (prefix: string) => {
-      const fb = deterministicJudge(tenant, scenario, botResponse)
-      if (fb.passed === 1) {
-        passed = 1
-        judgeReasoning = `${prefix} ${fb.reasoning}`
-      } else {
-        passed = null
-        judgeReasoning = `${prefix} This answer couldn't be graded automatically — re-run to score it. (Heuristic check: ${fb.reasoning})`
-      }
-    }
 
     // Judge prompt — JSON-only output enforced by (a) explicit instruction
     // at top and bottom, (b) an exact example to anchor the format, (c)
@@ -247,56 +163,54 @@ export async function runEvalScenario(
 The chatbot represents ${tenant.name} and speaks in first person ("we", "us", "our") when referring to itself.
 
 Test scenario: ${scenario.description}
-${isMultiTurn
-  ? `This is a MULTI-TURN conversation. Full transcript:\n${transcript}`
-  : `Visitor said: ${scenario.test_message}\n\nThe bot's actual response:\n${botResponse}`}
+Visitor said: ${scenario.test_message}
 Expected behavior of the bot: ${scenario.expected_behavior}
 
-Judge whether the bot ACCOMPLISHES the expected behavior${isMultiTurn ? ' over the course of the conversation (focus on the bot\'s FINAL answer, but credit information it gathered earlier)' : ''}. Don't require specific phrasing — paraphrases and synonyms are fine. Don't penalize the bot for asking reasonable follow-up questions in addition to satisfying the expected behavior. If the bot satisfies the spirit of what the operator wanted, that's a pass.
+The bot's actual response:
+${botResponse}
+
+Judge whether the bot's actual response ACCOMPLISHES the expected behavior. Don't require specific phrasing — paraphrases and synonyms are fine. Don't penalize the bot for asking reasonable follow-up questions in addition to satisfying the expected behavior. If the bot satisfies the spirit of what the operator wanted, that's a pass.
 
 Critical: respond with ONLY a single JSON object on one line, no prose before or after, no markdown fences. Use this exact shape:
 {"passed": true, "reasoning": "one sentence why this passes or fails, from the operator's perspective"}`
 
     try {
-      // Ask the judge for a verdict, retrying once if the first reply doesn't
-      // parse. Unparseable output is usually transient (the model wandered
-      // into prose) — a second attempt clears most of it, and every parse we
-      // recover here is a verdict we DON'T have to hand to the brittle
-      // keyword fallback. Evals run via waitUntil, so the extra round-trip
-      // costs nothing the operator waits on.
-      let parsed: ReturnType<typeof extractJudgeJson> = null
-      let lastText = ''
-      for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
-        const judgeResult = await runGatewayChatText({
-          env,
-          model: getEvalJudgeModelName(env),
-          messages: [{ role: 'user', content: judgePrompt }],
-          maxOutputTokens: 300,
-        })
-        lastText = judgeResult.text ?? ''
-        parsed = extractJudgeJson(lastText)
-      }
+      const judgeResult = await runGatewayChatText({
+        env,
+        model: getEvalJudgeModelName(env),
+        messages: [{ role: 'user', content: judgePrompt }],
+        maxOutputTokens: 300,
+      })
+      const text = judgeResult.text ?? ''
+      // More forgiving JSON extraction: tolerate ```json fences, leading
+      // prose, multiple JSON-like fragments. Find the LAST balanced
+      // {...} containing "passed" — that's the judge's verdict even if
+      // it preceded it with thinking-out-loud.
+      const parsed = extractJudgeJson(text)
       if (parsed) {
         passed = parsed.passed ? 1 : 0
         judgeReasoning = parsed.reasoning || ''
       } else {
-        logWarn('eval/judge-no-parseable-verdict', { textPreview: lastText.slice(0, 200) })
-        useFallback('The AI grader didn\'t return a clear verdict.')
+        console.warn('[eval/judge] LLM emitted no parseable verdict; falling back to deterministic', { textPreview: text.slice(0, 200) })
+        const fallback = deterministicJudge(tenant, scenario, botResponse)
+        passed = fallback.passed
+        judgeReasoning = fallback.reasoning
       }
     } catch (e) {
-      logError('eval/judge-ai-gateway-error', { error: e })
-      useFallback('The scoring service was unavailable.')
+      console.error('[eval/judge] AI Gateway error:', e)
+      const fallback = deterministicJudge(tenant, scenario, botResponse)
+      passed = fallback.passed
+      judgeReasoning = `Scoring service unavailable (${String(e)}). ${fallback.reasoning}`
     }
 
-    // Step 3: Store result — the full transcript for multi-turn so the operator
-    // sees the whole exchange, just the answer otherwise.
+    // Step 3: Store result
     await env.DB.prepare(
       `INSERT INTO eval_results (scenario_id, tenant_id, response, passed, judge_reasoning)
        VALUES (?, ?, ?, ?, ?)`,
-    ).bind(scenario.id, tenant.id, transcript.slice(0, 32_000), passed, judgeReasoning.slice(0, 4000)).run()
+    ).bind(scenario.id, tenant.id, botResponse.slice(0, 32_000), passed, judgeReasoning.slice(0, 4000)).run()
 
   } catch (e) {
-    logError('eval/run-error', { error: e })
+    console.error('[eval/run] Error:', e)
     // Store error result
     try {
       await env.DB.prepare(

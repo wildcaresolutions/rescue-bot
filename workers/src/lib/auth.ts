@@ -1,13 +1,7 @@
 import type { Env } from './types'
 
 const PBKDF2_ITERATIONS = 100_000
-const DAY_MS = 24 * 60 * 60 * 1000
-/** Admin and platform-admin sessions expire in 24 h (M-2). */
-export const ADMIN_TOKEN_TTL_DAYS = 1
-/** Regular viewer sessions expire in 30 days. */
-export const USER_TOKEN_TTL_DAYS = 30
-const ADMIN_TOKEN_MAX_AGE_MS = ADMIN_TOKEN_TTL_DAYS * DAY_MS
-const USER_TOKEN_MAX_AGE_MS = USER_TOKEN_TTL_DAYS * DAY_MS
+const TOKEN_MAX_AGE_MS = 30 * 24 * 60 * 60 * 1000  // 30 days
 
 // ── Password hashing ─────────────────────────────────────────────────────────
 
@@ -48,9 +42,8 @@ export function timingSafeCompare(a: string, b: string): boolean {
 }
 
 export async function verifyPassword(password: string, stored: string): Promise<boolean> {
-  // L-5: Only accept pbkdf2-hashed values. Plaintext fallback removed —
-  // any non-pbkdf2 stored value (incl. legacy plain-text) returns false.
-  if (!stored.startsWith('pbkdf2:')) return false
+  if (stored === 'LEGACY_SITE_PASSWORD') return false
+  if (!stored.startsWith('pbkdf2:')) return timingSafeCompare(password, stored)
 
   const [, saltHex, hashHex] = stored.split(':')
   const salt = new Uint8Array((saltHex.match(/.{2}/g) ?? []).map(b => parseInt(b, 16)))
@@ -80,14 +73,6 @@ export async function verifyPassword(password: string, stored: string): Promise<
  * admins re-auth on each tenant subdomain.
  */
 export type Role = 'viewer' | 'admin' | 'platform'
-
-/**
- * Maximum session lifetime (ms) for a given role.
- * Admin/platform sessions use a shorter TTL (1 day) per M-2.
- */
-export function tokenMaxAgeMs(role: Role): number {
-  return role === 'viewer' ? USER_TOKEN_MAX_AGE_MS : ADMIN_TOKEN_MAX_AGE_MS
-}
 
 /** HMAC signing secret for session cookies. Must be independent of login passwords. */
 export function signingSecret(env: Env): string {
@@ -220,8 +205,7 @@ export async function verifyToken(token: string, env: Env): Promise<VerifiedToke
     if (!/^\d+$/.test(timestamp)) return null
     const tsNum = parseInt(timestamp, 10)
     const age = Date.now() - tsNum
-    const maxAge = tokenMaxAgeMs(role)
-    if (!Number.isFinite(age) || age > maxAge) return null
+    if (!Number.isFinite(age) || age > TOKEN_MAX_AGE_MS) return null
 
     const isPlatformAdmin = role === 'platform'
     const isAdmin = role === 'admin' || isPlatformAdmin
@@ -257,15 +241,8 @@ export function isPlatformAdminEmail(email: string, env: Env): boolean {
  * This is here so day-to-day local dev doesn't require clicking a magic link
  * or wiring Turnstile keys — but flipping it to anything other than "true" in
  * .dev.vars exercises the real flow when you're testing auth changes.
- *
- * The ENVIRONMENT guard is belt-and-braces: even if DEV_AUTH_BYPASS is
- * accidentally set to "true" in a named environment's vars, the check returns
- * false for ENVIRONMENT === 'production' or ENVIRONMENT === 'test'. This
- * prevents the fail-open default from shipping when a bare `wrangler deploy`
- * (no --env) is run, or from leaking into a named env via copy-paste.
  */
 export function isDevAuthBypass(env: Env): boolean {
-  if (env.ENVIRONMENT === 'production' || env.ENVIRONMENT === 'test') return false
   return env.DEV_AUTH_BYPASS === 'true'
 }
 

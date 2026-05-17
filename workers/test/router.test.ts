@@ -110,8 +110,6 @@ class StubD1 {
 
 // ── Fake Env / context ─────────────────────────────────────────────────────────
 
-const stubRateLimit: RateLimit = { limit: async () => ({ success: true }) }
-
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     SIGNING_SECRET: 'test-signing-secret',
@@ -121,9 +119,6 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     DEV_AUTH_BYPASS: '',
     ENVIRONMENT: 'test',
     DB: new StubD1() as unknown as D1Database,
-    RL_IP_CHAT: stubRateLimit,
-    RL_IP_SESSION: stubRateLimit,
-    RL_TENANT: stubRateLimit,
     ...overrides,
   } as unknown as Env
 }
@@ -446,182 +441,8 @@ describe('Router — middleware chain integration', () => {
       expect(res.status).not.toBe(401)
     })
   })
-
-  // ── CORS — Access-Control-Allow-Origin header enforcement ─────────────────
-  //
-  // The existing /api/sessions tests above check *status codes* for Origin
-  // allowlist enforcement. That's necessary but not sufficient: the browser
-  // decides whether JS can read a response based on the ACAO *header*, not
-  // the HTTP status. A 200 without ACAO is browser-blocked just like a 403.
-  //
-  // These tests pin the actual header values so a future middleware refactor
-  // that breaks ACAO (e.g. wrong header name, missing echo-back, stripped by
-  // Hono) shows up red before it silently kills the widget on partner sites.
-
-  describe('CORS — Access-Control-Allow-Origin response header', () => {
-    it('echoes Origin for an allowed domain on /api/config', async () => {
-      const res = await request('https://wildcare.wildcaresolutions.org/api/config', {
-        headers: { Origin: 'https://discoverwildcare.org' },
-      })
-      expect(res.status).toBe(200)
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://discoverwildcare.org')
-    })
-
-    it('omits ACAO header for a domain not in allowed_domains', async () => {
-      // Status is still 200 (/api/config is public). The browser is what
-      // enforces CORS — missing ACAO makes the JS response unreadable.
-      const res = await request('https://wildcare.wildcaresolutions.org/api/config', {
-        headers: { Origin: 'https://evil.example.com' },
-      })
-      expect(res.status).toBe(200)
-      const acao = res.headers.get('Access-Control-Allow-Origin')
-      expect(acao).toBeFalsy()
-    })
-
-    it('echoes Origin for an allowed domain on /api/sessions POST', async () => {
-      const res = await request('https://wildcare.wildcaresolutions.org/api/sessions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Origin: 'https://discoverwildcare.org',
-        },
-        body: '{}',
-      })
-      expect(res.status).toBe(200)
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://discoverwildcare.org')
-    })
-
-    it('omits ACAO for a disallowed domain on /api/sessions POST', async () => {
-      const res = await request('https://wildcare.wildcaresolutions.org/api/sessions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Origin: 'https://notallowed.example.com',
-        },
-        body: '{}',
-      })
-      expect(res.status).toBe(403)
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBeFalsy()
-    })
-
-    it('OPTIONS preflight: 204 + ACAO for an allowed domain', async () => {
-      const res = await request('https://wildcare.wildcaresolutions.org/api/sessions', {
-        method: 'OPTIONS',
-        headers: {
-          Origin: 'https://discoverwildcare.org',
-          'Access-Control-Request-Method': 'POST',
-          'Access-Control-Request-Headers': 'Content-Type, X-Tenant-Slug',
-        },
-      })
-      expect(res.status).toBe(204)
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('https://discoverwildcare.org')
-      expect(res.headers.get('Access-Control-Allow-Methods')).toMatch(/POST/)
-    })
-
-    it('OPTIONS preflight: 204 but no ACAO for a disallowed domain', async () => {
-      // Browser enforces from the missing ACAO — we don't need to 403 the
-      // preflight itself (and shouldn't: it leaks info about the allowlist).
-      const res = await request('https://wildcare.wildcaresolutions.org/api/sessions', {
-        method: 'OPTIONS',
-        headers: {
-          Origin: 'https://evil.example.com',
-          'Access-Control-Request-Method': 'POST',
-        },
-      })
-      expect(res.status).toBe(204)
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBeFalsy()
-    })
-
-    it('auto-allows localhost origin without a DB lookup', async () => {
-      const res = await request('https://wildcare.wildcaresolutions.org/api/config', {
-        headers: { Origin: 'http://localhost:3000' },
-      })
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('http://localhost:3000')
-    })
-
-    it('rejects the literal "null" origin (sandboxed-iframe / data: URI attack)', async () => {
-      const res = await request('https://wildcare.wildcaresolutions.org/api/config', {
-        headers: { Origin: 'null' },
-      })
-      expect(res.headers.get('Access-Control-Allow-Origin')).toBeFalsy()
-    })
-  })
 })
 
 beforeEach(() => {
   // Each test starts with a fresh env; nothing to reset between tests today.
-})
-
-// ── Rate limiting rejection path ─────────────────────────────────────────────
-
-describe('Rate limiting middleware', () => {
-  const denyRateLimit: RateLimit = { limit: async () => ({ success: false }) }
-
-  it('returns 429 with Retry-After when RL_IP_CHAT rejects a chat POST', async () => {
-    const env = makeEnv({ RL_IP_CHAT: denyRateLimit })
-    const res = await request(
-      'https://wildcare.wildcaresolutions.org/api/sessions/sess-abc/messages',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
-        body: '{}',
-      },
-      env,
-    )
-    expect(res.status).toBe(429)
-    expect(res.headers.get('Retry-After')).toBe('60')
-    const body = await res.json() as { error: string }
-    expect(body.error).toMatch(/rate limit/i)
-  })
-
-  it('returns 429 with Retry-After when RL_IP_SESSION rejects a session create', async () => {
-    const env = makeEnv({ RL_IP_SESSION: denyRateLimit })
-    const res = await request(
-      'https://wildcare.wildcaresolutions.org/api/sessions',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
-        body: '{}',
-      },
-      env,
-    )
-    expect(res.status).toBe(429)
-    expect(res.headers.get('Retry-After')).toBe('60')
-    const body = await res.json() as { error: string }
-    expect(body.error).toMatch(/rate limit/i)
-  })
-
-  it('returns 429 with scope:tenant when RL_TENANT rejects a chat POST', async () => {
-    const env = makeEnv({ RL_TENANT: denyRateLimit })
-    const res = await request(
-      'https://wildcare.wildcaresolutions.org/api/sessions/sess-abc/messages',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
-        body: '{}',
-      },
-      env,
-    )
-    expect(res.status).toBe(429)
-    expect(res.headers.get('Retry-After')).toBe('60')
-    const body = await res.json() as { error: string; scope: string }
-    expect(body.scope).toBe('tenant')
-  })
-
-  it('returns 429 with scope:tenant when RL_TENANT rejects a session create', async () => {
-    const env = makeEnv({ RL_TENANT: denyRateLimit })
-    const res = await request(
-      'https://wildcare.wildcaresolutions.org/api/sessions',
-      {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
-        body: '{}',
-      },
-      env,
-    )
-    expect(res.status).toBe(429)
-    expect(res.headers.get('Retry-After')).toBe('60')
-    const body = await res.json() as { error: string; scope: string }
-    expect(body.scope).toBe('tenant')
-  })
 })

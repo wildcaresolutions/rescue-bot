@@ -15,7 +15,7 @@
  *
  *   org_config carries: hours, after_hours_phone, public_address,
  *     emergency_contacts, redirect_info, intake_procedures,
- *     species_config (red fox skip, wild turkey augment, gray fox augment),
+ *     species_config (red fox skip, wild turkey skip, gray fox augment),
  *     triage_config (deer-arrow critical, coyote-mange-immobile urgent,
  *     coyote-mange-mobile moderate)
  *
@@ -100,8 +100,9 @@ const NEW_ORG_CONFIG = {
       notes: 'Required phrasing keywords in response: "gray foxes only", "Department of Fish & Wildlife", "licensed rehabber". Do NOT say "our medical team will treat" or suggest bringing it to WildCare.',
     },
     'wild turkey': {
-      mode: 'augment',
-      notes: 'WildCare DOES accept injured wild turkeys per the rescue guide. Use Marin Humane (415-883-4621) only for non-injured nuisance/aggressive turkey situations (animal-control jurisdiction, not rehab), or when the citizen cannot safely contain the bird. Reinforce the guide\'s safety notes — gloves, eye protection, sharp spur warning, no bare-hand contact with feet/legs. Once contained, follow standard WildCare intake/transport instructions.',
+      mode: 'skip',
+      redirect: 'Wild turkeys require professional handling — do NOT attempt to catch one yourself. Call Marin Humane (415-883-4621) or Animal Control for professional removal.',
+      notes: 'EXTREMELY DANGEROUS. NEVER provide DIY capture instructions. Required phrasing keywords: "professional handling", "animal control", "Marin Humane".',
     },
     'gray fox': {
       mode: 'augment',
@@ -211,6 +212,7 @@ Do NOT say any of the following:
 - "WildCare's hospital" / "our facility" — for non-Marin citizens
 - WildCare's address or phone — for non-Marin counties
 - "Our medical team will treat" — for red foxes (WildCare does not)
+- DIY capture instructions — for wild turkeys (professional only)
 - Turn-by-turn driving directions (use the Google Maps link instead)
 `
 

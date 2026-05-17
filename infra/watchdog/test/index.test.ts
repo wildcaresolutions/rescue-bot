@@ -63,7 +63,6 @@ const HEALTHY_BODY = {
   vectorize: 'healthy',
   storage: 'healthy',
   media_storage: 'healthy',
-  ai: 'healthy',
 }
 
 function mockFetchResponse(body: unknown, status = 200): Response {
@@ -103,7 +102,7 @@ describe('parseHealthFailures', () => {
   })
 
   it('reports missing fields as missing', () => {
-    expect(parseHealthFailures({ status: 'healthy', database: 'healthy', vectorize: 'healthy', media_storage: 'healthy', ai: 'healthy' }))
+    expect(parseHealthFailures({ status: 'healthy', database: 'healthy', vectorize: 'healthy', media_storage: 'healthy' }))
       .toEqual(['storage=missing'])
   })
 

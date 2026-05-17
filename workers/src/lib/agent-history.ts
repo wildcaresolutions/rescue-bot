@@ -16,8 +16,6 @@
  * session_id.
  */
 
-import { logError } from './logger'
-
 const SESSION_ID = 'agent-main'
 
 export async function loadAgentHistory(
@@ -33,7 +31,7 @@ export async function loadAgentHistory(
     ).bind(tenantId, limit).all() as { results: Array<{ role: string; content: string }> }
     return results.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content }))
   } catch (e) {
-    logError('agent/load-history-failed', { error: e })
+    console.error('[agent] Failed to load history:', e)
     return []
   }
 }
@@ -54,7 +52,7 @@ export function persistAgentMessage(
     `INSERT INTO messages (session_id, message_id, role, content, timestamp, message_type, tenant_id)
      VALUES (?, ?, ?, ?, ?, 'setup_agent', ?) ON CONFLICT (message_id) DO NOTHING`,
   ).bind(SESSION_ID, msgId, role, content.slice(0, 32_000), Date.now(), tenantId).run()
-    .catch(e => logError('agent/persist-message-failed', { role, error: e }))
+    .catch(e => console.error(`[agent] Failed to persist ${role} message:`, e))
 }
 
 export async function clearAgentHistory(db: D1Database, tenantId: string): Promise<void> {

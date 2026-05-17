@@ -504,29 +504,16 @@ async function approveFromModal(id) {
 }
 
 function showApprovalResult(el, data) {
+  const isLocal = location.hostname === 'localhost'
   const slug = data.tenant?.slug || ''
-  // Prefer the server-provided portal URL (knows the real host); fall back for
-  // older responses.
-  const portalUrl = data.portal_url
-    || (location.hostname === 'localhost' ? location.origin + '/?tenant=' + slug : 'https://' + slug + '.' + location.hostname.split('.').slice(1).join('.'))
-  const email = esc(data.contact_email || '')
-  // No password to read out — onboarding is magic-link. Show what actually
-  // happened: a sign-in link was emailed (or, in dev with no mail binding,
-  // the link to copy).
-  let access
-  if (data.email_sent) {
-    access = `<p class="cred-note">✓ A sign-in link was emailed to <strong>${email}</strong>. They can also request a fresh link anytime at their portal.</p>`
-  } else if (data.dev_login_url) {
-    access = `<p class="cred-note">No email is configured (dev) — send this one-click sign-in link to ${email}:</p><code>${esc(data.dev_login_url)}</code>`
-  } else {
-    access = `<p class="cred-note">Tell ${email} to open the portal and sign in with their email — they'll get a magic link.</p>`
-  }
+  const portalUrl = isLocal ? location.origin + '/?tenant=' + slug : 'https://' + slug + '.rescue.bluesnoop.com'
   el.innerHTML = `
     <div class="result-box">
       <h4>Tenant Created</h4>
-      <p><strong>Slug:</strong> ${esc(slug)}</p>
-      <p><strong>Admin Portal:</strong> <a href="${esc(portalUrl)}" target="_blank" class="tenant-link">${esc(portalUrl)}</a></p>
-      ${access}
+      <p><strong>Slug:</strong> ${slug}</p>
+      <p><strong>Password:</strong></p><code>${esc(data.password || '')}</code>
+      <p><strong>Admin Portal:</strong> <a href="${portalUrl}" target="_blank" class="tenant-link">${portalUrl}</a></p>
+      <p class="cred-note">Send these credentials to ${esc(data.contact_email || '')}</p>
     </div>`
 }
 

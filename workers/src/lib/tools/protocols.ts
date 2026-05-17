@@ -15,137 +15,72 @@ import { z } from 'zod'
 import type { ToolContext } from './types'
 import { formatTestResultExplanation } from '../judge-parse'
 import { runEvalScenario } from '../eval-runner'
-import { stageConfigChange, overlayTenant } from '../draft'
-import { updateEvalScenario, reviewEvalScenario, deleteEvalScenario, normalizeTurns } from '../evals-crud'
-import { logError } from '../logger'
 
 export function protocolsTools(ctx: ToolContext) {
-  const { env, db, tenantId, freshTenant } = ctx
-  const target = { id: tenantId, slug: freshTenant.slug }
+  const { env, db, tenantId, freshTenant, invalidateCache } = ctx
 
   const save_protocols = tool({
-    description: "Replaces the organization's House Rules — the operator's plain-language, cross-cutting protocols and exceptions (sign-offs, phrasing, special cases, redirect policy). This OVERWRITES the entire House Rules text, so you MUST call get_config first, edit the FULL text it returns, and pass the complete result back — never a fragment or a placeholder. Staged as a draft until the operator publishes. This does NOT touch per-species protocols or the compiled prompt (custom_instruction): species behavior is managed via update_species_config / add_custom_species and recompiled automatically at publish. NEVER call this tool to read or probe state — get_config is the read tool.",
+    description: 'Saves custom rescue instructions/protocols for the organization',
     inputSchema: z.object({
-      house_rules: z.string().describe('The COMPLETE new House Rules text — replaces the current text entirely. Read it first via get_config and return the full edited version, never a partial or placeholder.'),
-      confirm_replace: z.boolean().optional().describe('Set true ONLY to confirm an intentional large reduction or wholesale replacement of existing House Rules.'),
+      custom_instruction: z.string().describe('The full custom instruction text for the rescue bot'),
     }),
     execute: async (input) => {
-      const next = input.house_rules.trim()
-      const current = (overlayTenant(freshTenant).house_rules || '').trim()
-      // Guards against the 2026-06-18 incident, where the agent used this write
-      // tool to "probe" current state and slammed a placeholder over the real
-      // prompt. get_config is the read path; this only ever WRITES.
-      if (!next) {
-        return { success: false, error: 'empty', message: 'Refusing to save empty House Rules. Pass the full text, or ask the operator to confirm they really want to clear all rules.' }
-      }
-      if (/placeholder|_to_read\b/i.test(next)) {
-        return { success: false, error: 'placeholder', message: 'That looks like placeholder/probe text, not real House Rules. To READ the current rules, call get_config — never write to read.' }
-      }
-      if (current.length > 500 && next.length < current.length * 0.2 && !input.confirm_replace) {
-        return {
-          success: false,
-          error: 'drastic_shrink',
-          message: `This would shrink House Rules from ${current.length} to ${next.length} chars — likely an accidental overwrite. Call get_config to read the current rules first. If you genuinely intend to replace them, re-call with confirm_replace=true.`,
-        }
-      }
-      await stageConfigChange(db, target, { house_rules: next.slice(0, 10_000) })
-      return { success: true, message: 'House Rules saved (staged). The operator can hit Publish to take it live.' }
+      await db.prepare(
+        "UPDATE tenants SET custom_instruction = ?, updated_at = datetime('now') WHERE id = ?",
+      ).bind(input.custom_instruction.slice(0, 10_000), tenantId).run()
+      invalidateCache()
+      return { success: true, message: 'Protocols saved' }
     },
   })
 
   const create_test_scenario = tool({
-    description: 'Creates a test case to verify how the rescue bot handles a specific situation. For a back-and-forth, pass test_messages as the ordered list of caller turns (the bot\'s final answer is graded); otherwise pass a single test_message.',
+    description: 'Creates a test case to verify how the rescue bot handles a specific situation',
     inputSchema: z.object({
       description: z.string().describe('Plain English description of the scenario'),
       expected_behavior: z.string().describe('What the bot should do'),
-      test_message: z.string().optional().describe('A single visitor message (use this OR test_messages)'),
-      test_messages: z.array(z.string()).optional().describe('Ordered caller turns for a multi-step conversation'),
+      test_message: z.string().describe('The actual message a user would type to the bot'),
     }),
     execute: async (input) => {
-      const { testMessage, turnsJson } = normalizeTurns(input)
-      if (!testMessage) return { success: false, error: 'Provide test_message or a non-empty test_messages list' }
       const id = crypto.randomUUID()
       await db.prepare(
-        `INSERT INTO eval_scenarios (id, tenant_id, description, expected_behavior, test_message, test_messages, auto_generated)
-         VALUES (?, ?, ?, ?, ?, ?, 1)`,
-      ).bind(id, tenantId, input.description, input.expected_behavior, testMessage, turnsJson).run()
+        `INSERT INTO eval_scenarios (id, tenant_id, description, expected_behavior, test_message, auto_generated)
+         VALUES (?, ?, ?, ?, ?, 1)`,
+      ).bind(id, tenantId, input.description, input.expected_behavior, input.test_message).run()
+      // Spread input fields top-level so the frontend's breadcrumb chip can
+      // render "Added test case: <description> · "<test_message>"" without
+      // having to dig into result.scenario.* or parse the message string.
       return {
         success: true,
         id,
         description: input.description,
-        test_message: testMessage,
+        test_message: input.test_message,
         expected_behavior: input.expected_behavior,
-        turns: turnsJson ? JSON.parse(turnsJson).length : 1,
         message: `Test case created: "${input.description}"`,
       }
     },
   })
 
   const list_test_scenarios = tool({
-    description: 'Lists all test cases for this organization, including the operator\'s review verdict (review_status: approved/rejected/unreviewed — the authoritative human judgment).',
+    description: 'Lists all test cases for this organization',
     inputSchema: z.object({}),
     execute: async () => {
       const { results } = await db.prepare(
-        'SELECT id, description, expected_behavior, test_message, review_status, reviewed_at, created_at FROM eval_scenarios WHERE tenant_id = ? ORDER BY created_at DESC',
+        'SELECT id, description, expected_behavior, test_message, created_at FROM eval_scenarios WHERE tenant_id = ? ORDER BY created_at DESC',
       ).bind(tenantId).all()
       return { scenarios: results, count: results.length }
     },
   })
 
-  const update_test_scenario = tool({
-    description: 'Edit an existing test case\'s wording (description, expected behavior, or the visitor message). Use this when a test is worded badly instead of telling the operator to delete and recreate it. Editing resets its review verdict to unreviewed.',
-    inputSchema: z.object({
-      scenario_id: z.string(),
-      description: z.string().optional(),
-      expected_behavior: z.string().optional(),
-      test_message: z.string().optional(),
-      test_messages: z.array(z.string()).optional().describe('Replace the caller turns with this ordered list (multi-step conversation)'),
-    }),
-    execute: async ({ scenario_id, ...fields }) => {
-      const res = await updateEvalScenario(env, tenantId, scenario_id, fields)
-      if ('error' in res) return { success: false, error: res.error }
-      return { success: true, ...res, message: `Test case updated: "${res.description}"` }
-    },
-  })
-
-  const delete_test_scenario = tool({
-    description: 'Delete a test case. The operator is always allowed to remove a test — NEVER tell them to email support to delete one. Handles cleanup of any past results.',
-    inputSchema: z.object({ scenario_id: z.string() }),
-    execute: async ({ scenario_id }) => {
-      try {
-        await deleteEvalScenario(env, tenantId, scenario_id)
-        return { success: true, scenario_id, message: 'Test case deleted.' }
-      } catch (e) {
-        logError('tools/delete-test-scenario-error', { error: e })
-        return { success: false, error: 'Failed to delete test case.' }
-      }
-    },
-  })
-
-  const mark_test_reviewed = tool({
-    description: 'Record the operator\'s OWN verdict on a test case — this is the authoritative judgment, overriding the auto-grader. Use "approved" when the operator is happy with the bot\'s answer (👍), "rejected" when they are not (👎), or "unreviewed" to clear it.',
-    inputSchema: z.object({
-      scenario_id: z.string(),
-      review_status: z.enum(['approved', 'rejected', 'unreviewed']),
-    }),
-    execute: async ({ scenario_id, review_status }) => {
-      const res = await reviewEvalScenario(env, tenantId, scenario_id, review_status)
-      if ('error' in res) return { success: false, error: res.error }
-      return { success: true, ...res, message: `Marked test case as ${review_status}.` }
-    },
-  })
-
   const run_test_scenario = tool({
-    description: 'Run a test case by ID and return the auto-grader\'s ADVISORY hint. The auto-grade (passed/scoring_status) is only a suggestion — the operator\'s 👍/👎 verdict is what counts and it NEVER blocks publishing. If the operator disagrees with the auto-grade, take their side and offer to mark_test_reviewed or update_test_scenario. Never treat a fail/not_scored as a blocker. Multi-turn checks play all their caller turns in order; the final answer is graded.',
+    description: 'Run a test case by ID and return the actual pass/fail result. Waits for the bot response and scoring step so the agent can react to the outcome on the same turn.',
     inputSchema: z.object({ scenario_id: z.string() }),
     execute: async ({ scenario_id }) => {
       try {
         const scenario = await db.prepare(
-          'SELECT id, description, expected_behavior, test_message, test_messages FROM eval_scenarios WHERE id = ? AND tenant_id = ?',
-        ).bind(scenario_id, tenantId).first<{ id: string; description: string; expected_behavior: string; test_message: string; test_messages: string | null }>()
+          'SELECT id, description, expected_behavior, test_message FROM eval_scenarios WHERE id = ? AND tenant_id = ?',
+        ).bind(scenario_id, tenantId).first<{ id: string; description: string; expected_behavior: string; test_message: string }>()
         if (!scenario) return { success: false, error: 'Scenario not found' }
-        // Run against the draft overlay so the operator tests pending changes.
-        await runEvalScenario(env, overlayTenant(freshTenant), scenario)
+        await runEvalScenario(env, freshTenant, scenario)
         const latest = await db.prepare(
           'SELECT response, passed, judge_reasoning, created_at FROM eval_results WHERE scenario_id = ? AND tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).bind(scenario_id, tenantId).first<{ response: string; passed: number | null; judge_reasoning: string }>()
@@ -154,15 +89,13 @@ export function protocolsTools(ctx: ToolContext) {
           success: true,
           scenario_id,
           description: scenario.description,
-          // ADVISORY only — the human verdict (mark_test_reviewed) is authoritative.
-          advisory_passed: latest.passed === null ? null : latest.passed === 1,
+          passed: latest.passed === null ? null : latest.passed === 1,
           scoring_status: latest.passed === null ? 'not_scored' : latest.passed === 1 ? 'pass' : 'fail',
-          advisory_note: 'This is the auto-grader\'s hint, not a verdict. The operator decides with 👍/👎; it never blocks publishing.',
           result_explanation: formatTestResultExplanation(latest.judge_reasoning),
           response_excerpt: (latest.response || '').slice(0, 600),
         }
       } catch (e) {
-        logError('tools/run-test-scenario-error', { error: e })
+        console.error('[run_test_scenario] error:', e)
         return { success: false, error: 'Failed to run test case: ' + (e instanceof Error ? e.message : String(e)) }
       }
     },
@@ -172,9 +105,6 @@ export function protocolsTools(ctx: ToolContext) {
     save_protocols,
     create_test_scenario,
     list_test_scenarios,
-    update_test_scenario,
-    delete_test_scenario,
-    mark_test_reviewed,
     run_test_scenario,
   }
 }

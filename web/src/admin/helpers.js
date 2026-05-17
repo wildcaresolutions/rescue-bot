@@ -54,25 +54,6 @@ export function relativeTime(ts) {
   return new Date(ts).toLocaleDateString()
 }
 
-/**
- * Format a timestamp for display in the operator's local timezone. D1 columns
- * default to SQLite `datetime('now')` → "YYYY-MM-DD HH:MM:SS" in UTC with NO
- * timezone marker; `new Date()` would mis-parse that as LOCAL time and show it
- * hours off. Treat a marker-less string as UTC; pass through epoch numbers and
- * already-zoned strings.
- */
-export function formatDbDateTime(value) {
-  if (value == null || value === '') return ''
-  let d
-  if (typeof value === 'number') d = new Date(value)
-  else {
-    const s = String(value).trim()
-    const hasTz = /[Zz]$|[+-]\d{2}:?\d{2}$/.test(s)
-    d = new Date(hasTz ? s : s.replace(' ', 'T') + 'Z')
-  }
-  return isNaN(d.getTime()) ? '' : d.toLocaleString()
-}
-
 export function tip(text) {
   return `<span class="help-icon" data-tip="${esc(text)}">?</span>`
 }

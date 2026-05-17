@@ -1,62 +1,6 @@
 import { describe, it, expect } from 'vitest'
-import { readFileSync } from 'fs'
-import { join, dirname } from 'path'
-import { fileURLToPath } from 'url'
 // @ts-expect-error — JS module, no .d.ts
 import { parseOrgEnv, interpolateTemplate, resolvePlaceholder, PLACEHOLDERS, STUB_VALUE } from '../scripts/gen-wrangler.js'
-
-const __dirname = dirname(fileURLToPath(import.meta.url))
-
-// ── Model safety guardrails ────────────────────────────────────────────────────
-//
-// Workers AI (workers-ai/* prefix) models are cheap eval/prototype models —
-// Llama etc. They must never be set as MAIN_CHAT_MODEL in a real deployment.
-// This test reads the committed wrangler.toml (which is re-rendered from
-// org.env before every `make cf-deploy`) and fails the build if any env
-// block sets MAIN_CHAT_MODEL to a workers-ai model. Catches the class of
-// mistake that put Llama on citizen chat in the 2026-05-17 Unified Billing
-// migration without anyone noticing until Jean's users complained.
-
-describe('Model safety guardrails', () => {
-  const wranglerPath = join(__dirname, '..', 'wrangler.toml')
-  let wranglerContent: string
-
-  try {
-    wranglerContent = readFileSync(wranglerPath, 'utf8')
-  } catch {
-    wranglerContent = ''
-  }
-
-  it('wrangler.toml exists and is non-empty', () => {
-    expect(wranglerContent.length).toBeGreaterThan(0)
-  })
-
-  it('MAIN_CHAT_MODEL is not set to a workers-ai model in any env block', () => {
-    // Extract all MAIN_CHAT_MODEL = "..." lines from the toml
-    const matches = [...wranglerContent.matchAll(/MAIN_CHAT_MODEL\s*=\s*"([^"]+)"/g)]
-
-    // Skip stub form (committed placeholder, not a real deployment value)
-    const realValues = matches
-      .map(m => m[1])
-      .filter(v => v !== 'REPLACE_VIA_GEN_WRANGLER')
-
-    if (realValues.length === 0) {
-      // Only stub values present — wrangler.toml is the committed stub, not
-      // a rendered config. Nothing to check; the rendered form is what
-      // actually deploys and will be caught when cf-render-config runs.
-      return
-    }
-
-    const offenders = realValues.filter(v => v.startsWith('workers-ai/'))
-    expect(
-      offenders,
-      `MAIN_CHAT_MODEL must not use a workers-ai model. ` +
-      `workers-ai/* (Llama, etc.) are for evals only. ` +
-      `Use a production model (google-ai-studio/*, openai/*, anthropic/*). ` +
-      `Offending values: ${offenders.join(', ')}`,
-    ).toEqual([])
-  })
-})
 
 describe('parseOrgEnv', () => {
   it('parses valid KEY=VALUE pairs', () => {

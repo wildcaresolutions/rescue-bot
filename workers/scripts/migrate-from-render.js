@@ -101,12 +101,7 @@ function tsExpr(pgType) {
   return 'to_char(created_at, \'YYYY-MM-DD HH24:MI:SS.MS\')'
 }
 
-// FORCE_FULL_PULL=1 ignores watermarks and pulls all rows, relying on
-// INSERT OR IGNORE / INSERT OR REPLACE to deduplicate. Use this when CF-native
-// conversations have pushed the watermark forward while Render rows are still
-// missing (i.e. the incremental sync was never completed before cut-over).
-const forceFull = process.env.FORCE_FULL_PULL === '1'
-const watermarks = forceFull ? { messages: null, feedback: null, reports: null } : {
+const watermarks = {
   messages: await getWatermark('messages'),
   feedback: await getWatermark('feedback'),
   reports:  await getWatermark('reports'),
@@ -182,9 +177,6 @@ for (const r of fbs.rows) {
     r.client_ip ? String(r.client_ip) : null,
     r.created_at, TENANT_ID,
   ]
-  // Note: feedback has no UNIQUE constraint, so INSERT OR IGNORE is a no-op here.
-  // Dedup must be done post-import: DELETE WHERE rowid NOT IN (SELECT MIN(rowid)
-  // FROM feedback GROUP BY session_id, message_id) — see CLAUDE.md.
   lines.push(`INSERT INTO feedback (${fbCols.join(',')}) VALUES (${v.map(sql).join(',')});`)
 }
 
@@ -202,9 +194,6 @@ for (const r of reps.rows) {
     typeof r.stats === 'string' ? r.stats : JSON.stringify(r.stats),
     r.sent_to, r.error, r.created_at, TENANT_ID,
   ]
-  // Note: reports has no UNIQUE constraint, so INSERT OR IGNORE is a no-op here.
-  // Dedup must be done post-import: DELETE WHERE rowid NOT IN (SELECT MIN(rowid)
-  // FROM reports GROUP BY period_start, period_end, tenant_id) — see CLAUDE.md.
   lines.push(`INSERT INTO reports (${repCols.join(',')}) VALUES (${v.map(sql).join(',')});`)
 }
 

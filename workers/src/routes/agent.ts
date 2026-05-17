@@ -19,30 +19,6 @@ import { actionsTools } from '../lib/tools/actions'
 import { fetchTools } from '../lib/tools/fetch'
 import type { ToolContext } from '../lib/tools/types'
 import { dbError } from '../lib/errors'
-import { logError } from '../lib/logger'
-
-// M-10: Log copilot token usage the same way chat.ts does for main-chat.
-function copilotUsageTokens(usage: unknown): { promptTokens: number; completionTokens: number } {
-  const u = usage as Record<string, number | undefined> | undefined
-  return {
-    promptTokens: u?.promptTokens ?? u?.inputTokens ?? 0,
-    completionTokens: u?.completionTokens ?? u?.outputTokens ?? 0,
-  }
-}
-
-async function logCopilotUsage(
-  env: Env,
-  tenantId: string,
-  model: string,
-  usage: unknown,
-): Promise<void> {
-  const { promptTokens, completionTokens } = copilotUsageTokens(usage)
-  const today = new Date().toISOString().slice(0, 10)
-  await env.DB.prepare(
-    `INSERT INTO usage_log (tenant_id, date, model, prompt_tokens, completion_tokens, request_count)
-     VALUES (?, ?, ?, ?, ?, 1)`,
-  ).bind(tenantId, today, model, promptTokens, completionTokens).run()
-}
 
 const AGENT_MODEL = 'claude-sonnet-4-6'
 const AGENT_HISTORY_LIMIT = 20
@@ -168,15 +144,11 @@ agentApp.post('/admin/agent', async (c) => {
       tools: {
         update_config: cfgTools.update_config,
         update_org_info: cfgTools.update_org_info,
-        manage_referrals: cfgTools.manage_referrals,
         update_colors: cfgTools.update_colors,
         save_protocols: protoTools.save_protocols,
         get_config: cfgTools.get_config,
         create_test_scenario: protoTools.create_test_scenario,
         list_test_scenarios: protoTools.list_test_scenarios,
-        update_test_scenario: protoTools.update_test_scenario,
-        delete_test_scenario: protoTools.delete_test_scenario,
-        mark_test_reviewed: protoTools.mark_test_reviewed,
         get_recent_sessions: qTools.get_recent_sessions,
         get_stats: qTools.get_stats,
         run_analytics_query: qTools.run_analytics_query,
@@ -199,14 +171,6 @@ agentApp.post('/admin/agent', async (c) => {
         fetch_url: fTools.fetch_url,
       },
       stopWhen: stepCountIs(7),
-      onFinish: (event) => {
-        // M-10: Track copilot token usage in usage_log, same as main chat.
-        c.executionCtx.waitUntil(
-          logCopilotUsage(c.env, tenantId, AGENT_MODEL, event.usage).catch(e =>
-            console.error('[agent] Failed to log copilot usage:', e),
-          ),
-        )
-      },
       onError: (event) => {
         // Surface structured detail. The previous swallow-and-fallback
         // behavior left operators staring at "I could not complete that
@@ -214,7 +178,7 @@ agentApp.post('/admin/agent', async (c) => {
         // invisible to anyone not tailing Workers logs.
         const err = event.error
         const msg = err instanceof Error ? err.message : String(err)
-        logError('agent/streamtext-error', { message: msg,
+        console.error('[agent] streamText error:', msg, {
           model: AGENT_MODEL,
           isApiKeyError: /x-api-key|api key|unauthor/i.test(msg),
           isRateLimit: /rate limit|429/i.test(msg),

@@ -1,6 +1,4 @@
 import type { Env } from './types'
-import { SPECIES_CATALOG } from './species-catalog'
-import { logWarn } from './logger'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -10,15 +8,33 @@ const RAG_MIN_RESULTS = 2
 
 // ── Species detection ─────────────────────────────────────────────────────────
 
-// Detection patterns derived from the catalog. Catalog order is display order
-// (Heron, Bat, Bobcat, ...) — and that ordering already satisfies the one
-// behavioral constraint: Pigeon (index 10) must come before Songbird (index
-// 17), so "I see a pigeon and a sparrow" resolves to pigeon, not songbird.
-// Entries with detect: null (e.g. Entangled Animal) are filename-only and
-// excluded from free-text detection.
-const SPECIES_PATTERNS: Array<[RegExp, string]> = SPECIES_CATALOG
-  .filter((s): s is typeof s & { detect: string } => s.detect !== null)
-  .map(s => [new RegExp(`\\b(${s.detect})\\b`, 'i'), s.token] as [RegExp, string])
+const SPECIES_PATTERNS: Array<[RegExp, string]> = [
+  [/\b(raccoon|coon)\b/i, 'raccoon'],
+  [/\b(bat|bats)\b/i, 'bat'],
+  [/\b(hummingbird|humming bird|hummer)\b/i, 'hummingbird'],
+  [/\b(snake|rattlesnake|garter|gopher snake|king snake)\b/i, 'snake'],
+  [/\b(heron|egret|wading bird)\b/i, 'heron_egret'],
+  [/\b(hawk|owl|falcon|eagle|vulture|raptor|kestrel|osprey)\b/i, 'raptor'],
+  [/\b(squirrel)\b/i, 'squirrel'],
+  [/\b(opossum|possum)\b/i, 'opossum'],
+  [/\b(deer|fawn)\b/i, 'deer'],
+  [/\b(duck|goose|geese|duckling|gosling|mallard)\b/i, 'duck_goose'],
+  [/\b(fox)\b/i, 'fox'],
+  [/\b(skunk)\b/i, 'skunk'],
+  [/\b(coyote)\b/i, 'coyote'],
+  [/\b(bobcat)\b/i, 'bobcat'],
+  [/\b(gull|seagull)\b/i, 'gull'],
+  [/\b(raven)\b/i, 'raven'],
+  [/\b(mouse|mice|rat|rodent|gopher|chipmunk)\b/i, 'rodent'],
+  // Pigeon and dove are split out from songbird because most rehabs
+  // explicitly DO NOT handle them (they're feral / non-native), but they
+  // share enough vocabulary with songbirds that the previous lumped pattern
+  // made it impossible to skip pigeons without skipping all songbirds. Order
+  // matters: this must run before the songbird pattern so "rock pigeon"
+  // matches here, not as a songbird.
+  [/\b(pigeon|rock dove|mourning dove|dove|columbid)\b/i, 'pigeon'],
+  [/\b(songbird|robin|sparrow|finch|jay|crow|starling|swallow|wren|warbler|blackbird|chickadee|junco|mockingbird|woodpecker|flicker|nuthatch|phoebe|thrush|towhee|goldfinch|waxwing|bushtit|creeper|kinglet|lark|titmouse|swift|poorwill)\b/i, 'songbird'],
+]
 
 export function detectSpecies(message: string): string | null {
   for (const [pattern, species] of SPECIES_PATTERNS) {
@@ -26,22 +42,6 @@ export function detectSpecies(message: string): string | null {
   }
   return null
 }
-
-// Alias map derived from the catalog: every normalize_aliases entry plus the
-// species's own display name (whitespace-normalized) routes to its token. This
-// lets operator-typed variants ("Pigeon/Dove", "Pigeon-Dove", "Wild Turkey")
-// all resolve to the same token detection emits.
-const NORMALIZE_MAP: Record<string, string> = (() => {
-  const m: Record<string, string> = {}
-  for (const sp of SPECIES_CATALOG) {
-    const normalizedName = sp.name.toLowerCase().replace(/[\s/_&-]+/g, ' ').trim()
-    m[normalizedName] = sp.token
-    for (const alias of sp.normalize_aliases) {
-      m[alias.toLowerCase().replace(/[\s/_&-]+/g, ' ').trim()] = sp.token
-    }
-  }
-  return m
-})()
 
 /**
  * Normalize a user-facing species name (e.g. "Pigeon", "Heron & Egret") to
@@ -55,7 +55,16 @@ export function normalizeSpeciesKey(displayName: string): string {
   // spaces. Catches "Pigeon & Dove", "Pigeon/Dove", "pigeon-dove",
   // "Pigeon  Dove" all the same.
   const s = displayName.trim().toLowerCase().replace(/[\s/_&-]+/g, ' ').trim()
-  if (NORMALIZE_MAP[s]) return NORMALIZE_MAP[s]
+  // Catalog → canonical token. Mirrors the detection patterns above plus the
+  // operator-facing label set used by the admin Playbook UI.
+  const map: Record<string, string> = {
+    'heron egret': 'heron_egret', 'heron': 'heron_egret', 'egret': 'heron_egret',
+    'duck goose': 'duck_goose', 'duck': 'duck_goose', 'goose': 'duck_goose',
+    'deer fawn': 'deer', 'deer': 'deer', 'fawn': 'deer',
+    'pigeon dove': 'pigeon', 'pigeon': 'pigeon', 'dove': 'pigeon',
+    'entangled animal': 'entangled', 'entangled': 'entangled',
+  }
+  if (map[s]) return map[s]
   // Anything else — collapse whitespace to underscores so multi-word custom
   // species ("Snowy Plover") become a deterministic token ("snowy_plover").
   return s.replace(/\s+/g, '_')
@@ -229,26 +238,12 @@ export async function searchRAG(
 
   let vecResults = await Promise.all(vecQueries)
   let totalMatches = vecResults.reduce((sum, r) => sum + r.matches.length, 0)
-  let usedFallback = false
 
-  // ⚠️ SECURITY — Fail-open legacy fallback. Risk: if the post-filter
-  // predicate below is ever broken by a refactor, cross-tenant RAG chunks
-  // could be returned to the wrong tenant. The correct long-term fix is to
-  // RE-INDEX all legacy vectors with `tenant_id` metadata so the scoped
-  // query finds them without this unfiltered fallback path.
-  //
-  // Until re-indexing is done, we keep the fallback but instrument it:
-  // any chunk that would be DROPPED because its metaTenant is neither
-  // 'shared' nor the current tenantId (i.e. a real cross-tenant leak)
-  // emits a logWarn so the failure is loud rather than silent.
-  //
-  // DO NOT REMOVE this block without first confirming all production
-  // Vectorize vectors carry tenant_id metadata (run:
-  //   node workers/scripts/audit-vector-metadata.js
-  // — or check that the scoped query above returns > 0 for all active
-  // tenants after a full re-index).
+  // Legacy fallback: pre-multi-tenant generic vectors have no tenant_id
+  // metadata, so the scoped query returns zero. Retry unfiltered, but only
+  // accept rows that are explicitly shared/tenant-owned or legacy generic
+  // docs. Legacy site/* rows are org-specific and must not cross tenants.
   if (totalMatches === 0) {
-    usedFallback = true
     const fallbackQueries: Array<Promise<VectorizeMatches>> = [
       env.VECTORIZE.query(origVec, { topK, returnMetadata: 'all' }),
     ]
@@ -279,16 +274,6 @@ export async function searchRAG(
       const metaTenant = meta.tenant_id
       const isLegacySharedGeneric = !metaTenant && meta.source?.startsWith('generic/')
       if (metaTenant !== 'shared' && metaTenant !== tenantId && !isLegacySharedGeneric) {
-        // If we're in the unfiltered fallback path and dropping a chunk whose
-        // tenant doesn't match, emit a warning so a broken filter predicate
-        // is detected immediately rather than silently discarding data.
-        if (usedFallback) {
-          logWarn('rag/fallback-cross-tenant-drop', {
-            tenant_id: tenantId,
-            dropped_tenant: metaTenant ?? null,
-            source: meta.source ?? null,
-          })
-        }
         continue
       }
       // Override mode: keep the operator's tenant-scoped chunks for this

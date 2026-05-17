@@ -190,19 +190,3 @@ describe('redactPII — mixed PII + edge cases', () => {
     expect(text).toBe('Caller was Alice Smith, very upset')
   })
 })
-
-// ── IP addresses — NOT redacted (characterization) ────────────────────────────
-
-describe('redactPII — IP addresses pass through unchanged', () => {
-  it('does not redact an IPv4 address (the module intentionally excludes IPs)', () => {
-    // Per the module doc: IPs are not in scope. False-positive rate on date/id
-    // strings would be high.
-    const input = 'Request originated from 192.168.1.42'
-    const { text, counts } = redactPII(input)
-    expect(text).toContain('192.168.1.42')
-    expect(counts.email).toBe(0)
-    expect(counts.phone).toBe(0)
-    expect(counts.ssn).toBe(0)
-    expect(counts.credit_card).toBe(0)
-  })
-})

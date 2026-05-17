@@ -4,7 +4,6 @@
         cf-deploy cf-deploy-test cf-deploy-embed cf-deploy-watchdog \
         cf-push-secrets cf-push-secrets-test cf-push-secrets-watchdog \
         cf-init-config cf-init-org cf-render-config cf-render-watchdog-config cf-verify-stub \
-        cf-test-integration \
         op-doctor secrets-doctor \
         eval eval-site eval-photo eval-photo-dry eval-photo-ingest
 
@@ -191,7 +190,6 @@ cf-init-config:
 # Required before any wrangler invocation. Errors loudly if any variable is missing.
 cf-render-config:
 	@node workers/scripts/gen-wrangler.js
-	@git update-index --skip-worktree workers/wrangler.toml 2>/dev/null || true
 
 # Migration-filename lint: refuses duplicate numeric prefixes
 # (audit P0-B / #33). Runs in CI and as part of `make check`. Repo state
@@ -243,7 +241,7 @@ cf-setup: cf-render-config
 	@echo "Bundling species guides into Worker..."
 	@node workers/scripts/gen-guides.js
 	@echo "Applying D1 migrations to local database (state: workers/$(STATE_DIR))..."
-	@cd workers && npx wrangler d1 migrations apply wildcare-db-dev --local --persist-to $(STATE_DIR)
+	@cd workers && npx wrangler d1 migrations apply wildcare-db --local --persist-to $(STATE_DIR)
 	@echo ""
 	@echo "✓ Setup complete. Start dev server with: make cf-dev"
 
@@ -259,7 +257,7 @@ dev: cf-render-config
 	@node workers/scripts/gen-instructions.js
 	@node workers/scripts/gen-guides.js
 	@echo "Applying D1 migrations (state: workers/$(STATE_DIR))..."
-	@cd workers && npx wrangler d1 migrations apply wildcare-db-dev --local --persist-to $(STATE_DIR)
+	@cd workers && npx wrangler d1 migrations apply wildcare-db --local --persist-to $(STATE_DIR)
 	@echo "Building web frontend..."
 	@cd web && npm run build
 	@PORT=$$(node -e 'const s=require("net").createServer();s.listen(0,()=>{const p=s.address().port;s.close(()=>console.log(p))})'); \
@@ -315,7 +313,7 @@ cf-dev: cf-render-config
 	@# aborted-mid-startup leaves an empty state dir that the dir-check then
 	@# falsely reports as "migrated."
 	@echo "Applying D1 migrations (idempotent; state: workers/$(STATE_DIR))..."
-	@cd workers && npx wrangler d1 migrations apply wildcare-db-dev --local --persist-to $(STATE_DIR)
+	@cd workers && npx wrangler d1 migrations apply wildcare-db --local --persist-to $(STATE_DIR)
 	@echo "Bundling agent instruction..."
 	@node workers/scripts/gen-instructions.js
 	@echo "Bundling species guides..."
@@ -422,8 +420,6 @@ cf-deploy: cf-migrate
 	@cd web && npm run build
 	@echo "Deploying to Cloudflare (production) [secrets: $(SECRETS_SRC)]..."
 	@$(SECRETS) sh -c 'cd workers && npx wrangler deploy --env production'
-	@echo "Deploying widget to R2 embed CDN..."
-	@$(SECRETS) node workers/scripts/deploy-embed.js
 	@echo "✓ Deployed (production)"
 
 # Deploy Worker + static assets to test (migrations applied first).
@@ -437,17 +433,6 @@ cf-deploy-test: cf-migrate-test
 	@echo "Deploying to Cloudflare (test) [secrets: $(SECRETS_SRC)]..."
 	@$(SECRETS) sh -c 'cd workers && npx wrangler deploy --env test'
 	@echo "✓ Deployed (test)"
-
-# Run HTTP integration tests against the deployed test worker.
-# Requires BASE_URL, SIGNING_SECRET, TEST_TENANT_SLUG, TEST_TENANT_ID
-# (set by the CI seed step or exported locally).
-cf-test-integration:
-	@cd workers && \
-		BASE_URL="$(BASE_URL)" \
-		SIGNING_SECRET="$(SIGNING_SECRET)" \
-		TEST_TENANT_SLUG="$(TEST_TENANT_SLUG)" \
-		TEST_TENANT_ID="$(TEST_TENANT_ID)" \
-		npm run test:integration
 
 # Build widget and publish to R2 with versioned URLs
 cf-deploy-embed:

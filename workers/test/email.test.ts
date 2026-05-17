@@ -90,10 +90,7 @@ describe('sendEmail — no binding (local dev)', () => {
   let logSpy: ReturnType<typeof vi.spyOn>
 
   beforeEach(() => {
-    // The no-binding path now uses logInfo() from the structured logger,
-    // which routes to console.info (not console.log). Spy on the right
-    // method and capture the JSON output for inspection.
-    logSpy = vi.spyOn(console, 'info').mockImplementation(() => {})
+    logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
   })
   afterEach(() => {
     logSpy.mockRestore()
@@ -107,13 +104,9 @@ describe('sendEmail — no binding (local dev)', () => {
   it('logs the would-be email so dev can see what was attempted', async () => {
     await sendEmail({} as Env, baseMsg)
     expect(logSpy).toHaveBeenCalled()
-    // The structured logger emits JSON to console.info. PII is scrubbed
-    // (emails become [EMAIL-REDACTED]), so we check the stable fields:
-    // event name and subject line (not scrubbed).
-    const raw = logSpy.mock.calls[0][0] as string
-    const entry = JSON.parse(raw)
-    expect(entry.event).toBe('email/dev-no-binding')
-    expect(entry.subject).toContain('Sign in to Test Org')
+    const logged = logSpy.mock.calls[0][0] as string
+    expect(logged).toContain('real-user@example.com')
+    expect(logged).toContain('Sign in to Test Org')
   })
 })
 

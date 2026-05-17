@@ -117,7 +117,7 @@ export async function renderFeed() {
             <li><strong>Website basics</strong> — ${hasWebsiteBasics ? 'saved' : 'colors, phone, email, hours, and address'}</li>
             <li><strong>Review cards</strong> — save only what looks right</li>
             <li><strong>Playbook</strong> — ${hasSpeciesRules ? 'saved' : 'service area, species, and redirects'}</li>
-            <li><strong>Check your bot</strong> — ${hasSpeciesRules ? 'optional: try a few caller questions' : 'optional: try common calls'}</li>
+            <li><strong>Test cases</strong> — ${hasSpeciesRules ? 'ready to check' : 'try common calls before publishing'}</li>
             <li><strong>Publish</strong> — copy the embed code to your site</li>
           </ol>
           <div class="onboarding-decision-row">
@@ -131,12 +131,12 @@ export async function renderFeed() {
     document.getElementById('startSetupBtn')?.addEventListener('click', async () => {
       // Route off the server-computed onboarding state machine. The server
       // (admin.ts /admin/setup-state) checks website basics → service area
-      // → species rules → published, in that order, and returns next_action =
-      // the first incomplete step. Tests NEVER gate — checking the bot is
-      // optional. Falls back to local checks if the endpoint isn't available.
+      // → species rules → tests passing → published, in that order, and
+      // returns next_action = the first incomplete step. Falls back to
+      // local checks if the endpoint isn't available yet.
       const state = await loadSetupState()
       const next = state?.next_action || (
-        hasSpeciesRules ? 'publish'
+        hasSpeciesRules ? 'tests'
           : hasWebsiteBasics && hasServiceArea ? 'species'
             : hasWebsiteBasics ? 'service_area'
               : 'website'
@@ -145,7 +145,22 @@ export async function renderFeed() {
       if (next === 'publish') {
         _deps.showPreviewView?.()
         _deps.expandAgent?.()
-        _deps.appendAssistantMessage?.('Last step — Publish. Click Publish at the top to take your bot live. Want to try a few caller questions first? Open “Check your bot.” It’s optional and never blocks publishing — then I can hand you the embed snippet for your site.')
+        _deps.appendAssistantMessage?.('Step 5 of 5 — Publish. Your tests all pass. Click Publish at the top of the Preview panel to make the widget go live. After that I can hand you the embed snippet for your site.')
+        return
+      }
+      if (next === 'tests') {
+        _deps.showTestView?.()
+        _deps.expandAgent?.()
+        const t = state?.tests || { total: 0, failing: 0, unrun: 0 }
+        if (t.failing > 0) {
+          _deps.appendAssistantMessage?.(`Step 4 of 5 — Test Cases. ${t.failing} of ${t.total} test case${t.failing === 1 ? '' : 's'} failed. Click each failing card and use "What to fix" — it tells you what to change in Settings or Playbook. Re-run after each change.`)
+        } else if (t.total === 0) {
+          _deps.appendAssistantMessage?.('Step 4 of 5 — Test Cases. No test cases yet. Click "Create Starter Tests" to generate the first batch, then run each one.')
+        } else if (t.unrun > 0) {
+          _deps.appendAssistantMessage?.(`Step 4 of 5 — Test Cases. ${t.unrun} of ${t.total} test case${t.unrun === 1 ? '' : 's'} haven’t been run yet. Click Run on each to score them.`)
+        } else {
+          _deps.appendAssistantMessage?.('Step 4 of 5 — Test Cases. Your starter tests are ready. Click Run on each one.')
+        }
         return
       }
       if (next === 'species') {
@@ -333,7 +348,6 @@ function renderActionItems(items) {
       activate()
     })
     el.addEventListener('keydown', (e) => {
-      if (e.target.closest('.dash-resolve-form')) return
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() }
     })
   })
@@ -448,7 +462,6 @@ function renderRecentItems(items) {
     }
     el.addEventListener('click', activate)
     el.addEventListener('keydown', (e) => {
-      if (e.target.closest('.dash-resolve-form')) return
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() }
     })
   })

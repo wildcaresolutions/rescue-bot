@@ -60,6 +60,12 @@ export const PLACEHOLDERS = [
   // 'rescue-bot' via lib/platform.ts:getPlatformName. OSS forks set this in
   // org.env to their own brand.
   'PLATFORM_NAME',
+  // CDN-cached embed host for the `<script src="https://<host>/v1.js">`
+  // partner snippet. Empty → /api/config returns null and the admin Publish
+  // UI falls back to the worker-origin `<worker>/widget.js`, which works
+  // out of the box. Set to `embed.<org-domain>` once the R2 bucket
+  // (`{{ORG_SLUG}}-embed`) is bound to that hostname via R2 Custom Domains.
+  'PLATFORM_EMBED_HOST',
   // Watchdog Worker (infra/watchdog/) — only required when rendering the
   // watchdog template, which is optional for forking orgs. Forks that don't
   // run `make cf-deploy-watchdog` can leave these empty in org.env.
@@ -74,6 +80,7 @@ const OPTIONAL_PLACEHOLDERS = new Set([
   'MAIN_CHAT_MODEL',
   'PHOTO_RECOGNIZER_MODEL',
   'PLATFORM_NAME',
+  'PLATFORM_EMBED_HOST',
   'WATCHDOG_KV_ID',
   'WATCHDOG_HEALTH_URL_TEST',
   'WATCHDOG_HEALTH_URL_PROD',

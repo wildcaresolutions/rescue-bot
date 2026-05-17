@@ -142,6 +142,7 @@ jobs:
           PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
+          PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
       # No public-URL smoke test — CF blocks GHA runner IPs at the edge
       # (Bot Fight Mode / WAF) so probing from CI returns 403 even when
       # the deploy is healthy. The wrangler deploy step's exit code is
@@ -175,6 +176,7 @@ jobs:
           PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
+          PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
       # No public-URL smoke test — CF blocks GHA runner IPs at the edge
       # (Bot Fight Mode / WAF) so probing from CI returns 403 even when
       # the deploy is healthy. The wrangler deploy step's exit code is

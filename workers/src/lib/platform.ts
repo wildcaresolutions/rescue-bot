@@ -29,7 +29,6 @@ import type { Env } from './types'
 
 const DEFAULT_PLATFORM_NAME = 'rescue-bot'
 const DEFAULT_SUPPORT_EMAIL = 'support@example.com'
-const DEFAULT_EMBED_HOST = 'embed.example.com'
 
 /**
  * Return the platform's display name. Empty / unset / stub-mode values
@@ -60,12 +59,15 @@ export function getPlatformSupportEmail(env: Env): string {
 /**
  * Return the canonical embed host used in the `<script src=...>` snippet
  * the copilot hands operators. Audit ralph-1 M11 found this hardcoded to
- * `embed.wildcaresolutions.org`. Set PLATFORM_EMBED_HOST in org.env.
+ * `embed.wildcaresolutions.org`. Set PLATFORM_EMBED_HOST in org.env when
+ * a CDN/R2-cached entry point (e.g. `embed.<deployment>.example/v1.js`)
+ * is available. Returns null when unconfigured — callers should fall back
+ * to the worker origin (`/widget.js`), which Workers Assets serves today.
  */
-export function getEmbedHost(env: Env): string {
+export function getEmbedHost(env: Env): string | null {
   const raw = env.PLATFORM_EMBED_HOST?.trim()
-  if (!raw) return DEFAULT_EMBED_HOST
-  if (raw === 'REPLACE_VIA_GEN_WRANGLER') return DEFAULT_EMBED_HOST
+  if (!raw) return null
+  if (raw === 'REPLACE_VIA_GEN_WRANGLER') return null
   return raw
 }
 

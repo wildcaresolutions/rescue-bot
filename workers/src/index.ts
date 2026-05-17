@@ -6,7 +6,7 @@ import {
 import { generateReport } from './lib/report'
 import { loadTenantBySlug } from './lib/tenant-loader'
 import { extractSlug, isAdminHost } from './lib/routing'
-import { getPlatformName } from './lib/platform'
+import { getEmbedHost, getPlatformName } from './lib/platform'
 import chat from './routes/chat'
 import admin from './routes/admin'
 import platform from './routes/platform'
@@ -473,6 +473,10 @@ app.get('/api/config', async (c) => {
     daily_reports_enabled: isAuthed ? Boolean(tenant.daily_reports_enabled) : undefined,
     widget_custom_css: tenant.widget_custom_css ?? null,
     widget_theme: tenant.widget_theme ? parseOrgConfig<Record<string, unknown>>(tenant.widget_theme) : null,
+    // CDN-cached embed host the operator points partners at, when configured
+    // (PLATFORM_EMBED_HOST in org.env). Null = fork hasn't wired one; the
+    // admin Publish UI falls back to the worker-origin `/widget.js`.
+    embed_host: getEmbedHost(c.env),
   })
 })
 

@@ -452,11 +452,17 @@ export function renderPreviewView() {
     return Object.keys(out).length ? out : null
   }
 
-  // The embed script lives at embed.crittercollective.org/v1.js (R2-served,
-  // CDN cached). The widget auto-derives the tenant API origin from data-tenant
-  // and applies CMS visibility rules + position from /api/config, so the
-  // canonical embed is now genuinely one line.
-  const EMBED_SRC = 'https://embed.crittercollective.org/v1.js'
+  // Snippet source comes from server config when available. With
+  // PLATFORM_EMBED_HOST set (R2 + CDN-cached `https://<host>/v1.js`), partners
+  // paste a host-stable, versioned URL. Without it, we fall back to the
+  // worker's own origin — Workers Assets serves `/widget.js` directly, which
+  // is what `/widget-preview.html` already uses for live preview rendering.
+  // The widget itself reads tenant API origin from data-tenant and applies
+  // CMS visibility rules + position from /api/config, so the canonical embed
+  // remains one line either way.
+  const EMBED_SRC = config.embed_host
+    ? `https://${config.embed_host}/v1.js`
+    : `${window.location.origin}/widget.js`
 
   // CMS preset → human-readable explanation. Used to render the hint
   // below the embed snippet so picking "Divi" has a visible effect even

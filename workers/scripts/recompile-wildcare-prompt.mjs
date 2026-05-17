@@ -94,7 +94,7 @@ await d1(
 )
 
 const after = await d1(
-  `SELECT length(custom_instruction) AS ci_len FROM tenants WHERE id = ?`,
+  'SELECT length(custom_instruction) AS ci_len FROM tenants WHERE id = ?',
   [t.id],
 )
 console.log()

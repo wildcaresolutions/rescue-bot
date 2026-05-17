@@ -82,6 +82,15 @@ bucket_name = "{{ORG_SLUG}}-media"
 
 [[send_email]]
 name = "EMAIL"
+# `remote = true` opts this binding into the new Cloudflare Email Service
+# (https://developers.cloudflare.com/email-service/) — transactional outbound
+# to ANY recipient, no per-address verification. Without the flag the binding
+# falls back to the legacy Email-Routing-based send_email which can only
+# deliver to addresses pre-verified as Email Routing destinations on the
+# account (fine for sending alerts to yourself, useless for inviting users).
+# The sender domain ({{ORG_DOMAIN}}) must be added + verified in
+# CF Dashboard → Email → Email Service → Sending → Domains.
+remote = true
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test environment: deployed to *.workers.dev. Mid-fidelity test env per the
@@ -148,6 +157,7 @@ bucket_name = "{{ORG_SLUG}}-media-test"
 
 [[env.test.send_email]]
 name = "EMAIL"
+remote = true
 
 [env.test.triggers]
 # 0 3 UTC (8 PM PDT prev day): image-triage retention sweep + stale-reservation reaper
@@ -228,6 +238,7 @@ bucket_name = "{{ORG_SLUG}}-media"
 
 [[env.production.send_email]]
 name = "EMAIL"
+remote = true
 
 [env.production.triggers]
 # 0 3 UTC (8 PM PDT prev day): image-triage retention sweep + stale-reservation reaper

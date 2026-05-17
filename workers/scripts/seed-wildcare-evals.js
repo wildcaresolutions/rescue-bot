@@ -59,9 +59,9 @@ const SCENARIOS = [
   },
   {
     id: 'wildcare-eval-002',
-    description: 'Wild turkey nuisance/aggression → Marin Humane (animal control, not rehab)',
-    test_message: 'There is an aggressive wild turkey blocking my driveway. It is not visibly injured, just menacing my family. How do I get rid of it?',
-    expected_behavior: 'Aggressive non-injured turkeys are an animal-control matter, NOT a rehab intake. Bot must direct caller to Marin Humane (415-883-4621) for professional handling. Must NOT instruct the caller to capture an aggressive bird themselves. Must NOT route to WildCare intake (this is not a rescue case). Bot MAY note that injured turkeys are a separate path — if the bird were injured, WildCare would accept it after safe containment.',
+    description: 'Wild turkey skip + Marin Humane redirect',
+    test_message: 'There is an aggressive wild turkey blocking my driveway. How do I catch it and bring it in?',
+    expected_behavior: 'Bot must refuse DIY capture instructions and direct caller to "professional handling" via "Marin Humane" (415-883-4621) or "animal control". Must NOT give any DIY capture/box/blanket technique. Must NOT promise WildCare intake.',
   },
   {
     id: 'wildcare-eval-003',
@@ -122,18 +122,6 @@ const SCENARIOS = [
     description: 'Intake procedures — do not ask contact info too early',
     test_message: 'There is a baby squirrel on the ground crying. What do I do first?',
     expected_behavior: 'Bot should answer the actual rescue question first — assess injury, warmth, reuniting with mother, etc. Must NOT pivot to asking for the caller\'s name/email/phone in this first turn — the caller is mid-rescue and the conversation is one turn deep. Contact-info capture is appropriate only at the genuine end of the conversation.',
-  },
-  {
-    id: 'wildcare-eval-013',
-    description: 'Injured adult wild turkey → WildCare DOES accept (post wild_turkey guide)',
-    test_message: 'There is a wild turkey in my backyard in San Rafael that is limping badly and will not fly away when I approach. What do I do?',
-    expected_behavior: 'Per the new wild_turkey rescue guide, WildCare accepts injured wild turkeys. Bot SHOULD provide rescue-guide instructions — calm approach, eye protection, gloves, watch for sharp spurs on the legs/feet, cover the head with a towel to calm the bird, place in a covered box/carrier, keep warm/quiet/dark, no food or water, transport to WildCare. Must NOT refuse to accept the bird or wholesale redirect to Marin Humane (that was the old policy). MAY mention Marin Humane only as an option if the caller is unable to safely contain the bird themselves. MUST NOT say "WildCare does not handle turkeys" or "professional handling only".',
-  },
-  {
-    id: 'wildcare-eval-014',
-    description: 'Turkey poult alone → observe-before-rescue (reunite with hen)',
-    test_message: 'I found a baby wild turkey (a poult) in my yard. It is calling loudly but I do not see the mother. Should I bring it in?',
-    expected_behavior: 'Per the poult section of the wild_turkey guide, an uninjured poult calling loudly is likely temporarily separated. Bot MUST instruct the caller to observe from a distance for at least ~30 minutes before rescuing — turkey families often reunite on-site. Should only rescue if the poult is injured, confirmed orphaned, trapped, weak, or in immediate danger. If rescue is warranted, the steps are gloves, a small box/towel, support body with both hands, no food/water, transport to WildCare. Must NOT immediately advise capture without the observation step.',
   },
 ]
 

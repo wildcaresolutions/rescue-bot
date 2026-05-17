@@ -1,0 +1,198 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Find a Wildlife Rehab — Critter Collective</title>
+  <meta name="description" content="Find a wildlife rehabilitation organization in your area. The Critter Collective network — California wildlife rehabs sharing protocols, expertise, and one toolkit.">
+
+  <!-- Cloudflare Web Analytics — placeholder, enable when token provisioned. -->
+  <!-- <script defer src='https://static.cloudflareinsights.com/beacon.min.js'
+          data-cf-beacon='{"token": "REPLACE_WITH_REAL_CF_ANALYTICS_TOKEN"}'></script> -->
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400;0,9..40,500;0,9..40,600&family=Instrument+Serif&family=Geist+Mono:wght@400&display=swap" rel="stylesheet">
+
+  <!-- Critical-path inline CSS so the page renders if /styles/field-notes.css fails. -->
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --color-umber: #3D2B1F; --color-parchment: #F6F1EB; --color-sage: #6B7F5E;
+      --color-storm: #8B7E74; --color-field-white: #FDFCFA; --color-dried-grass: #D4C9B5;
+      --font-display: 'Instrument Serif', serif; --font-body: 'DM Sans', sans-serif;
+    }
+    body {
+      font-family: var(--font-body); color: var(--color-umber);
+      line-height: 1.6; background: var(--color-parchment);
+      -webkit-font-smoothing: antialiased;
+    }
+    .nav { position: fixed; top: 0; left: 0; right: 0; padding: 16px 32px;
+           background: rgba(246, 241, 235, 0.92); border-bottom: 1px solid var(--color-dried-grass); z-index: 100; }
+    .find-hero { padding: 140px 32px 40px; text-align: center; max-width: 1100px; margin: 0 auto; }
+    .find-hero h1 { font-family: var(--font-display); font-size: 2.6rem; line-height: 1.15; margin-bottom: 20px; }
+  </style>
+  <link rel="stylesheet" href="/styles/field-notes.css">
+</head>
+<body>
+
+  <!-- ── Nav ─────────────────────────────────────────────────────────── -->
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-logo">Critter Collective<span class="nav-logo-sub">by WildCare</span></a>
+      <div class="nav-links">
+        <a href="/#network" class="nav-link">The network</a>
+        <a href="/#tool" class="nav-link">The tool</a>
+        <a href="/find" class="nav-link" style="color: var(--color-umber);">Find a rehab</a>
+        <a href="/#apply" class="nav-cta">Apply to join</a>
+      </div>
+    </div>
+  </nav>
+
+  <!-- ── Hero ────────────────────────────────────────────────────────── -->
+  <header class="find-hero">
+    <h1>Find your local wildlife rehab.</h1>
+    <p>If you found an injured animal, call your local rehabilitation organization below. They handle the species, the paperwork, the recovery, and the release.</p>
+    <p class="find-scope">Currently listing California rehabs. Network expanding.</p>
+  </header>
+
+  <!-- ── Filters ─────────────────────────────────────────────────────── -->
+  <div class="find-filters" id="filters">
+    <button class="find-filter-btn active" data-filter="all">All</button>
+    <button class="find-filter-btn" data-filter="raptor">Raptors</button>
+    <button class="find-filter-btn" data-filter="songbird">Songbirds</button>
+    <button class="find-filter-btn" data-filter="waterfowl">Waterfowl</button>
+    <button class="find-filter-btn" data-filter="urban">Urban wildlife</button>
+    <button class="find-filter-btn" data-filter="all-species">All species</button>
+  </div>
+
+  <!-- ── Partner grid ────────────────────────────────────────────────── -->
+  <div class="find-grid-wrap">
+    <div class="find-grid" id="grid"></div>
+    <div class="find-empty" id="empty" style="display: none;">No partners match this filter yet. Try "All" or apply to join the network.</div>
+
+    <!-- ── CTA back to apply ─────────────────────────────────────────── -->
+    <div class="find-cta">
+      <h2>Run a wildlife rehab?</h2>
+      <p>Join the Critter Collective network. Free for community members. Hosted by WildCare.</p>
+      <a href="/#apply" class="hero-cta">Apply to join</a>
+    </div>
+  </div>
+
+  <!-- ── Footer ──────────────────────────────────────────────────────── -->
+  <footer class="footer">
+    <p>Critter Collective by WildCare</p>
+    <p>A community project · <a href="https://discoverwildcare.org" target="_blank" rel="noopener">discoverwildcare.org</a> · <a href="mailto:hello@wildcaresolutions.org">hello@wildcaresolutions.org</a></p>
+  </footer>
+
+  <script>
+    // ── Partner data ───────────────────────────────────────────────────
+    // PLACEHOLDER PARTNERS — entries 2-4 are placeholder. WildCare is the real
+    // anchor. Replace placeholders with confirmed founding partners (name,
+    // city, state, phone, website, specialties) as Monday Founding Partner
+    // outreach replies arrive.
+    //
+    // Specialty tags drive the filter buttons above:
+    //   raptor, songbird, waterfowl, urban, all-species
+    const partners = [
+      {
+        name: 'WildCare',
+        city: 'San Rafael',
+        state: 'CA',
+        county: 'Marin',
+        phone: '(415) 456-7283',
+        website: 'discoverwildcare.org',
+        specialties: ['all-species'],
+        anchor: true,
+      },
+      {
+        name: '[Founding Partner 2]',
+        city: '[city]',
+        state: 'CA',
+        county: '[county]',
+        phone: '[phone]',
+        website: '[website]',
+        specialties: ['raptor'],
+        placeholder: true,
+      },
+      {
+        name: '[Founding Partner 3]',
+        city: '[city]',
+        state: 'CA',
+        county: '[county]',
+        phone: '[phone]',
+        website: '[website]',
+        specialties: ['songbird', 'waterfowl'],
+        placeholder: true,
+      },
+      {
+        name: '[Founding Partner 4]',
+        city: '[city]',
+        state: 'CA',
+        county: '[county]',
+        phone: '[phone]',
+        website: '[website]',
+        specialties: ['urban'],
+        placeholder: true,
+      },
+    ]
+
+    // ── Render ─────────────────────────────────────────────────────────
+    const SPECIALTY_LABELS = {
+      raptor: 'Raptors',
+      songbird: 'Songbirds',
+      waterfowl: 'Waterfowl',
+      urban: 'Urban wildlife',
+      'all-species': 'All species',
+    }
+
+    function renderGrid(filter) {
+      const grid = document.getElementById('grid')
+      const empty = document.getElementById('empty')
+      grid.innerHTML = ''
+
+      const filtered = filter === 'all'
+        ? partners
+        : partners.filter(p => p.specialties.includes(filter))
+
+      if (filtered.length === 0) {
+        empty.style.display = 'block'
+        return
+      }
+      empty.style.display = 'none'
+
+      filtered.forEach(p => {
+        const tile = document.createElement('div')
+        tile.className = 'partner-tile'
+        tile.innerHTML = `
+          <h3>${escapeHtml(p.name)}</h3>
+          <p class="partner-meta">${escapeHtml(p.city)}, ${escapeHtml(p.state)}${p.county && p.county !== '[county]' ? ' · ' + escapeHtml(p.county) + ' County' : ''}${p.anchor ? ' · since 1974' : ''}</p>
+          ${p.phone && p.phone !== '[phone]' ? `<a class="partner-phone" href="tel:${p.phone.replace(/[^0-9+]/g, '')}">${escapeHtml(p.phone)}</a>` : `<span class="partner-phone" style="color: var(--color-storm);">${escapeHtml(p.phone)}</span>`}
+          ${p.website && p.website !== '[website]' ? `<a class="partner-website" href="https://${p.website}" target="_blank" rel="noopener">${escapeHtml(p.website)} →</a>` : `<span class="partner-website" style="color: var(--color-storm);">${escapeHtml(p.website)}</span>`}
+          <div class="partner-specialties">
+            ${p.specialties.map(s => `<span class="partner-specialty">${escapeHtml(SPECIALTY_LABELS[s] || s)}</span>`).join('')}
+          </div>
+        `
+        grid.appendChild(tile)
+      })
+    }
+
+    function escapeHtml(str) {
+      return String(str).replace(/[&<>"']/g, c => ({
+        '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+      }[c]))
+    }
+
+    // ── Filter buttons ─────────────────────────────────────────────────
+    document.querySelectorAll('.find-filter-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        document.querySelectorAll('.find-filter-btn').forEach(b => b.classList.remove('active'))
+        btn.classList.add('active')
+        renderGrid(btn.dataset.filter)
+      })
+    })
+
+    renderGrid('all')
+  </script>
+</body>
+</html>

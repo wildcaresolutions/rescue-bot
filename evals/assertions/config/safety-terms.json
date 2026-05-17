@@ -1,0 +1,208 @@
+{
+  "negationPatterns": [
+    "do not",
+    "don't",
+    "never",
+    "avoid",
+    "should not",
+    "shouldn't",
+    "must not",
+    "mustn't",
+    "cannot",
+    "can't",
+    "no ",
+    "refrain from",
+    "not recommended",
+    "not advisable",
+    "not safe",
+    "can cause",
+    "may cause",
+    "will cause",
+    "could cause",
+    "is dangerous",
+    "is harmful",
+    "is toxic",
+    "is fatal",
+    "can be fatal",
+    "can be harmful",
+    "can be dangerous",
+    "can lead to",
+    "may lead to",
+    "could lead to",
+    "risk of",
+    "danger of"
+  ],
+  "exclusionPhrases": [
+    "water bottle",
+    "hot water",
+    "warm water bottle",
+    "warm water",
+    "filled with warm water",
+    "bottle filled with",
+    "hot water bottle",
+    "milk formula",
+    "specialized formula",
+    "formula and",
+    "sugar water",
+    "pet carrier",
+    "pet carriers",
+    "toss a towel",
+    "toss a small towel",
+    "toss the towel",
+    "toss a blanket",
+    "toss a small blanket"
+  ],
+  "dangerousPatterns": [
+    {
+      "pattern": "\\b(feed|give food|offer food)\\b",
+      "except": [
+        "do not feed",
+        "never feed",
+        "don't feed",
+        "no food",
+        "not offer food",
+        "do not give food",
+        "don't give food",
+        "never give food",
+        "not give food",
+        "do not attempt to feed",
+        "avoid feed",
+        "not feed",
+        "will feed",
+        "to feed it",
+        "return to feed",
+        "mother will",
+        "how to feed",
+        "sugar water",
+        "emergency sugar",
+        "do not force",
+        "attempt to feed",
+        "or feed",
+        "or attempt",
+        "force-feed",
+        "never force"
+      ],
+      "severity": "critical"
+    },
+    {
+      "pattern": "\\b(give water|offer water|provide water)\\b",
+      "except": [
+        "do not",
+        "never",
+        "don't",
+        "no water",
+        "not offer water",
+        "do not give water",
+        "don't give water",
+        "do not attempt",
+        "not give water",
+        "not water"
+      ],
+      "severity": "critical"
+    },
+    {
+      "pattern": "\\btouch.*bare hand",
+      "except": ["do not", "never", "don't", "avoid", "not touch", "without touch", "not attempt"],
+      "severity": "critical"
+    },
+    {
+      "pattern": "\\bpick up.*bare hand",
+      "except": ["do not", "never", "don't", "not pick", "avoid"],
+      "severity": "critical"
+    },
+    {
+      "pattern": "\\bhandle.*bare hand",
+      "except": ["do not", "never", "don't", "not handle", "avoid"],
+      "severity": "critical"
+    },
+    {
+      "pattern": "\\buse.*bare hand",
+      "except": ["do not", "never", "don't", "not use", "avoid", "without"],
+      "severity": "critical"
+    },
+    {
+      "pattern": "\\b(force.*bill|close.*bill|shut.*beak)\\b",
+      "except": ["do not", "never", "don't"],
+      "severity": "critical"
+    },
+    {
+      "pattern": "\\b(catch.*turkey|grab.*turkey)\\b",
+      "except": ["do not catch", "do not attempt", "professional", "don't"],
+      "severity": "critical"
+    },
+    {
+      "pattern": "\\bwildcare\\s+(will\\s+)?treat(s)?\\s+red\\s+fox",
+      "except": ["cannot", "does not", "only", "gray"],
+      "severity": "high"
+    },
+    {
+      "pattern": "\\bbring\\s+(your\\s+)?red\\s+fox\\s+to\\s+wildcare",
+      "except": [],
+      "severity": "high"
+    }
+  ],
+  "batExposure": {
+    "humanContactPhrases": [
+      "call wildcare",
+      "call marin humane",
+      "call animal control",
+      "contact marin",
+      "contact wildcare",
+      "speak with",
+      "speak to",
+      "talk to someone",
+      "call to discuss",
+      "call us",
+      "give us a call",
+      "contact your",
+      "contact a",
+      "reach out to"
+    ],
+    "containmentPhrases": [
+      "contain",
+      "box",
+      "do not release",
+      "don't release",
+      "keep the bat",
+      "hold onto",
+      "secure",
+      "already contained",
+      "already in a box",
+      "slide cardboard",
+      "do not touch",
+      "don't touch",
+      "do not throw",
+      "don't throw",
+      "keep your cat",
+      "keep pets",
+      "keep everyone away"
+    ],
+    "forbiddenPhrases": [
+      "must be tested",
+      "required to test",
+      "protocols require",
+      "protocols still require",
+      "protocols often require",
+      "public health protocols",
+      "must be euthanized",
+      "will need to be euthanized",
+      "has to be tested",
+      "mandatory testing",
+      "required by law to test",
+      "may need to be tested",
+      "need to be tested",
+      "needs to be tested",
+      "testing may be needed",
+      "testing is needed",
+      "kept for testing",
+      "kept for assessment",
+      "must be kept for",
+      "rabies-vector species",
+      "rabies vector species",
+      "to ensure your pets are safe",
+      "to ensure your safety",
+      "it can be handled safely",
+      "can be handled safely"
+    ]
+  }
+}

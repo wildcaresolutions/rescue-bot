@@ -1,0 +1,5 @@
+Transport Instructions - Marin During Open Hours
+**IF {contact_location} is Marin and IF {contact_time} is during hours, instruct the
+rescuer to bring the {animal_description} immediately to Wild Care at 37 Schmidt Lane in
+San Rafael.
+

@@ -1,0 +1,249 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# CANONICAL TEMPLATE. Do not edit `wrangler.toml` directly — it is generated
+# from this file by `node workers/scripts/gen-wrangler.js`. Edit the TEMPLATE,
+# regenerate the stub via `--stub`, commit both. CI asserts they match.
+#
+# Mustache-style <PLACEHOLDER> tokens (using {{ and }} delimiters) are
+# substituted by the generator:
+#   - default mode:    real values from `org.env` (or process.env in CI)
+#   - --stub mode:     literal `REPLACE_VIA_GEN_WRANGLER` (committed wrangler.toml)
+#
+# Top-level config = local dev (`wrangler dev`).
+# `[env.test]` = <ORG_SLUG>-bot-test on *.workers.dev.
+# `[env.production]` = <ORG_SLUG>-bot on the org's custom domain.
+#
+# Resource names are all derived from ORG_SLUG — two forks of rescue-bot in
+# two different CF accounts use different ORG_SLUGs and never collide.
+#
+# Wrangler does NOT inherit bindings from default into named envs — each env
+# below redeclares everything it needs.
+# ─────────────────────────────────────────────────────────────────────────────
+
+name = "REPLACE_VIA_GEN_WRANGLER-bot-dev"
+main = "src/index.ts"
+compatibility_date = "2025-01-01"
+compatibility_flags = ["nodejs_compat"]
+account_id = "REPLACE_VIA_GEN_WRANGLER"
+
+[assets]
+binding = "ASSETS"
+directory = "../web/dist"
+html_handling = "none"
+not_found_handling = "none"
+
+# Local dev sends real magic links if the EMAIL binding is bound; the override
+# below redirects every recipient to mark@bluesnoop.com so prod users never get
+# a dev email. With `wrangler dev` (default), the binding is unbound and the
+# helper logs to console instead.
+[vars]
+SITE_NAME = ""
+AI_GATEWAY_ACCOUNT_ID = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_ID = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_GOOGLE_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_OPENAI_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_ANTHROPIC_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+MAIN_CHAT_MODEL = "REPLACE_VIA_GEN_WRANGLER"
+PHOTO_RECOGNIZER_MODEL = "REPLACE_VIA_GEN_WRANGLER"
+PLATFORM_NAME = "REPLACE_VIA_GEN_WRANGLER"
+ENVIRONMENT = "dev"
+EMAIL_OVERRIDE_TO = "mark@bluesnoop.com"
+EMAIL_SUBJECT_PREFIX = "[DEV]"
+# Local dev: bypass Turnstile + magic-link auth so devs aren't blocked. Flip
+# to "" or "false" in workers/.dev.vars to exercise the real flow when
+# testing auth changes.
+DEV_AUTH_BYPASS = "true"
+# Cloudflare Turnstile "always passes" test site key — paired with the
+# matching test secret in workers/.dev.vars. Real keys live per-env below.
+TURNSTILE_SITE_KEY = "1x00000000000000000000AA"
+
+[ai]
+binding = "AI"
+remote = true
+
+[[vectorize]]
+binding = "VECTORIZE"
+index_name = "REPLACE_VIA_GEN_WRANGLER-docs-dev"
+remote = true
+
+[[d1_databases]]
+binding = "DB"
+database_name = "REPLACE_VIA_GEN_WRANGLER-db"
+database_id = "REPLACE_VIA_GEN_WRANGLER"
+
+[[r2_buckets]]
+binding = "R2"
+bucket_name = "REPLACE_VIA_GEN_WRANGLER-assets"
+
+# Image triage v1: citizen-uploaded photos + curated reference photos.
+# Prefix discipline: citizen/{tenant}/{session}/{photo_id}.{ext} for PII-bearing
+# uploads (30-day standard / 90-day clinical retention), reference/{tag}/* for
+# CC-licensed reference photos with no PII.
+[[r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "REPLACE_VIA_GEN_WRANGLER-media"
+
+[[send_email]]
+name = "EMAIL"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Test environment: deployed to *.workers.dev. Mid-fidelity test env per the
+# dev/test/prod rebuild design — workers.dev URL keeps test working without
+# the ACM/Email-Routing-on-subdomain fragility that broke test.<org-domain>.
+# Sender domain (verified) is independent of URL host: outbound email FROM
+# the org's verified domain regardless of where the worker lives.
+# Tenants resolve via ?tenant=<slug> query param.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[env.test]
+name = "REPLACE_VIA_GEN_WRANGLER-bot-test"
+workers_dev = true
+
+[env.test.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.test.assets]
+binding = "ASSETS"
+directory = "../web/dist"
+html_handling = "none"
+not_found_handling = "none"
+
+[env.test.vars]
+SITE_NAME = ""
+AI_GATEWAY_ACCOUNT_ID = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_ID = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_GOOGLE_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_OPENAI_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_ANTHROPIC_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+MAIN_CHAT_MODEL = "REPLACE_VIA_GEN_WRANGLER"
+PHOTO_RECOGNIZER_MODEL = "REPLACE_VIA_GEN_WRANGLER"
+PLATFORM_NAME = "REPLACE_VIA_GEN_WRANGLER"
+ENVIRONMENT = "test"
+EMAIL_OVERRIDE_TO = "mark@bluesnoop.com"
+EMAIL_SUBJECT_PREFIX = "[TEST]"
+DEV_AUTH_BYPASS = ""
+# Cloudflare "always passes" test sitekey. Real Turnstile keys are bound to
+# specific hostnames, so the prod key would error-callback on workers.dev
+# and silently disable the apply form. Pairs with the matching test secret
+# pushed to TURNSTILE_SECRET_KEY in this env (1x0000000000000000000000000000000AA).
+TURNSTILE_SITE_KEY = "1x00000000000000000000AA"
+
+[env.test.ai]
+binding = "AI"
+remote = true
+
+[[env.test.vectorize]]
+binding = "VECTORIZE"
+index_name = "REPLACE_VIA_GEN_WRANGLER-docs-test"
+remote = true
+
+[[env.test.d1_databases]]
+binding = "DB"
+database_name = "REPLACE_VIA_GEN_WRANGLER-db-test"
+database_id = "REPLACE_VIA_GEN_WRANGLER"
+
+[[env.test.r2_buckets]]
+binding = "R2"
+bucket_name = "REPLACE_VIA_GEN_WRANGLER-assets-test"
+
+[[env.test.r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "REPLACE_VIA_GEN_WRANGLER-media-test"
+
+[[env.test.send_email]]
+name = "EMAIL"
+
+[env.test.triggers]
+# 0 3 UTC (8 PM PDT prev day): image-triage retention sweep + stale-reservation reaper
+# 0 14 UTC (7 AM PDT / 6 AM PST): daily-report cron — chosen to catch overnight callers in the morning desk shift
+crons = ["0 3 * * *", "0 14 * * *"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Production: <org-domain> + www + admin + *.<org-domain> for tenants.
+# embed.<org-domain> is bound to R2 separately (dashboard) and
+# excluded from the wildcard via a no-Worker route entry.
+# ─────────────────────────────────────────────────────────────────────────────
+
+[env.production]
+name = "REPLACE_VIA_GEN_WRANGLER-bot"
+
+[[env.production.routes]]
+pattern = "REPLACE_VIA_GEN_WRANGLER"
+custom_domain = true
+
+[[env.production.routes]]
+pattern = "www.REPLACE_VIA_GEN_WRANGLER"
+custom_domain = true
+
+[[env.production.routes]]
+pattern = "admin.REPLACE_VIA_GEN_WRANGLER"
+custom_domain = true
+
+[[env.production.routes]]
+pattern = "*.REPLACE_VIA_GEN_WRANGLER/*"
+zone_name = "REPLACE_VIA_GEN_WRANGLER"
+
+[env.production.observability]
+enabled = true
+head_sampling_rate = 1
+
+[env.production.assets]
+binding = "ASSETS"
+directory = "../web/dist"
+html_handling = "none"
+not_found_handling = "none"
+
+[env.production.vars]
+SITE_NAME = ""
+AI_GATEWAY_ACCOUNT_ID = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_ID = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_GOOGLE_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_OPENAI_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+AI_GATEWAY_ANTHROPIC_BYOK_ALIAS = "REPLACE_VIA_GEN_WRANGLER"
+MAIN_CHAT_MODEL = "REPLACE_VIA_GEN_WRANGLER"
+PHOTO_RECOGNIZER_MODEL = "REPLACE_VIA_GEN_WRANGLER"
+PLATFORM_NAME = "REPLACE_VIA_GEN_WRANGLER"
+ENVIRONMENT = "production"
+# Empty in prod so sendEmail() sends to real recipients with no subject prefix.
+EMAIL_OVERRIDE_TO = ""
+EMAIL_SUBJECT_PREFIX = ""
+DEV_AUTH_BYPASS = ""
+TURNSTILE_SITE_KEY = "REPLACE_VIA_GEN_WRANGLER"
+
+[env.production.ai]
+binding = "AI"
+remote = true
+
+[[env.production.vectorize]]
+binding = "VECTORIZE"
+index_name = "REPLACE_VIA_GEN_WRANGLER-docs"
+remote = true
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "REPLACE_VIA_GEN_WRANGLER-db"
+database_id = "REPLACE_VIA_GEN_WRANGLER"
+
+[[env.production.r2_buckets]]
+binding = "R2"
+bucket_name = "REPLACE_VIA_GEN_WRANGLER-assets"
+
+[[env.production.r2_buckets]]
+binding = "MEDIA_BUCKET"
+bucket_name = "REPLACE_VIA_GEN_WRANGLER-media"
+
+[[env.production.send_email]]
+name = "EMAIL"
+
+[env.production.triggers]
+# 0 3 UTC (8 PM PDT prev day): image-triage retention sweep + stale-reservation reaper
+# 0 14 UTC (7 AM PDT / 6 AM PST): daily-report cron — chosen to catch overnight callers in the morning desk shift
+crons = ["0 3 * * *", "0 14 * * *"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Secrets — set via wrangler secret put per environment:
+#   npx wrangler secret put AI_GATEWAY_TOKEN --env production
+#   npx wrangler secret put AI_GATEWAY_TOKEN --env test
+# Required: AI_GATEWAY_TOKEN, SIGNING_SECRET, REPORT_FROM_EMAIL,
+#           TURNSTILE_SECRET_KEY, PLATFORM_ADMIN_EMAILS
+# ─────────────────────────────────────────────────────────────────────────────

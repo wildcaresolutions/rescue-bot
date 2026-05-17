@@ -1,0 +1,4 @@
+interface:
+  display_name: "Tenant Setup Reset"
+  short_description: "Reset a WildCare tenant to fresh onboarding state."
+  default_prompt: "Reset a test tenant setup state to fresh onboarding."

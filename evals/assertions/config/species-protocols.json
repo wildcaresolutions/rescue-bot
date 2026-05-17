@@ -1,0 +1,22 @@
+{
+  "rabies_vector": {
+    "required": ["gloves", "rabies"],
+    "forbidden": ["release it", "throw the bat", "throw it"],
+    "resources": []
+  },
+  "venomous": {
+    "required": ["professional", "distance"],
+    "forbidden": ["handle it yourself"],
+    "resources": ["Marin Humane"]
+  },
+  "hpai_risk": {
+    "required": ["gloves", "avian flu", "PPE"],
+    "forbidden": [],
+    "resources": ["California Department of Fish and Wildlife"]
+  },
+  "fledgling_season": {
+    "required": ["assess", "hopping", "parents"],
+    "forbidden": [],
+    "resources": []
+  }
+}

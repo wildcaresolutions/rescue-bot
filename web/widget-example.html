@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WildCare Chat Widget - Embedding Guide</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      margin: 0;
+      padding: 0;
+      background: #f5f5f5;
+      color: #333;
+      line-height: 1.6;
+    }
+    header {
+      background: linear-gradient(135deg, #004863 0%, #78a12e 100%);
+      color: white;
+      padding: 2rem;
+      text-align: center;
+    }
+    h1 { margin: 0 0 0.5rem 0; }
+    header p { margin: 0; opacity: 0.9; }
+    main {
+      max-width: 900px;
+      margin: 2rem auto;
+      padding: 0 1rem 4rem;
+    }
+    section {
+      background: white;
+      border-radius: 8px;
+      padding: 1.5rem 2rem;
+      margin-bottom: 1.5rem;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    h2 {
+      color: #004863;
+      border-bottom: 2px solid #78a12e;
+      padding-bottom: 0.5rem;
+      margin-top: 0;
+    }
+    h3 { color: #004863; margin-top: 1.5rem; }
+    code {
+      background: #f4f4f4;
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      font-size: 0.9em;
+    }
+    pre {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 1rem 1.25rem;
+      border-radius: 6px;
+      overflow-x: auto;
+      font-size: 0.9rem;
+      line-height: 1.5;
+    }
+    pre .comment { color: #6a9955; }
+    pre .string { color: #ce9178; }
+    pre .keyword { color: #569cd6; }
+    pre .property { color: #9cdcfe; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+    }
+    th, td {
+      text-align: left;
+      padding: 0.75rem;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    th {
+      background: #f8f9fa;
+      font-weight: 600;
+      color: #004863;
+    }
+    .required { color: #c33; font-size: 0.8em; }
+    .default { color: #666; font-family: monospace; font-size: 0.85em; }
+    .tip {
+      background: #e8f5e9;
+      border-left: 4px solid #78a12e;
+      padding: 1rem;
+      margin: 1rem 0;
+    }
+    .warning {
+      background: #fff3e0;
+      border-left: 4px solid #f4a518;
+      padding: 1rem;
+      margin: 1rem 0;
+    }
+    .color-swatch {
+      display: inline-block;
+      width: 16px;
+      height: 16px;
+      border-radius: 3px;
+      vertical-align: middle;
+      margin-right: 0.25rem;
+      border: 1px solid rgba(0,0,0,0.1);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>WildCare Chat Widget</h1>
+    <p>Embedding Guide & Configuration Reference</p>
+  </header>
+
+  <main>
+    <!-- Live Demo -->
+    <section>
+      <h2>Live Demo</h2>
+      <p>This page has the widget embedded. Click the <strong>Chat</strong> button in the bottom-right corner to try it.</p>
+      <p>Current configuration:</p>
+      <ul>
+        <li><code>autoOpen: false</code></li>
+        <li><code>agentName: 'Wildlife Rescue Assistant'</code></li>
+        <li><code>buttonLabel: 'Chat'</code></li>
+        <li><code>welcomeMessage: "Hello! I'm here to help..."</code></li>
+        <li>Default WildCare theme colors</li>
+      </ul>
+    </section>
+    
+    <!-- Quick Start -->
+    <section>
+      <h2>Quick Start</h2>
+      <p>Add this code to your website, just before the closing <code>&lt;/body&gt;</code> tag:</p>
+      <pre><span class="comment">&lt;!-- WildCare Chat Widget --&gt;</span>
+&lt;script&gt;
+   window.WildCareChat = {
+     <span class="property">baseUrl</span>: <span class="keyword">'https://wildcare.bluesnoop.com'</span>,	
+     <span class="property">autoOpen</span>: <span class="keyword">false</span>,
+     <span class="property">agentName</span>: <span class="string">'Wildcare Help Assistant'</span>,
+     <span class="property">buttonLabel</span>: <span class="string">'Need Help?'</span>,
+   };
+ &lt;/script&gt;
+&lt;script src="https://wildcare.bluesnoop.com/widget.js"&gt;&lt;/script&gt;</pre>
+      <p>The widget will appear as a floating button in the bottom-right corner.</p>
+    </section>
+
+    <!-- Configuration -->
+    <section>
+      <h2>Configuration Options</h2>
+      <p>Customize the widget by setting <code>window.WildCareChat</code> before loading the script:</p>
+      <pre>&lt;script&gt;
+   window.WildCareChat = {
+     <span class="property">autoOpen</span>: <span class="keyword">false</span>,
+     <span class="property">agentName</span>: <span class="string">'Wildlife Help'</span>,
+     <span class="property">buttonLabel</span>: <span class="string">'Need Help?'</span>,
+   };
+ &lt;/script&gt;
+ &lt;script src="https://wildcare.bluesnoop.com/widget.js"&gt;&lt;/script&gt;</pre>
+
+      <div class="tip">
+        <strong>Testing/Staging:</strong> Set <code>baseUrl: '/'</code> to use same-origin API calls (useful for local development or staging environments).
+      </div>
+
+      <h3>All Options</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Option</th>
+            <th>Type</th>
+            <th>Default</th>
+            <th>Description</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>baseUrl</code></td>
+            <td>string</td>
+            <td class="default">null (same origin)</td>
+            <td>Root URL for API calls. Use <code>'https://wildcare.bluesnoop.com'</code> for cross-origin embedding, or <code>'/'</code> for same-origin (testing/staging).</td>
+          </tr>
+          <tr>
+            <td><code>autoOpen</code></td>
+            <td>boolean</td>
+            <td class="default">true</td>
+            <td>Automatically open the chat pane when the page loads</td>
+          </tr>
+          <tr>
+            <td><code>agentName</code></td>
+            <td>string</td>
+            <td class="default">'Wildlife Rescue Assistant'</td>
+            <td>Name shown in the chat header</td>
+          </tr>
+          <tr>
+            <td><code>buttonLabel</code></td>
+            <td>string</td>
+            <td class="default">'Chat'</td>
+            <td>Text on the floating button</td>
+          </tr>
+          <tr>
+            <td><code>welcomeMessage</code></td>
+            <td>string</td>
+            <td class="default">'Hello! I'm here to help...'</td>
+            <td>Initial message shown when chat opens. Set to empty string to disable.</td>
+          </tr>
+          <tr>
+            <td><code>theme</code></td>
+            <td>object</td>
+            <td class="default">{...}</td>
+            <td>Custom colors (see Theming section below)</td>
+          </tr>
+          <tr>
+            <td><code>width</code></td>
+            <td>string</td>
+            <td class="default">'90%'</td>
+            <td>Widget width (CSS value)</td>
+          </tr>
+          <tr>
+            <td><code>maxWidth</code></td>
+            <td>string</td>
+            <td class="default">'600px'</td>
+            <td>Maximum widget width</td>
+          </tr>
+          <tr>
+            <td><code>height</code></td>
+            <td>string</td>
+            <td class="default">'auto'</td>
+            <td>Widget height (CSS value)</td>
+          </tr>
+          <tr>
+            <td><code>maxHeight</code></td>
+            <td>string</td>
+            <td class="default">'80vh'</td>
+            <td>Maximum widget height</td>
+          </tr>
+          <tr>
+            <td><code>minWidth</code></td>
+            <td>string</td>
+            <td class="default">'320px'</td>
+            <td>Minimum widget width (for resizing)</td>
+          </tr>
+          <tr>
+            <td><code>minHeight</code></td>
+            <td>string</td>
+            <td class="default">'400px'</td>
+            <td>Minimum widget height (for resizing)</td>
+          </tr>
+          <tr>
+            <td><code>resizable</code></td>
+            <td>boolean</td>
+            <td class="default">true</td>
+            <td>Allow users to drag-resize the widget (desktop only)</td>
+          </tr>
+          <tr>
+            <td><code>buttonPosition</code></td>
+            <td>object</td>
+            <td class="default">null</td>
+            <td>CSS position overrides for the floating button, e.g. <code>{ left: '20px', right: 'auto', bottom: '100px' }</code></td>
+          </tr>
+          <tr>
+            <td><code>panePosition</code></td>
+            <td>object</td>
+            <td class="default">null</td>
+            <td>CSS position overrides for the chat window container, e.g. <code>{ left: '20px', right: 'auto', bottom: '100px' }</code></td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="tip">
+        <strong>Resizing:</strong> When <code>resizable: true</code> (default), users can drag the bottom-right corner to resize the widget. This only works on desktop browsers.
+      </div>
+    </section>
+
+    <!-- Positioning -->
+    <section>
+      <h2>Positioning</h2>
+      <p>By default the widget button appears in the bottom-right corner. Use <code>buttonPosition</code> and <code>panePosition</code> to move it — no CSS overrides needed:</p>
+
+      <h3>Move to Bottom-Left</h3>
+      <pre>&lt;script&gt;
+  window.WildCareChat = {
+    <span class="property">baseUrl</span>: <span class="string">'https://wildcare.bluesnoop.com'</span>,
+    <span class="property">buttonPosition</span>: { <span class="property">right</span>: <span class="string">'auto'</span>, <span class="property">left</span>: <span class="string">'20px'</span> },
+    <span class="property">panePosition</span>:   { <span class="property">right</span>: <span class="string">'auto'</span>, <span class="property">left</span>: <span class="string">'20px'</span> },
+  };
+&lt;/script&gt;</pre>
+
+      <h3>Move Higher (Avoid Overlapping Another Button)</h3>
+      <pre>&lt;script&gt;
+  window.WildCareChat = {
+    <span class="property">baseUrl</span>: <span class="string">'https://wildcare.bluesnoop.com'</span>,
+    <span class="property">buttonPosition</span>: { <span class="property">bottom</span>: <span class="string">'100px'</span> },
+    <span class="property">panePosition</span>:   { <span class="property">bottom</span>: <span class="string">'100px'</span> },
+  };
+&lt;/script&gt;</pre>
+
+      <div class="tip">
+        <strong>Tip:</strong> Position properties map directly to CSS — you can use any combination of <code>top</code>, <code>bottom</code>, <code>left</code>, <code>right</code> with CSS values.
+      </div>
+    </section>
+
+    <!-- Theming -->
+    <section>
+      <h2>Theming</h2>
+      <p>Match the widget to your brand colors using the <code>theme</code> object:</p>
+      <pre>&lt;script&gt;
+  window.WildCareChat = {
+    <span class="property">theme</span>: {
+      <span class="property">primaryColor</span>: <span class="string">'#78a12e'</span>,    <span class="comment">// Button, links, accents</span>
+      <span class="property">secondaryColor</span>: <span class="string">'#004863'</span>,  <span class="comment">// Header background</span>
+      <span class="property">textColor</span>: <span class="string">'#333333'</span>,       <span class="comment">// Main text color</span>
+    }
+  };
+&lt;/script&gt;</pre>
+
+      <h3>Theme Properties</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Property</th>
+            <th>Default</th>
+            <th>Used For</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>primaryColor</code></td>
+            <td><span class="color-swatch" style="background:#78a12e"></span><span class="default">#78a12e</span></td>
+            <td>Floating button, send button, user message bubbles, links, focus states</td>
+          </tr>
+          <tr>
+            <td><code>secondaryColor</code></td>
+            <td><span class="color-swatch" style="background:#004863"></span><span class="default">#004863</span></td>
+            <td>Header gradient (combined with primaryColor), bold text emphasis</td>
+          </tr>
+          <tr>
+            <td><code>textColor</code></td>
+            <td><span class="color-swatch" style="background:#333333"></span><span class="default">#333333</span></td>
+            <td>Primary text in assistant messages and input field</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <div class="tip">
+        <strong>Tip:</strong> The header uses a gradient from <code>secondaryColor</code> to <code>primaryColor</code>.
+        For best results, choose colors that complement each other.
+      </div>
+    </section>
+
+    <!-- Advanced Theming -->
+    <section>
+      <h2>Advanced: Custom CSS</h2>
+      <p>For complete control, you can override any widget styles in your own CSS. All widget elements use the <code>rbot-widget-</code> prefix:</p>
+      <pre><span class="comment">/* Example: Make the button circular */</span>
+.rbot-widget-button {
+  width: 60px;
+  height: 60px;
+  padding: 0;
+  border-radius: 50%;
+}
+
+<span class="comment">/* Example: Custom chat pane width */</span>
+.rbot-widget-pane {
+  max-width: 400px;
+}
+
+<span class="comment">/* Example: Different mobile behavior */</span>
+@media (max-width: 768px) {
+  .rbot-widget-pane {
+    border-radius: 0;
+  }
+}</pre>
+
+      <h3>CSS Class Reference</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Class</th>
+            <th>Element</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td><code>.rbot-widget-button</code></td><td>Floating chat button</td></tr>
+          <tr><td><code>.rbot-widget-container</code></td><td>Backdrop overlay (when open)</td></tr>
+          <tr><td><code>.rbot-widget-pane</code></td><td>Main chat window</td></tr>
+          <tr><td><code>.rbot-widget-header</code></td><td>Header bar with title</td></tr>
+          <tr><td><code>.rbot-widget-title</code></td><td>Agent name in header</td></tr>
+          <tr><td><code>.rbot-widget-close</code></td><td>Close button (×)</td></tr>
+          <tr><td><code>.rbot-widget-messages</code></td><td>Message list container</td></tr>
+          <tr><td><code>.rbot-widget-message</code></td><td>Individual message wrapper</td></tr>
+          <tr><td><code>.rbot-widget-message-user</code></td><td>User message (modifier)</td></tr>
+          <tr><td><code>.rbot-widget-message-assistant</code></td><td>Assistant message (modifier)</td></tr>
+          <tr><td><code>.rbot-widget-message-content</code></td><td>Message text bubble</td></tr>
+          <tr><td><code>.rbot-widget-input-area</code></td><td>Bottom input section</td></tr>
+          <tr><td><code>.rbot-widget-input</code></td><td>Text input field</td></tr>
+          <tr><td><code>.rbot-widget-send</code></td><td>Send button</td></tr>
+          <tr><td><code>.rbot-widget-rating</code></td><td>Thumbs up/down container</td></tr>
+          <tr><td><code>.rbot-widget-thumb-btn</code></td><td>Rating thumb buttons</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- Behavior -->
+    <section>
+      <h2>Behavior Notes</h2>
+
+      <h3>Session Persistence</h3>
+      <p>The widget saves the conversation session in a cookie (<code>wildcare_session_id</code>).
+         Users returning to your site will see their previous conversation.</p>
+
+      <h3>Mobile Experience</h3>
+      <p>On screens narrower than 768px, the chat pane expands to full screen for easier use on phones.</p>
+
+      <h3>Feedback Collection</h3>
+      <p>Each assistant response shows thumbs up/down buttons. This feedback helps improve the AI responses.
+         Feedback from the embedded widget is tagged as coming from public users (not testers).</p>
+
+      <div class="warning">
+        <strong>Note:</strong> The widget requires a connection to <code>wildcare.bluesnoop.com</code>.
+        It won't work offline or if your Content Security Policy blocks external scripts.
+      </div>
+    </section>
+
+    <!-- Full Example -->
+    <section>
+      <h2>Complete Example</h2>
+      <pre>&lt;!DOCTYPE html&gt;
+&lt;html&gt;
+&lt;head&gt;
+  &lt;title&gt;My Wildlife Page&lt;/title&gt;
+&lt;/head&gt;
+&lt;body&gt;
+  &lt;h1&gt;Welcome to Our Wildlife Center&lt;/h1&gt;
+  &lt;p&gt;Found an injured animal? Click the chat button for help.&lt;/p&gt;
+
+  <span class="comment">&lt;!-- WildCare Chat Widget --&gt;</span>
+  &lt;script&gt;
+    window.WildCareChat = {
+      autoOpen: false,
+      agentName: 'Wildlife Help',
+      buttonLabel: 'Get Help',
+      welcomeMessage: 'Hi! Describe the animal you found and I will help you.',
+      theme: {
+        primaryColor: '#2e7d32',
+        secondaryColor: '#1b5e20',
+      }
+    };
+  &lt;/script&gt;
+  &lt;script src="https://wildcare.bluesnoop.com/widget.js"&gt;&lt;/script&gt;
+&lt;/body&gt;
+&lt;/html&gt;</pre>
+    </section>
+
+
+  </main>
+
+  <!-- Widget embed for this demo page -->
+  <script>
+    window.WildCareChat = {
+      autoOpen: false,
+      agentName: 'Wildlife Rescue Assistant',
+      buttonLabel: 'Chat',
+      welcomeMessage: "Hello! I'm here to help you with injured or abandoned wildlife in the San Francisco Bay Area.",
+    };
+    // Demo: pick the tenant via ?tenant=<slug> on this page's URL so the
+    // widget knows which tenant's bot to talk to. In a real deployment the
+    // embedder writes data-tenant directly on the <script> tag.
+    (function() {
+      const params = new URLSearchParams(window.location.search);
+      const tenant = params.get('tenant');
+      if (!tenant) return;
+      const s = document.createElement('script');
+      s.src = '/widget.js';
+      s.setAttribute('data-tenant', tenant);
+      document.body.appendChild(s);
+    })();
+  </script>
+  <!-- Fallback (no ?tenant=): platform-only widget, will hit /api/config without
+       a tenant slug and render the platform widget if available. Most demo
+       visits will use ?tenant=... and load the script via the IIFE above. -->
+  <script>
+    if (!new URLSearchParams(window.location.search).get('tenant')) {
+      const s = document.createElement('script');
+      s.src = '/widget.js';
+      document.body.appendChild(s);
+    }
+  </script>
+</body>
+</html>

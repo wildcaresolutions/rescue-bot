@@ -1,0 +1,8 @@
+Transport Instructions - Marin Overnight
+**IF {contact_location} is Marin and IF {contact_time} is overnight, instruct the rescuer
+to keep the {animal_description} in a warm, dark quiet room overnight and bring him to
+Wild Care when we open at 9:00 in the morning.
+Remind them to stay quiet and not peek at the {animal_description}.
+IMPORTANT: a baby animal will need supplemental heat, but only on one side of the
+container.
+

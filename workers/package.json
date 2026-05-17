@@ -1,0 +1,28 @@
+{
+  "name": "rescue-bot-workers",
+  "type": "module",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "types": "wrangler types",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@ai-sdk/anthropic": "3.0.71",
+    "@ai-sdk/openai": "3.0.58",
+    "ai": "6.0.168",
+    "hono": "4.12.14",
+    "zod": "^4.4.1"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-pool-workers": "0.14.7",
+    "@cloudflare/workers-types": "4.20260418.1",
+    "@types/node": "25.6.0",
+    "pg": "^8.20.0",
+    "typescript": "6.0.3",
+    "vitest": "4.1.4",
+    "wrangler": "4.83.0"
+  }
+}

@@ -1,0 +1,9 @@
+Transport Instructions - SFBay During Hours
+**IF {contact_location} is SFBay and IF {contact_time} is during hours, instruct the
+rescuer to use Animal Help Nowhttps://ahnow.org/to find their closest wildlife care
+center.
+Suggest they call Wild Cares Hotline at 415-456-7283 for assistance and advice.
+Remind them to stay quiet and not disturb or peek at the {animal_description}.
+IMPORTANT: A baby animal will need supplemental heat, but only on one side of the
+container.
+

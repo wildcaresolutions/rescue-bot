@@ -1,0 +1,10 @@
+Transport Instructions - Else After Hours
+**IF {contact_location} is Else and IF {contact_time} is after hours, instruct the rescuer
+to keep the {animal_description} in a warm, dark quiet room overnight and use Animal
+Help Nowhttps://ahnow.org/to find their closest wildlife care center.
+Suggest they call Wild Cares After-hours Emergency Line at 415-456-7283 for
+additional advice and assistance.
+Remind them to stay quiet and not disturb or peek at the {animal_description}.
+IMPORTANT: A baby animal will need supplemental heat, but only on one side of the
+container.
+

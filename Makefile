@@ -241,7 +241,7 @@ cf-setup: cf-render-config
 	@echo "Bundling species guides into Worker..."
 	@node workers/scripts/gen-guides.js
 	@echo "Applying D1 migrations to local database (state: workers/$(STATE_DIR))..."
-	@cd workers && npx wrangler d1 migrations apply wildcare-db --local --persist-to $(STATE_DIR)
+	@cd workers && npx wrangler d1 migrations apply wildcare-db-dev --local --persist-to $(STATE_DIR)
 	@echo ""
 	@echo "✓ Setup complete. Start dev server with: make cf-dev"
 
@@ -257,7 +257,7 @@ dev: cf-render-config
 	@node workers/scripts/gen-instructions.js
 	@node workers/scripts/gen-guides.js
 	@echo "Applying D1 migrations (state: workers/$(STATE_DIR))..."
-	@cd workers && npx wrangler d1 migrations apply wildcare-db --local --persist-to $(STATE_DIR)
+	@cd workers && npx wrangler d1 migrations apply wildcare-db-dev --local --persist-to $(STATE_DIR)
 	@echo "Building web frontend..."
 	@cd web && npm run build
 	@PORT=$$(node -e 'const s=require("net").createServer();s.listen(0,()=>{const p=s.address().port;s.close(()=>console.log(p))})'); \
@@ -313,7 +313,7 @@ cf-dev: cf-render-config
 	@# aborted-mid-startup leaves an empty state dir that the dir-check then
 	@# falsely reports as "migrated."
 	@echo "Applying D1 migrations (idempotent; state: workers/$(STATE_DIR))..."
-	@cd workers && npx wrangler d1 migrations apply wildcare-db --local --persist-to $(STATE_DIR)
+	@cd workers && npx wrangler d1 migrations apply wildcare-db-dev --local --persist-to $(STATE_DIR)
 	@echo "Bundling agent instruction..."
 	@node workers/scripts/gen-instructions.js
 	@echo "Bundling species guides..."

@@ -486,15 +486,17 @@ auth.post('/api/auth/users', async (c) => {
       tenantSlug: tenant.slug,
       host,
     })
+    const platformName = getPlatformName(c.env)
+    const roleLabel = role === 'admin' ? 'an admin' : 'a viewer'
     c.executionCtx.waitUntil(
       sendEmail(c.env, {
-        from: { name: tenant.name, email: fromEmail },
+        from: { name: `${tenant.name} via ${platformName}`, email: fromEmail },
         to: email,
-        subject: `You've been invited to ${tenant.name}`,
+        subject: `${platformName}: your invite to ${tenant.name}'s rescue bot`,
         html: `
           <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
-            <h2 style="color: #333; margin-bottom: 8px;">You're invited to ${tenant.name}</h2>
-            <p style="color: #666; margin-bottom: 24px;">You've been added as ${role === 'admin' ? 'an admin' : 'a viewer'} for the ${tenant.name} rescue bot. Click below to sign in — this link expires in ${TOKEN_EXPIRY_MINUTES} minutes.</p>
+            <h2 style="color: #333; margin-bottom: 8px;">Sign in to ${tenant.name} on ${platformName}</h2>
+            <p style="color: #666; margin-bottom: 24px;">You've been added as ${roleLabel} of ${tenant.name}'s rescue bot on the ${platformName} platform. Click below to sign in — this link expires in ${TOKEN_EXPIRY_MINUTES} minutes.</p>
             <a href="${loginUrl}" style="display: inline-block; background: #6B7F5E; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Sign In</a>
             <p style="color: #999; font-size: 13px; margin-top: 32px;">If the link expires, just visit <a href="https://${host}/" style="color:#6B7F5E">the portal</a> and request a new sign-in link with this email.</p>
           </div>

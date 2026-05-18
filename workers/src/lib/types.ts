@@ -41,6 +41,11 @@ export interface Env {
   // Hostname for the chat-widget embed script. Used by the copilot's
   // get_embed_code tool. Per audit ralph-1 M11.
   PLATFORM_EMBED_HOST?: string
+  // FROM address for transactional auth mail (magic-link sign-in, invites).
+  // Distinct from REPORT_FROM_EMAIL (daily-report sender) so the daily-report
+  // address (e.g. reports@<domain>) doesn't end up on user-facing sign-in
+  // emails. Empty → falls back to noreply@<REPORT_FROM_EMAIL domain>.
+  PLATFORM_FROM_EMAIL?: string
   // When "true", server-side auth gate + Turnstile checks short-circuit.
   // Set in [vars] of the default (local dev) wrangler config.
   DEV_AUTH_BYPASS?: string

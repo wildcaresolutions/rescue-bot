@@ -72,6 +72,28 @@ export function getEmbedHost(env: Env): string | null {
 }
 
 /**
+ * FROM address for transactional auth mail (magic-link sign-in, invitee
+ * welcome). Distinct from REPORT_FROM_EMAIL because the daily-report sender
+ * is often a role address (reports@<domain>) that looks wrong as the sender
+ * of a sign-in invite.
+ *
+ * Resolution order:
+ *   1. PLATFORM_FROM_EMAIL (operator override)
+ *   2. noreply@<REPORT_FROM_EMAIL domain> (derived — works for any deployment
+ *      that has the report sender configured, no extra secret needed)
+ *   3. noreply@example.com (last-resort fallback for un-configured forks)
+ */
+export function getAuthFromEmail(env: Env): string {
+  const raw = env.PLATFORM_FROM_EMAIL?.trim()
+  if (raw) return raw
+  const report = env.REPORT_FROM_EMAIL?.trim()
+  if (report && report.includes('@')) {
+    return `noreply@${report.split('@')[1]}`
+  }
+  return 'noreply@example.com'
+}
+
+/**
  * User-Agent string for outbound HTTP from the platform — onboarding harvest,
  * brand-color extraction, and (TODO) any other server-initiated fetches.
  * Stable across the codebase so site operators can recognize traffic in

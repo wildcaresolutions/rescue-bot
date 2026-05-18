@@ -12,7 +12,7 @@ import {
   type Role,
 } from '../lib/auth'
 import { sendEmail } from '../lib/email'
-import { getPlatformName } from '../lib/platform'
+import { getAuthFromEmail, getPlatformName } from '../lib/platform'
 import { verifyTurnstile } from '../lib/turnstile'
 
 const TOKEN_EXPIRY_MINUTES = 15
@@ -185,7 +185,7 @@ auth.post('/api/auth/request', async (c) => {
     ).bind(email).run().catch(() => {}),
   )
 
-  const fromEmail = c.env.REPORT_FROM_EMAIL || 'noreply@wildcaresolutions.org'
+  const fromEmail = getAuthFromEmail(c.env)
   const subject = `Sign in to ${tenantName}`
   const emailHtml = `
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
@@ -475,7 +475,7 @@ auth.post('/api/auth/users', async (c) => {
       'INSERT INTO tenant_users (id, tenant_id, email, role) VALUES (?, ?, ?, ?)',
     ).bind(crypto.randomUUID(), tenant.id, email, role).run()
 
-    const fromEmail = c.env.REPORT_FROM_EMAIL || 'noreply@wildcaresolutions.org'
+    const fromEmail = getAuthFromEmail(c.env)
     const host = c.req.header('Host') ?? 'localhost:8787'
     // Bake a real magic link into the invite so the first click signs them in.
     // Otherwise the invitee lands on the login page and has to request their

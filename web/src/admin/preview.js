@@ -160,6 +160,13 @@ export function renderPreviewView() {
     paneBottom: pp.bottom || '', paneTop: pp.top || '', paneLeft: pp.left || '', paneRight: pp.right || '',
     embedCms: typeof eo.cms === 'string' ? eo.cms : legacyCms,
     embedCustomWrapper: typeof eo.customWrapper === 'string' ? eo.customWrapper : '',
+    // Experimental feature flag. Initialized to false; the real value lands
+    // a moment later via fetch('/admin/feature-flags') and updates both
+    // editorState + savedState together (see further down). Treating it
+    // as part of editorState means toggling the checkbox routes through
+    // the same draft/publish/discard flow as every other setting on this
+    // tab — flipping it shows the Publish bar instead of saving silently.
+    photoUploadsEnabled: false,
   }
   let savedState = { ...editorState }
   let activeTab = 'appearance'
@@ -634,13 +641,15 @@ export function renderPreviewView() {
   wirePos('edPaneBottom', 'paneBottom'); wirePos('edPaneTop', 'paneTop')
   wirePos('edPaneLeft', 'paneLeft');     wirePos('edPaneRight', 'paneRight')
 
-  // Experimental: photo upload toggle. Saves immediately on change (no draft
-  // state) — this is a feature flag, not a widget appearance setting. Default
-  // off for everybody until the operator flips it here. When on, citizens
-  // see the paperclip icon in the widget composer.
+  // Experimental: photo upload toggle. Goes through the same draft/publish/
+  // discard flow as widget theme — checking the box doesn't save until the
+  // operator clicks Publish. Pre-2026-05-18 this saved immediately on every
+  // toggle, which (a) didn't show the Publish bar so it felt like nothing
+  // happened, and (b) couldn't be discarded mid-thought. The publish handler
+  // below detects the editorState/savedState diff and POSTs to
+  // /admin/feature-flags as part of the same Publish action.
   ;(async () => {
     const cb = document.getElementById('edPhotoUploads')
-    const status = document.getElementById('edPhotoUploadsStatus')
     if (!cb) return
     try {
       const r = await fetch('/admin/feature-flags', {
@@ -648,47 +657,20 @@ export function renderPreviewView() {
       })
       if (r.ok) {
         const data = await r.json()
-        cb.checked = Boolean(data?.feature_flags?.photo_uploads_enabled)
+        const enabled = Boolean(data?.feature_flags?.photo_uploads_enabled)
+        // Land in BOTH editorState and savedState so the published-state
+        // baseline is correct — without this, an unmodified page would
+        // show as having "unsaved changes" (false dirty).
+        editorState.photoUploadsEnabled = enabled
+        savedState.photoUploadsEnabled = enabled
+        cb.checked = enabled
       }
     } catch (e) {
       console.warn('[preview] feature-flags fetch failed:', e)
     }
-    cb.addEventListener('change', async () => {
-      if (status) status.textContent = 'Saving…'
-      try {
-        const r = await fetch('/admin/feature-flags', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-Tenant-Slug': getTenantSlug() ?? '',
-          },
-          body: JSON.stringify({ photo_uploads_enabled: cb.checked }),
-        })
-        if (!r.ok) throw new Error(`${r.status}`)
-        if (status) {
-          status.textContent = cb.checked ? 'On' : 'Off'
-          status.style.color = cb.checked ? 'var(--color-canopy)' : 'var(--color-storm)'
-        }
-        // Tell the iframe widget to re-check photo upload state without
-        // reloading the iframe. A full reload would close the chat panel
-        // AND revert any unpublished editor state (sliders, colors, etc.)
-        // back to the published values, which is jarring for the admin
-        // mid-edit. Instead, postMessage a simple "re-check feature flag"
-        // signal; the widget refetches its session token and updates the
-        // paperclip visibility in place.
-        const iframe = document.getElementById('previewFrame')
-        iframe?.contentWindow?.postMessage(
-          { type: 'wildcare-preview-config', refetchPhotoFlag: true },
-          '*',
-        )
-      } catch (e) {
-        console.error('[preview] feature-flags save failed:', e)
-        cb.checked = !cb.checked // revert
-        if (status) {
-          status.textContent = 'Failed'
-          status.style.color = 'var(--color-urgent-red)'
-        }
-      }
+    cb.addEventListener('change', () => {
+      editorState.photoUploadsEnabled = cb.checked
+      renderPublishBar()
     })
   })()
 
@@ -778,6 +760,32 @@ export function renderPreviewView() {
           widget_published: true,
         }),
       })
+      // If the experimental photo-upload flag changed in this draft, persist
+      // it alongside the theme publish. It uses a different endpoint
+      // (/admin/feature-flags) because feature flags live in their own
+      // tenants column, but operators experience it as a single Publish.
+      if (res.ok && editorState.photoUploadsEnabled !== savedState.photoUploadsEnabled) {
+        try {
+          await fetch('/admin/feature-flags', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Tenant-Slug': getTenantSlug() ?? '',
+            },
+            body: JSON.stringify({ photo_uploads_enabled: editorState.photoUploadsEnabled }),
+          })
+          // Nudge the iframe widget to refetch its session token so the
+          // paperclip composer affordance shows/hides in place (no full
+          // iframe reload, which would close the chat panel).
+          const iframe = document.getElementById('previewFrame')
+          iframe?.contentWindow?.postMessage(
+            { type: 'wildcare-preview-config', refetchPhotoFlag: true },
+            '*',
+          )
+        } catch (e) {
+          console.error('[publish] feature-flag save failed:', e)
+        }
+      }
       if (res.ok) {
         const wasFirstPublish = !getTenantConfig()?.onboarded
         savedState = { ...editorState }
@@ -868,6 +876,8 @@ export function renderPreviewView() {
     const ht = document.getElementById('edHeaderText'); if (ht) ht.value = editorState.headerText || ''
     document.getElementById('edAutoOpen').checked = editorState.autoOpen
     document.getElementById('edCustomCSS').value = editorState.customCSS
+    const photoCb = document.getElementById('edPhotoUploads')
+    if (photoCb) photoCb.checked = editorState.photoUploadsEnabled
     document.getElementById('edDiscard').textContent = 'Discard'
     sendPreviewUpdate()
   })

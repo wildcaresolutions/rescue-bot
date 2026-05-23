@@ -5,7 +5,7 @@ import {
 } from './lib/auth'
 import { generateReport } from './lib/report'
 import { loadTenantBySlug } from './lib/tenant-loader'
-import { extractSlug, isAdminHost } from './lib/routing'
+import { extractSlug, isAdminHost, hostFirstLabel } from './lib/routing'
 import { getEmbedHost, getPlatformName } from './lib/platform'
 import chat from './routes/chat'
 import admin from './routes/admin'
@@ -638,7 +638,25 @@ export default {
     const rewrittenUrl = new URL(url)
     const devBypass = isDevAuthBypass(env)
 
-    if (isAdminHost(host)) {
+    if (hostFirstLabel(host) === 'smoke') {
+      // Smoke test page — highest priority, before tenant/slug routing so a
+      // ?tenant= query param doesn't accidentally route to login.html.
+      // Serves the embed widget at a stable non-localhost origin so CI can
+      // test CORS with a real allowed_domains DB lookup.
+      // smoke.wildcaresolutions.org must be seeded in allowed_domains for the
+      // tenant under test (idempotent INSERT OR IGNORE in the `smoke` CI job).
+      const embedHost = getEmbedHost(env)
+      const scriptSrc = embedHost ? `https://${embedHost}/v1.js` : '/widget.js'
+      const tenantSlug = url.searchParams.get('tenant') ?? 'wildcare'
+      return new Response(
+        `<!doctype html><html lang="en"><head><meta charset="utf-8">` +
+        `<title>smoke</title></head><body>` +
+        `<script src="${scriptSrc}" data-tenant="${tenantSlug}"></script>` +
+        `</body></html>`,
+        { headers: { 'Content-Type': 'text/html; charset=utf-8' } },
+      )
+
+    } else if (isAdminHost(host)) {
       // Platform admin host. Cookie is wc_platform_*.
       const session = devBypass ? null
         : await resolveSession(request, PLATFORM_COOKIE_PREFIX, env)

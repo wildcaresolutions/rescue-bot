@@ -10,7 +10,7 @@
 export const RESERVED_HOST_SLUGS = new Set([
   'admin', 'api', 'platform', 'www', 'app', 'mail', 'ftp',
   'cdn', 'static', 'assets', 'embed', 'health', 'status',
-  'default', 'rescue', 'test', 'staging', 'dev',
+  'default', 'rescue', 'test', 'staging', 'dev', 'smoke',
 ])
 
 /** First label of the host (e.g. "admin" from "admin.wildcaresolutions.org"). */

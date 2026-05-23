@@ -208,6 +208,23 @@ jobs:
           node-version: '20'
           cache: 'npm'
       - run: npm ci
+      - name: Render wrangler.toml (required before wrangler d1 execute)
+        # The committed wrangler.toml is the stub form. gen-wrangler.js renders
+        # it with real values from CI secrets so wrangler can resolve 'wildcare-db'
+        # to its production database ID. Same step deploy-prod does via cf-render-config.
+        run: node workers/scripts/gen-wrangler.js
+        env:
+          ACCOUNT_ID: ${{ secrets.ACCOUNT_ID }}
+          ORG_SLUG: ${{ secrets.ORG_SLUG }}
+          ORG_DOMAIN: ${{ secrets.ORG_DOMAIN }}
+          AI_GATEWAY_ACCOUNT_ID: ${{ secrets.AI_GATEWAY_ACCOUNT_ID }}
+          AI_GATEWAY_ID: ${{ secrets.AI_GATEWAY_ID }}
+          DEV_D1_DATABASE_ID: ${{ secrets.DEV_D1_DATABASE_ID }}
+          TEST_D1_DATABASE_ID: ${{ secrets.TEST_D1_DATABASE_ID }}
+          PROD_D1_DATABASE_ID: ${{ secrets.PROD_D1_DATABASE_ID }}
+          PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
+          PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
+          PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
       - name: Seed smoke.wildcaresolutions.org into allowed_domains
         # Idempotent INSERT OR IGNORE — safe to run on every push. Ensures the
         # smoke subdomain is always allowed before the CORS tests run, without

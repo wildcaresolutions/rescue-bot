@@ -132,52 +132,53 @@ test.describe('Production smoke tests', () => {
   // origin exactly. This proves isOriginAllowed() ran a real DB lookup against
   // allowed_domains and found the domain — the identical code path Jean's
   // browser exercises from discoverwildcare.org. Not localhost. Not a stub.
+  //
+  // Uses page.waitForResponse() instead of waitForSelector so we don't depend
+  // on the widget button being visible (Cloudflare challenge pages in CI can
+  // briefly hide elements while the challenge resolves). The widget makes its
+  // /api/config call automatically on load regardless of button visibility.
+  // page.waitForResponse() reads raw response headers before CORS filtering.
   test('CORS: real non-localhost origin gets correct Access-Control-Allow-Origin', async ({ page }) => {
-    let capturedAcao: string | null = null
-
-    await page.route(`${TENANT_BASE}/api/config`, async (route) => {
-      const response = await route.fetch()
-      capturedAcao = response.headers()['access-control-allow-origin'] ?? null
-      await route.fulfill({ response })
-    })
-
-    await page.goto(SMOKE_PAGE)
-    await page.waitForSelector('#rbot-widget-button', { timeout: 15_000 })
-
-    expect(capturedAcao).toBe(SMOKE_ORIGIN)
+    // Arm the response waiter BEFORE navigating so we don't miss the request.
+    const configResponse = page.waitForResponse(
+      r => r.url().includes('/api/config') && r.request().method() === 'GET',
+      { timeout: 20_000 },
+    )
+    await page.goto(SMOKE_PAGE, { waitUntil: 'commit', timeout: 30_000 })
+    const response = await configResponse
+    const acao = response.headers()['access-control-allow-origin'] ?? null
+    expect(acao).toBe(SMOKE_ORIGIN)
   })
 
-  // F. Session create: POST /api/sessions succeeds from a real allowed origin.
-  // Verifies the full chat API path is live end-to-end. Creates a stub session
-  // (no messages sent) that the daily retention sweep will clean up.
+  // F. Session create: POST /api/sessions succeeds from the smoke origin.
+  // Verifies the full chat API path is live. We POST directly via page.evaluate()
+  // from the smoke page — the browser automatically sends Origin: smoke.* and
+  // the CORS check fires against the real allowed_domains DB. If the origin
+  // isn't allowed, fetch() throws (CORS error) and status is -1. status 200
+  // implies both the API is live AND CORS allowed the request.
+  //
+  // This avoids the button-click approach (which had a race: waitForFunction
+  // checking `pane !== null` resolved immediately since the pane is always in
+  // the DOM, causing the page to close while the route callback was in flight).
   test('POST /api/sessions: chat API live from real allowed origin', async ({ page }) => {
-    let capturedStatus: number | null = null
-    let capturedId: string | null = null
+    await page.goto(SMOKE_PAGE, { waitUntil: 'networkidle', timeout: 30_000 })
 
-    await page.route(`${TENANT_BASE}/api/sessions`, async (route) => {
-      if (route.request().method() === 'POST') {
-        const response = await route.fetch()
-        capturedStatus = response.status()
-        try {
-          const body = await response.json() as { id?: string }
-          capturedId = body.id ?? null
-        } catch { /* ignore parse errors */ }
-        await route.fulfill({ response })
-      } else {
-        await route.continue()
+    const result = await page.evaluate(async ([sessUrl, tenantSlug]: [string, string]) => {
+      try {
+        const res = await fetch(sessUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Tenant-Slug': tenantSlug },
+          body: '{}',
+        })
+        const body = await res.json() as { id?: string }
+        return { status: res.status, id: body.id ?? null }
+      } catch (e) {
+        return { status: -1, id: null, error: String(e) }
       }
-    })
+    }, [TENANT_BASE + '/api/sessions', SMOKE_TENANT] as [string, string])
 
-    await page.goto(SMOKE_PAGE)
-    await page.waitForSelector('#rbot-widget-button', { timeout: 15_000 })
-    await page.click('#rbot-widget-button')
-    await page.waitForFunction(
-      () => document.querySelector('.rbot-widget-pane') !== null,
-      { timeout: 10_000 },
-    )
-
-    expect(capturedStatus).toBe(200)
-    expect(typeof capturedId).toBe('string')
+    expect(result.status).toBe(200)
+    expect(typeof result.id).toBe('string')
   })
 
 })

@@ -247,6 +247,16 @@ jobs:
         run: npx playwright install --with-deps chromium
       - name: Run smoke tests
         run: npm run e2e:smoke
+      - name: Rollback production on smoke failure
+        if: failure()
+        # Smoke tests failed after a successful deploy — roll back to the
+        # previous Worker version automatically. wrangler.toml is already
+        # rendered by the earlier step so wrangler can resolve the env.
+        run: |
+          echo "Smoke tests failed — rolling back production Worker to previous version"
+          cd workers && npx wrangler rollback --env production --message "auto-rollback: smoke tests failed on ${{ github.sha }}"
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
 
   deploy-watchdog:
     name: Deploy → watchdog (independent /health prober)

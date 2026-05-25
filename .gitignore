@@ -155,6 +155,9 @@ workers/scripts/migrate-data.sql
 org.env
 .gstack/
 
+# Compiled CLI binary (built from scripts/rescue-cli.js via esbuild/pkg or similar)
+bin/
+
 # Playwright runtime artifacts
 .playwright-cli/
 workers/.playwright-cli/

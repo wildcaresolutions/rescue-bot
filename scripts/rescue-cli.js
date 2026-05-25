@@ -175,7 +175,7 @@ async function cmdLogin(args, { baseUrl, tenant }) {
     const u = new URL(data.dev_login_url)
     const magicToken = u.searchParams.get('token')
     if (magicToken) {
-      process.stderr.write('[dev] auto-verifying magic token...\n')
+      process.stderr.write(`[dev] auto-verifying magic token...\n`)
       const sessionToken = await verifyMagicToken(baseUrl, magicToken, tenant)
       if (sessionToken) {
         saveToken(sessionToken)
@@ -184,7 +184,7 @@ async function cmdLogin(args, { baseUrl, tenant }) {
     }
   } else {
     process.stderr.write(`Magic link sent to ${email}. Run: rescue-cli login verify <token-from-url>\n`)
-    process.stderr.write('(The token is the value of the ?token= query param in the link)\n')
+    process.stderr.write(`(The token is the value of the ?token= query param in the link)\n`)
   }
 }
 
@@ -319,20 +319,20 @@ async function main() {
 
   try {
     switch (cmd) {
-    case 'login':         return await cmdLogin(args, ctx)
-    case 'health':        return await cmdHealth(args, ctx)
-    case 'config':        return await cmdConfig(args, ctx)
-    case 'dashboard':     return await cmdDashboard(args, ctx)
-    case 'sessions':      return await cmdSessions(args, ctx)
-    case 'session':       return await cmdSession(args, ctx)
-    case 'stats':         return await cmdStats(args, ctx)
-    case 'domains':       return await cmdDomains(args, ctx)
-    case 'evals':         return await cmdEvals(args, ctx)
-    case 'bot-status':    return await cmdBotStatus(args, ctx)
-    case 'knowledge-base': return await cmdKnowledgeBase(args, ctx)
-    case 'photo-feed':    return await cmdPhotoFeed(args, ctx)
-    default:
-      die(`Unknown command: ${cmd}\nRun rescue-cli --help for usage.`)
+      case 'login':         return await cmdLogin(args, ctx)
+      case 'health':        return await cmdHealth(args, ctx)
+      case 'config':        return await cmdConfig(args, ctx)
+      case 'dashboard':     return await cmdDashboard(args, ctx)
+      case 'sessions':      return await cmdSessions(args, ctx)
+      case 'session':       return await cmdSession(args, ctx)
+      case 'stats':         return await cmdStats(args, ctx)
+      case 'domains':       return await cmdDomains(args, ctx)
+      case 'evals':         return await cmdEvals(args, ctx)
+      case 'bot-status':    return await cmdBotStatus(args, ctx)
+      case 'knowledge-base': return await cmdKnowledgeBase(args, ctx)
+      case 'photo-feed':    return await cmdPhotoFeed(args, ctx)
+      default:
+        die(`Unknown command: ${cmd}\nRun rescue-cli --help for usage.`)
     }
   } catch (e) {
     if (e.status === 401) {

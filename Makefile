@@ -190,6 +190,7 @@ cf-init-config:
 # Required before any wrangler invocation. Errors loudly if any variable is missing.
 cf-render-config:
 	@node workers/scripts/gen-wrangler.js
+	@git update-index --skip-worktree workers/wrangler.toml 2>/dev/null || true
 
 # Migration-filename lint: refuses duplicate numeric prefixes
 # (audit P0-B / #33). Runs in CI and as part of `make check`. Repo state

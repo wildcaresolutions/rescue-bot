@@ -10,7 +10,7 @@
     "test": "vitest run"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "3.0.71",
+    "@ai-sdk/anthropic": "3.0.79",
     "@ai-sdk/openai": "3.0.58",
     "ai": "6.0.168",
     "hono": "4.12.18",

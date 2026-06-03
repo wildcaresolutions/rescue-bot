@@ -34,12 +34,15 @@ import { createServer, type Server } from 'http'
 const WIDGET_SRC = process.env.WIDGET_SRC ?? 'https://embed.wildcaresolutions.org/v1.js'
 const WIDGET_TENANT = process.env.WIDGET_TENANT ?? 'wildcare'
 
-function htmlFor(opts: { bodyClass?: string } = {}): string {
+function htmlFor(opts: { bodyClass?: string; preDeclareGlobals?: string } = {}): string {
   const bodyClass = opts.bodyClass ? ` class="${opts.bodyClass}"` : ''
+  const preScript = opts.preDeclareGlobals
+    ? `<script>${opts.preDeclareGlobals}</script>\n`
+    : ''
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><title>partner</title></head>
 <body${bodyClass}><h1>Partner page</h1>
-<script src="${WIDGET_SRC}" data-tenant="${WIDGET_TENANT}"></script>
+${preScript}<script src="${WIDGET_SRC}" data-tenant="${WIDGET_TENANT}"></script>
 </body></html>`
 }
 
@@ -53,8 +56,9 @@ test.beforeAll(async () => {
   server = createServer((req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost')
     const bodyClass = url.searchParams.get('bodyClass') ?? ''
+    const preDeclareGlobals = url.searchParams.get('preDeclareGlobals') ?? undefined
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' })
-    res.end(htmlFor({ bodyClass }))
+    res.end(htmlFor({ bodyClass, preDeclareGlobals }))
   })
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
   const addr = server.address()
@@ -105,6 +109,26 @@ test.describe('Widget embed — cross-origin (live)', () => {
     await page.goto(`${baseUrl}/?bodyClass=${encodeURIComponent('home wp-singular et_divi_theme et-db')}&et_fb=1`)
     await page.waitForTimeout(3000)
     expect(await launcherVisible(page)).toBe(false)
+  })
+
+  test('loads without SyntaxError when host page pre-declares const $', async ({ page }) => {
+    // Regression for 2026-06-02: Vite's minifier picked $ as the compressed
+    // name for the photoCap variable. Without an IIFE wrapper, var $ leaked
+    // into the page's global lexical scope and clashed with const $ = jQuery
+    // (a common WordPress/jQuery inline snippet), throwing SyntaxError:
+    // Identifier '$' has already been declared. Fix: format:'iife' in
+    // vite.config.js scopes all bundle vars inside the IIFE.
+    const errors: string[] = []
+    page.on('console', (msg) => {
+      if (msg.type() === 'error') errors.push(msg.text())
+    })
+    // Simulate a jQuery site that declares const $ before our widget loads
+    const pre = encodeURIComponent('const $ = function(){return document.querySelector(arguments[0])};')
+    await page.goto(`${baseUrl}/?preDeclareGlobals=${pre}`)
+    await page.waitForSelector('#rbot-widget-button', { timeout: 15_000 })
+    expect(await launcherVisible(page)).toBe(true)
+    const syntaxErrors = errors.filter((e) => e.includes('SyntaxError') || e.includes('already been declared'))
+    expect(syntaxErrors, `unexpected SyntaxErrors: ${JSON.stringify(syntaxErrors)}`).toEqual([])
   })
 
   test('clicking launcher opens the chat pane with no console errors', async ({ page }) => {

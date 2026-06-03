@@ -1007,7 +1007,6 @@ async function handleSendMessage() {
 
   const userMessageId = `msg-${currentSessionId}-${messageIdCounter++}`
   addMessage('user', message, userMessageId)
-  saveMessageMetadata(currentSessionId, userMessageId, 'user', message, Date.now())
 
   const typingEl = addTypingIndicator()
 
@@ -1033,8 +1032,6 @@ async function handleSendMessage() {
       fullContent = 'The assistant is temporarily unavailable. Please try again soon.'
       updateMessage(assistantEl, fullContent)
     }
-
-    saveMessageMetadata(currentSessionId, assistantMessageId, 'assistant', fullContent, Date.now())
 
     if (assistantEl) {
       addThumbRating(assistantEl, assistantMessageId, fullContent)
@@ -1148,24 +1145,6 @@ function addThumbRating(messageEl, messageId, messageContent) {
       saved.style.display = 'inline'
     })
   })
-}
-
-function saveMessageMetadata(sessionId, messageId, role, content, timestamp, timing = null) {
-  try {
-    fetch(`${API_BASE}/messages`, {
-      method: 'POST',
-      headers: _tenantHeaders({ 'Content-Type': 'application/json' }),
-      body: JSON.stringify({
-        sessionId,
-        messageId,
-        role,
-        content,
-        timestamp,
-        testerName: null,
-        timing,
-      }),
-    }).catch((e) => { console.error('Failed to save message metadata:', e) })
-  } catch (e) { console.error('Failed to save message metadata:', e) }
 }
 
 function saveFeedback(sessionId, messageId, rating, feedback, tags, messageContent = '') {

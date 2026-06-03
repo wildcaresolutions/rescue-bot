@@ -69,14 +69,19 @@ function saveMessageMetadata(sessionId, messageId, role, content, timestamp, tim
     metadata.timing = timing
   }
 
-  // Save to localStorage
+  // Save to localStorage (used by eval/export UI)
   saveMessageMetadataItem(metadata)
 
-  // Send to backend
-  sendToBackend({
-    type: 'message',
-    ...metadata,
-  })
+  // Only send user/assistant messages to the backend for system-level entries.
+  // The chat Worker already writes user + assistant rows to D1 during the
+  // streaming flow — sending them again from the client would create a second
+  // row per message (different message_id, so ON CONFLICT never fires).
+  if (role !== 'user' && role !== 'assistant') {
+    sendToBackend({
+      type: 'message',
+      ...metadata,
+    })
+  }
 }
 
 // ---- UI helper functions ----

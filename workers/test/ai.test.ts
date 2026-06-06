@@ -44,7 +44,8 @@ describe('ai provider config', () => {
   it('defaults to the selected main and photo models', () => {
     expect(getMainChatModelName(env())).toBe(DEFAULT_MAIN_CHAT_MODEL)
     expect(getPhotoRecognizerModelName(env())).toBe(DEFAULT_PHOTO_RECOGNIZER_MODEL)
-    expect(DEFAULT_MAIN_CHAT_MODEL).toMatch(/^workers-ai\//)
+    // Default must NOT be a workers-ai model (those are for evals only)
+    expect(DEFAULT_MAIN_CHAT_MODEL).not.toMatch(/^workers-ai\//)
     expect(DEFAULT_PHOTO_RECOGNIZER_MODEL).toMatch(/^openai\//)
   })
 

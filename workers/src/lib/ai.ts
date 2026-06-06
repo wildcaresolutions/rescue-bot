@@ -230,26 +230,14 @@ export async function runGatewayChatText(opts: {
   maxOutputTokens?: number
 }): Promise<{ text: string; usage: unknown; raw: unknown }> {
   let result: Record<string, any>
-  if (opts.model.startsWith('openai/') || opts.model.startsWith('anthropic/') || opts.model.startsWith('google/') || opts.model.startsWith('workers-ai/')) {
+  if (opts.model.startsWith('openai/') || opts.model.startsWith('anthropic/') || opts.model.startsWith('google/') || opts.model.startsWith('google-ai-studio/') || opts.model.startsWith('workers-ai/')) {
+    // google-ai-studio/ intentionally routes through /compat (Unified Billing), NOT the
+    // native Google AI Studio endpoint. The native path requires a Google API key even
+    // when Unified Billing is enabled — /compat handles provider auth automatically.
     result = await runGatewayCompatRequest(opts.env, {
       model: opts.model,
       messages: openAiMessages(opts.system, opts.messages),
       ...(opts.maxOutputTokens ? { max_tokens: opts.maxOutputTokens } : {}),
-    })
-  } else if (opts.model.startsWith('google-ai-studio/')) {
-    const messages: GatewayMessage[] = [
-      ...(opts.system ? [{ role: 'system' as const, content: opts.system }] : []),
-      ...opts.messages,
-    ]
-    const model = googleStudioModelName(opts.model)
-    result = await runGatewayRequest(opts.env, {
-      provider: 'google-ai-studio',
-      endpoint: `v1beta/models/${model}:generateContent`,
-      headers: { 'Content-Type': 'application/json' },
-      query: {
-        ...googleContents(messages),
-        ...(opts.maxOutputTokens ? { generationConfig: { maxOutputTokens: opts.maxOutputTokens } } : {}),
-      },
     })
   } else {
     throw new Error(`Unsupported AI Gateway model prefix: ${opts.model}`)

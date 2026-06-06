@@ -421,6 +421,8 @@ cf-deploy: cf-migrate
 	@cd web && npm run build
 	@echo "Deploying to Cloudflare (production) [secrets: $(SECRETS_SRC)]..."
 	@$(SECRETS) sh -c 'cd workers && npx wrangler deploy --env production'
+	@echo "Deploying widget to R2 embed CDN..."
+	@$(SECRETS) node workers/scripts/deploy-embed.js
 	@echo "✓ Deployed (production)"
 
 # Deploy Worker + static assets to test (migrations applied first).

@@ -1039,7 +1039,7 @@ async function handleSendMessage() {
   } catch (error) {
     reportError(error, { function: 'handleSendMessage', widget: true })
     if (typingEl) typingEl.remove()
-    const phone = _runtimeConfig?.phone || widgetConfig.phone || null
+    const phone = _runtimeConfig?.phone || null
     const callLine = phone ? ` You can also call us directly at ${phone}.` : ''
     addSystemMessage(`We're having trouble connecting right now. Please try again in a moment.${callLine}`)
   } finally {

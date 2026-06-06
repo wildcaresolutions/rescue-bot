@@ -479,7 +479,7 @@ export async function handleSendMessage() {
   } catch (error) {
     console.error('Send message error:', error)
     if (typingEl) typingEl.remove()
-    showError('Failed to send message: ' + error.message)
+    showError('We\'re having trouble connecting right now. Please try again in a moment.')
   } finally {
     isStreaming = false
     chatInput.disabled = false

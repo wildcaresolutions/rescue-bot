@@ -11,6 +11,7 @@ import { validateUploadKind } from '../lib/file-type'
 import {
   getMainChatModelName,
   getPhotoRecognizerModelName,
+  openGatewayChatStream,
   runGatewayChatText,
   runGatewayImageObject,
 } from '../lib/ai'
@@ -258,44 +259,79 @@ async function runMainChat(
 
   const messageWithTime = `[Current time: ${pacificNowString()}]\n\n${opts.modelUserMessage ?? opts.visibleUserMessage}`
   const modelName = getMainChatModelName(c.env)
-  let result: { text: string; usage: unknown }
+
+  // Open the SSE stream against the gateway. If the upstream errors at this
+  // step (auth failure, model not found, etc.) we return a clean 502 BEFORE
+  // any response body has been sent to the client — the widget's catch path
+  // then shows the friendly "having trouble connecting" message.
+  let capturedUsage: unknown = null
+  let textStream: ReadableStream<string>
   try {
-    result = await runGatewayChatText({
+    textStream = await openGatewayChatStream({
       env: c.env,
       model: modelName,
       system: systemPrompt,
       messages: [...history, { role: 'user', content: messageWithTime }],
+      onUsage: (u: unknown) => { capturedUsage = u },
     })
   } catch (e) {
-    console.error('[chat] AI Gateway call failed:', e)
+    console.error('[chat] AI Gateway stream open failed:', e)
     return new Response('Assistant temporarily unavailable', { status: 502 })
   }
 
-  c.executionCtx.waitUntil(
-    Promise.resolve(result.text).then((text) => {
-      if (!text) return
-      const msgId = `msg-${crypto.randomUUID()}`
-      return c.env.DB.prepare(
-        `INSERT INTO messages (session_id, message_id, role, content, timestamp, message_type, tenant_id)
-         VALUES (?, ?, 'assistant', ?, ?, 'chat', ?) ON CONFLICT (message_id) DO NOTHING`,
-      ).bind(opts.sessionId, msgId, text.slice(0, MAX_CONTENT_LEN), Date.now(), opts.tenantId).run()
-        .then(() => {
-          const ua = c.req.header('User-Agent') || ''
-          const deviceType = /Mobile|Android|iPhone|iPad/i.test(ua)
-            ? (/iPad|Tablet/i.test(ua) ? 'tablet' : 'mobile') : 'desktop'
-          return quickAnalyzeSession(c.env.DB, opts.tenantId, opts.sessionId, deviceType)
-        })
-        .catch(e => console.error('[chat] Failed to persist assistant message or analyze:', e))
-    }),
-  )
+  // Forward each text delta to the client as it arrives. Accumulate the full
+  // text so we can persist + analyze after the stream closes. waitUntil keeps
+  // the worker alive past the response so the post-stream DB writes complete.
+  const encoder = new TextEncoder()
+  let fullText = ''
+  const sessionId = opts.sessionId
+  const tenantId = opts.tenantId
+  const ua = c.req.header('User-Agent') || ''
 
-  c.executionCtx.waitUntil(
-    Promise.resolve(result.usage)
-      .then((usage) => usage ? logUsage(c.env, opts.tenantId, modelName, usage) : undefined)
-      .catch(e => console.error('[chat] Failed to log usage:', e)),
-  )
+  const outStream = new ReadableStream<Uint8Array>({
+    async start(controller) {
+      const reader = textStream.getReader()
+      try {
+        while (true) {
+          const { done, value } = await reader.read()
+          if (done) break
+          fullText += value
+          controller.enqueue(encoder.encode(value))
+        }
+      } catch (e) {
+        console.error('[chat] AI Gateway stream read failed:', e)
+      } finally {
+        try { reader.releaseLock() } catch { /* already released */ }
+        controller.close()
+      }
 
-  return new Response(result.text, {
+      // Persist the assistant message + run the regex triage analyzer once
+      // streaming is done. Using waitUntil so this completes even if the
+      // client disconnects mid-stream.
+      if (fullText) {
+        c.executionCtx.waitUntil((async () => {
+          const msgId = `msg-${crypto.randomUUID()}`
+          try {
+            await c.env.DB.prepare(
+              `INSERT INTO messages (session_id, message_id, role, content, timestamp, message_type, tenant_id)
+               VALUES (?, ?, 'assistant', ?, ?, 'chat', ?) ON CONFLICT (message_id) DO NOTHING`,
+            ).bind(sessionId, msgId, fullText.slice(0, MAX_CONTENT_LEN), Date.now(), tenantId).run()
+            const deviceType = /Mobile|Android|iPhone|iPad/i.test(ua)
+              ? (/iPad|Tablet/i.test(ua) ? 'tablet' : 'mobile') : 'desktop'
+            await quickAnalyzeSession(c.env.DB, tenantId, sessionId, deviceType)
+          } catch (e) {
+            console.error('[chat] Failed to persist assistant message or analyze:', e)
+          }
+          if (capturedUsage) {
+            await logUsage(c.env, tenantId, modelName, capturedUsage).catch(e =>
+              console.error('[chat] Failed to log usage:', e))
+          }
+        })())
+      }
+    },
+  })
+
+  return new Response(outStream, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },
   })
 }

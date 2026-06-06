@@ -2,7 +2,7 @@ import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import type { Env } from './types'
 
-export const DEFAULT_MAIN_CHAT_MODEL = 'workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+export const DEFAULT_MAIN_CHAT_MODEL = 'google-ai-studio/gemini-3.5-flash'
 export const DEFAULT_EVAL_JUDGE_MODEL = 'workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast'
 export const DEFAULT_PHOTO_RECOGNIZER_MODEL = 'openai/gpt-4.1-mini'
 export const DEFAULT_AI_GATEWAY_ID = 'default'

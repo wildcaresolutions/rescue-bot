@@ -161,6 +161,8 @@ jobs:
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
           PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
+          MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
+          PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
       # No smoke tests on the test env — smoke runs against prod only (after
       # deploy-prod on main). PR deploys rely on widget-e2e + unit tests.
 
@@ -192,6 +194,8 @@ jobs:
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
           PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
+          MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
+          PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
       # Public-URL smoke tests run in the `smoke` job below — uses Chromium's
       # real TLS fingerprint (page.evaluate fetch) to bypass CF Bot Fight Mode.
 

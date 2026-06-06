@@ -348,6 +348,7 @@ function renderActionItems(items) {
       activate()
     })
     el.addEventListener('keydown', (e) => {
+      if (e.target.closest('.dash-resolve-form')) return
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() }
     })
   })
@@ -462,6 +463,7 @@ function renderRecentItems(items) {
     }
     el.addEventListener('click', activate)
     el.addEventListener('keydown', (e) => {
+      if (e.target.closest('.dash-resolve-form')) return
       if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); activate() }
     })
   })

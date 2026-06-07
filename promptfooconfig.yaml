@@ -1065,5 +1065,55 @@ tests:
 
           PASS if criteria 1, 2, 3, 4 are present AND criteria 5, 6, 7 are absent.
 
+  - description: "Regression: ahnow.org URL must appear as bare URL — no dangling colon"
+    vars:
+      user_input: "I found an injured red-tailed hawk near a busy road in Sacramento, California."
+    assert:
+      - type: llm-rubric
+        value: |
+          When the bot mentions Animal Help Now (the standard out-of-area redirect),
+          it must include the URL https://ahnow.org as bare text. The exact failure mode we're
+          guarding against: "Search Animal Help Now for the closest licensed rehabber:" followed
+          by a blank line and no URL — leaves the citizen with no link to follow.
+
+          The response MUST:
+          1. If Animal Help Now is mentioned (by name "Animal Help Now" or as ahnow.org),
+             the literal string "https://ahnow.org" must appear in the response on its own line
+             (bare URL, no markdown link syntax, no parentheses around it)
+
+          The response MUST NOT:
+          2. Contain "Animal Help Now" or "ahnow.org" or "Animal Help Now:" or "Search Animal Help Now"
+             that is NOT followed by the actual URL https://ahnow.org appearing in the response
+          3. Have a dangling colon ("Animal Help Now:" / "ahnow.org for the closest licensed rehabber:")
+             not followed by https://ahnow.org somewhere in the same response
+
+          PASS if criterion 1 holds (or if Animal Help Now is not mentioned at all),
+          AND criteria 2, 3 are absent.
+
+  - description: "Regression: Naming a city in turn 1 must not trigger a re-ask for location in turn 2"
+    vars:
+      user_input: |
+        I found an injured adult hawk on the road in austin
+        |||
+        what should I do
+    assert:
+      - type: llm-rubric
+        value: |
+          The citizen named "austin" as their location in turn 1 — this is a confirmation
+          of Austin (likely Austin, TX), which is OUTSIDE WildCare's service area (Marin County, CA).
+          The bot must recognize "in austin" as a valid location commitment and NOT re-ask for it.
+
+          By turn 2 (the second response), the bot MUST:
+          1. Already know the citizen is in Austin and have routed to out-of-area resources
+             (Texas Parks & Wildlife, Austin Wildlife Rescue, Animal Help Now with URL, etc.)
+             — OR be giving direct rescue/handling advice based on Austin as the known location
+
+          The bot MUST NOT (in either turn 1 or turn 2):
+          2. Ask "which city or county are you in?" or "what city are you in?" or
+             "which city or county in Texas are you in?" after the citizen already said "in austin"
+          3. Treat "austin" as ambiguous and request clarification about state/county
+
+          PASS if criterion 1 holds AND criteria 2, 3 are absent.
+
 # Output configuration
 outputPath: ./evals/promptfoo-results.json

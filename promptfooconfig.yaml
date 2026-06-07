@@ -1037,5 +1037,33 @@ tests:
           PASS if all 3 criteria are present.
           FAIL if any are missing.
 
+  - description: "Regression: Out-of-area citizen must get a real local resource, not just 'use ahnow.org'"
+    vars:
+      user_input: "I found an injured cottontail on the side of the road. I'm in Austin, Texas. It looks like it was hit by a car."
+    assert:
+      - type: llm-rubric
+        value: |
+          The citizen is OUTSIDE WildCare's service area (Austin, TX vs Marin County, CA) with an
+          urgent rescue. The bot must point them at a real local resource, not just ahnow.org.
+
+          The response MUST:
+          1. Acknowledge that Austin is outside the service area (some phrasing like "outside our service area",
+             "not in our coverage", or routing them elsewhere — but NOT tell them to "bring it in" or "come to us")
+          2. Either (a) name a specific local rehab/agency for the Austin/Texas area
+             (e.g. Austin Wildlife Rescue, Texas Parks & Wildlife, Austin Animal Services),
+             OR (b) suggest a literal search query the citizen can use (like
+             "wildlife rehabilitator near Austin TX") — at least one of these
+          3. Reference Animal Help Now (ahnow.org) as a search tool
+          4. Provide containment + safety instructions (no food/water, dark/quiet box, no bare-hand contact)
+
+          The response MUST NOT:
+          5. Include any broken or dropped URL — phrases like "Animal Help Now: —", "use this link:",
+             "click here:" followed by no real URL, OR a colon then dash/em-dash with nothing in between
+             (the URL should be on its own line as bare text starting with https://, OR not introduced at all)
+          6. Invent specific phone numbers — only numbers the model is confident in
+          7. Tell the citizen to bring it to WildCare's Marin facility
+
+          PASS if criteria 1, 2, 3, 4 are present AND criteria 5, 6, 7 are absent.
+
 # Output configuration
 outputPath: ./evals/promptfoo-results.json

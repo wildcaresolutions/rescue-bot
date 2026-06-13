@@ -21,14 +21,26 @@ export interface TriageRule {
   hint: string  // suggested action for front desk staff
 }
 
+/** A place we point callers to when we can't help, or for emergencies —
+ *  the single structured home for what used to be split across the free-text
+ *  `redirect_info` and `emergency_contacts` fields plus ad-hoc per-species
+ *  redirect strings. A skipped species references one of these by name. */
+export interface Referral {
+  name: string
+  contact?: string   // phone and/or URL, e.g. "(415) 883-4621 · marinhumane.org/report"
+  covers?: string    // what they handle, e.g. "animal control, wild turkeys, mange coyotes, after-hours"
+  area?: string      // geographic coverage, e.g. "San Mateo County" — used to route out-of-area callers
+}
+
 export interface OrgConfig {
   hours?: string
   after_hours_phone?: string
   public_address?: string
   species_config?: Record<string, SpeciesConfig>
   custom_species?: CustomSpecies[]
-  redirect_info?: string
-  emergency_contacts?: string
+  referrals?: Referral[]
+  redirect_info?: string       // default referral text for skipped species with no specific destination
+  emergency_contacts?: string  // legacy free-text; superseded by referrals[] (kept for back-compat)
   triage_config?: TriageRule[]
   // Legacy fields (backward compat)
   species_handled?: string[]
@@ -54,20 +66,14 @@ export function compileInstruction(
 ): string {
   const sections: string[] = []
 
-  // Service area and contact
-  const contactLines: string[] = []
-  if (tenant.location_service_area) contactLines.push(`Service area: ${tenant.location_service_area}`)
-  if (tenant.location_county) contactLines.push(`County: ${tenant.location_county}`)
-  if (tenant.location_state) contactLines.push(`State: ${tenant.location_state}`)
-  if (tenant.phone) contactLines.push(`Phone: ${tenant.phone}`)
-  if (tenant.email) contactLines.push(`Email: ${tenant.email}`)
-  if (tenant.url) contactLines.push(`Website: ${tenant.url}`)
-  if (orgConfig.hours) contactLines.push(`Hours: ${orgConfig.hours}`)
-  if (orgConfig.after_hours_phone) contactLines.push(`After-hours phone: ${orgConfig.after_hours_phone}`)
-  if (orgConfig.public_address) contactLines.push(`Drop-off address: ${orgConfig.public_address}`)
-  if (contactLines.length) {
-    sections.push(`## Service Area & Contact\n${contactLines.join('\n')}`)
-  }
+  // NOTE: contact facts (phone, email, url, location, hours, after-hours
+  // phone, drop-off address) are intentionally NOT emitted here. They are
+  // surfaced exactly once, at the top of the system prompt, by
+  // buildTenantIdentityBlock() in chat-prompt.ts. Emitting them here too —
+  // as this used to with a "## Service Area & Contact" section — duplicated
+  // every fact into the compiled custom_instruction, so the LLM saw phone /
+  // hours / address two-to-three times and the operator could never tell
+  // which copy to fix. Keep this compiled artifact about PROTOCOLS only.
 
   // Per-species configuration
   const sc = orgConfig.species_config || {}
@@ -126,8 +132,22 @@ export function compileInstruction(
   if (orgConfig.triage_rules) sections.push(`## Triage Rules\n${orgConfig.triage_rules}`)
   if (orgConfig.intake_procedures) sections.push(`## Intake Procedures\n${orgConfig.intake_procedures}`)
 
-  // Emergency
-  if (orgConfig.emergency_contacts) {
+  // Referrals & emergency contacts — one structured list of who we point
+  // callers to. Replaces the old standalone "Emergency Contacts" free-text
+  // section; falls back to that legacy field only when no structured
+  // referrals exist (so pre-migration tenants don't lose their text).
+  const referrals = (orgConfig.referrals || []).filter(r => r && r.name && r.name.trim())
+  if (referrals.length) {
+    const lines = referrals.map(r => {
+      const tail = [
+        r.contact?.trim(),
+        r.area?.trim() && `area: ${r.area.trim()}`,
+        r.covers?.trim() && `covers: ${r.covers.trim()}`,
+      ].filter(Boolean).join(' — ')
+      return `- ${r.name.trim()}${tail ? ` — ${tail}` : ''}`
+    })
+    sections.push(`## Referrals & Emergency Contacts\nWhen we can't help, direct the caller to the right one of these — by SPECIES (the "covers" tag) or, for out-of-area callers, by their location (the "area" tag):\n${lines.join('\n')}`)
+  } else if (orgConfig.emergency_contacts) {
     sections.push(`## Emergency Contacts\n${orgConfig.emergency_contacts}`)
   }
 
@@ -172,12 +192,13 @@ export async function recompileAndMaybeWrite(
   botOverrides: BotOverrides,
   rawProtocols?: string,
 ): Promise<{ compiled: string; wrote: boolean }> {
-  const baseCompiled = compileInstruction(tenant, orgConfig, botOverrides, rawProtocols)
-  // House rules go LAST — operator's pin-this-here hard rules.
-  const housePart = tenant.house_rules?.trim()
-    ? `\n\n## House Rules (operator-defined)\n${tenant.house_rules.trim()}`
-    : ''
-  const compiled = (baseCompiled + housePart).trim()
+  // House rules are NOT baked into custom_instruction. chat-prompt.ts emits
+  // tenant.house_rules once, as its own binding top-of-prompt block
+  // (buildHouseRulesBlock). Appending them here too put house rules in the
+  // prompt twice — once at the top, once buried inside the compiled
+  // "Organization-Specific Protocols" wrapper — which is exactly the kind of
+  // duplicate/contradictory text this consolidation removes.
+  const compiled = compileInstruction(tenant, orgConfig, botOverrides, rawProtocols).trim()
   const locked = tenant.custom_instruction_locked === 1
   if (!locked) {
     await db.prepare("UPDATE tenants SET custom_instruction = ?, updated_at = datetime('now') WHERE id = ?")

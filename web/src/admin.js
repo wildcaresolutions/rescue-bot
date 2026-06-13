@@ -47,7 +47,7 @@ import {
   getOnboardingPending,
   setOnboardingPending,
 } from './admin/state.js'
-import { openSettings, closeSettings, bindSettings } from './admin/settings.js'
+import { bindSettings } from './admin/settings.js'
 import { renderReportsView, bindReports } from './admin/reports.js'
 import { renderHelpView, bindHelp } from './admin/help.js'
 import {
@@ -80,6 +80,11 @@ initErrorReporting()
 // ── State ────────────────────────────────────────────────────────────────────
 
 let activeView = 'feed'     // feed | reports
+// Set by dispatchToolResult when the copilot mutates tenant config during an
+// exchange. checkSetupCompletion uses it to re-render the Playbook with fresh
+// server state ONLY when something actually changed — so a pure Q&A turn never
+// clobbers the operator's unsaved edits on the page.
+let _kbDirty = false
 // agentMessages / agentStreaming / onboardingPending live in
 // web/src/admin/state.js so the deterministic onboarding module and the
 // copilot dispatch path can read/write them without parameter threading.
@@ -137,9 +142,6 @@ async function renderAdminPortal() {
           <button class="header-icon-btn" id="helpIconBtn" title="Help & Documentation">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 015.83 1c0 2-3 3-3 3"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg>
           </button>
-          <button class="header-icon-btn" id="settingsBtn" title="Settings">
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 01-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
-          </button>
           <div class="profile-menu" id="profileMenu">
             <button class="header-icon-btn profile-btn" id="profileBtn" title="Profile">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="8" r="4"/><path d="M4 21v-1a6 6 0 0 1 12 0v1"/></svg>
@@ -179,20 +181,8 @@ async function renderAdminPortal() {
       </header>
 
       <div class="admin-body">
-        <!-- Settings drawer + overlay -->
-        <div class="settings-overlay" id="settingsOverlay"></div>
-        <aside class="settings-drawer" id="settingsDrawer">
-          <div class="settings-drawer-header">
-            <h2>Settings</h2>
-            <div style="display:flex;gap:8px;align-items:center">
-              <button class="settings-maximize-btn" id="settingsMaximize" title="Maximize">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 00-2 2v3m18 0V5a2 2 0 00-2-2h-3m0 18h3a2 2 0 002-2v-3M3 16v3a2 2 0 002 2h3"/></svg>
-              </button>
-              <button class="settings-close-btn" id="settingsClose">&times;</button>
-            </div>
-          </div>
-          <div class="settings-drawer-content" id="settingsContent"></div>
-        </aside>
+        <!-- Settings drawer retired — its contents (org info, domains, team,
+             daily report) now live in the Playbook tabs (Setup + Account). -->
 
         <!-- Main content area -->
         <div class="main-content" id="mainContent">
@@ -472,25 +462,6 @@ async function renderAdminPortal() {
       showFeed()
     } else {
       showHelpView()
-    }
-  })
-
-  // Settings drawer
-  document.getElementById('settingsBtn').addEventListener('click', openSettings)
-  document.getElementById('settingsOverlay').addEventListener('click', closeSettings)
-  document.getElementById('settingsClose').addEventListener('click', closeSettings)
-  document.getElementById('settingsMaximize').addEventListener('click', () => {
-    document.getElementById('settingsDrawer').classList.toggle('maximized')
-  })
-
-  // Close settings drawer on Escape
-  document.addEventListener('keydown', (e) => {
-    if (e.key === 'Escape') {
-      const drawer = document.getElementById('settingsDrawer')
-      if (drawer?.classList.contains('open')) {
-        closeSettings()
-        e.stopPropagation()
-      }
     }
   })
 
@@ -1175,6 +1146,14 @@ async function checkSetupCompletion() {
       showSetupCompleteTransition()
     } else {
       setTenantConfig(newConfig)
+    }
+    // Copilot is the primary way to fill in the Playbook, so if the operator
+    // is looking at it while the assistant edits config, re-render with the
+    // fresh server state so the change shows up in the form live — but only
+    // when this exchange actually changed config (see _kbDirty).
+    if (_kbDirty) {
+      _kbDirty = false
+      if (activeView === 'kb') renderKbView()
     }
   } catch { /* ignore */ }
 }
@@ -2068,6 +2047,7 @@ function dispatchToolResult(toolResult) {
   else if (toolName === 'save_protocols') {
     showCopilotToast('Protocols saved!')
     appendChangeChip('Saved custom protocols.')
+    _kbDirty = true
   }
   else if (toolName === 'create_test_scenario') {
     // Show what the scenario actually IS — description + the visitor message
@@ -2100,9 +2080,11 @@ function dispatchToolResult(toolResult) {
     // "Configuration updated" with no detail is unhelpful — show fields actually saved.
     const summary = summarizeConfigUpdate(result)
     appendChangeChip(summary && summary !== 'Saved' ? summary : 'Config saved (no fields)')
+    _kbDirty = true
   }
   else if (toolName === 'update_org_info') {
     appendChangeChip(summarizeConfigUpdate(result) || 'Org info updated.')
+    _kbDirty = true
   }
   else if (toolName === 'update_colors') {
     const c = result?.applied || {}
@@ -2114,17 +2096,17 @@ function dispatchToolResult(toolResult) {
   }
   else if (toolName === 'add_custom_species') {
     appendChangeChip(`Added custom species: ${result?.species || result?.message || ''}`.trim())
-    if (activeView === 'kb') renderKbView()
+    _kbDirty = true
   }
   else if (toolName === 'update_species_config') {
     appendChangeChip(`${result?.species || 'Species'} → ${result?.mode || ''}${result?.message?.includes('redirect') ? ' (with redirect)' : ''}`.trim())
-    if (activeView === 'kb') renderKbView()
+    _kbDirty = true
   }
   else if (toolName === 'bulk_skip_other_species') {
     const kept = (result?.kept || []).join(', ') || '(none)'
     const n = result?.skipped_count ?? (result?.skipped?.length || 0)
     appendChangeChip(`Bulk: kept ${kept}, set ${n} others to skip → ${result?.redirect || ''}`.trim())
-    if (activeView === 'kb') renderKbView()
+    _kbDirty = true
   }
   else if (toolName === 'get_species_config') { /* read-only: no chip */ }
   else if (toolName === 'extract_brand_colors') {

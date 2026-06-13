@@ -30,48 +30,26 @@ describe('compileInstruction', () => {
     expect(compileInstruction(baseTenant(), emptyOrg, emptyBot, '   \n  ')).toBe('')
   })
 
-  describe('Service Area & Contact section', () => {
-    it('generates section with service area and phone', () => {
-      const result = compileInstruction(
-        baseTenant({ location_service_area: 'Bay Area', phone: '555-1234' }),
-        emptyOrg,
-        emptyBot,
-      )
-      expect(result).toContain('## Service Area & Contact')
-      expect(result).toContain('Service area: Bay Area')
-      expect(result).toContain('Phone: 555-1234')
-    })
-
-    it('includes county, state, email, url when present', () => {
+  describe('contact facts are NOT compiled (surfaced once in chat-prompt identity block)', () => {
+    it('does not emit a Service Area & Contact section even with full contact info', () => {
       const result = compileInstruction(
         baseTenant({
-          location_county: 'Marin',
-          location_state: 'CA',
+          phone: '555-1234',
           email: 'help@rescue.org',
           url: 'https://rescue.org',
+          location_service_area: 'Bay Area',
+          location_county: 'Marin',
+          location_state: 'CA',
         }),
-        emptyOrg,
+        { hours: '9am-5pm', after_hours_phone: '555-9999', public_address: '1 Main St' },
         emptyBot,
       )
-      expect(result).toContain('County: Marin')
-      expect(result).toContain('State: CA')
-      expect(result).toContain('Email: help@rescue.org')
-      expect(result).toContain('Website: https://rescue.org')
-    })
-
-    it('includes hours and after-hours phone from orgConfig', () => {
-      const result = compileInstruction(
-        baseTenant(),
-        { hours: '9am-5pm', after_hours_phone: '555-9999' },
-        emptyBot,
-      )
-      expect(result).toContain('Hours: 9am-5pm')
-      expect(result).toContain('After-hours phone: 555-9999')
-    })
-
-    it('omits section when no contact info is present', () => {
-      const result = compileInstruction(baseTenant(), emptyOrg, emptyBot)
-      expect(result).not.toContain('Service Area & Contact')
+      expect(result).not.toContain('## Service Area & Contact')
+      expect(result).not.toContain('Phone: 555-1234')
+      expect(result).not.toContain('Hours: 9am-5pm')
+      expect(result).not.toContain('Drop-off address')
+      // With only contact info and nothing protocol-shaped, output is empty.
+      expect(result).toBe('')
     })
   })
 
@@ -445,6 +423,39 @@ describe('compileInstruction', () => {
     })
   })
 
+  describe('referrals', () => {
+    it('renders a structured Referrals & Emergency Contacts section', () => {
+      const result = compileInstruction(baseTenant(), {
+        referrals: [
+          { name: 'Marin Humane', contact: '(415) 883-4621', covers: 'animal control, wild turkeys' },
+          { name: 'Peninsula Humane', contact: '650-340-7022', area: 'San Mateo County' },
+          { name: 'Marine Mammal Center', contact: '415-289-7325' },
+        ],
+      }, emptyBot)
+      expect(result).toContain('## Referrals & Emergency Contacts')
+      expect(result).toContain('- Marin Humane — (415) 883-4621 — covers: animal control, wild turkeys')
+      expect(result).toContain('- Peninsula Humane — 650-340-7022 — area: San Mateo County')
+      expect(result).toContain('- Marine Mammal Center — 415-289-7325')
+    })
+
+    it('falls back to legacy emergency_contacts only when no referrals', () => {
+      const withReferrals = compileInstruction(baseTenant(), {
+        referrals: [{ name: 'X', contact: '1' }], emergency_contacts: 'LEGACY TEXT',
+      }, emptyBot)
+      expect(withReferrals).not.toContain('LEGACY TEXT')
+      const legacyOnly = compileInstruction(baseTenant(), { emergency_contacts: 'LEGACY TEXT' }, emptyBot)
+      expect(legacyOnly).toContain('## Emergency Contacts')
+      expect(legacyOnly).toContain('LEGACY TEXT')
+    })
+
+    it('ignores referral rows with a blank name', () => {
+      const result = compileInstruction(baseTenant(), {
+        referrals: [{ name: '', contact: 'x' }, { name: '  ', contact: 'y' }],
+      }, emptyBot)
+      expect(result).not.toContain('## Referrals')
+    })
+  })
+
   describe('full integration', () => {
     it('generates all sections in order when all fields provided', () => {
       const result = compileInstruction(
@@ -476,8 +487,10 @@ describe('compileInstruction', () => {
         'Custom protocol here.',
       )
 
-      // Verify section order by checking indices
-      const serviceIdx = result.indexOf('## Service Area & Contact')
+      // Contact facts are no longer compiled here (they live in the
+      // chat-prompt identity block); the first compiled section is now the
+      // species list.
+      expect(result).not.toContain('## Service Area & Contact')
       const handledIdx = result.indexOf('## Species We Handle')
       const notHandledIdx = result.indexOf('## Species We Do Not Handle')
       const triageIdx = result.indexOf('## Triage Rules')
@@ -486,8 +499,7 @@ describe('compileInstruction', () => {
       const behaviorIdx = result.indexOf('## Bot Behavior')
       const protocolsIdx = result.indexOf('## Additional Protocols')
 
-      expect(serviceIdx).toBeGreaterThanOrEqual(0)
-      expect(handledIdx).toBeGreaterThan(serviceIdx)
+      expect(handledIdx).toBeGreaterThanOrEqual(0)
       expect(notHandledIdx).toBeGreaterThan(handledIdx)
       expect(triageIdx).toBeGreaterThan(notHandledIdx)
       expect(intakeIdx).toBeGreaterThan(triageIdx)
@@ -496,7 +508,7 @@ describe('compileInstruction', () => {
       expect(protocolsIdx).toBeGreaterThan(behaviorIdx)
 
       // Verify sections are separated by double newlines
-      expect(result).toContain('\n\n## Species We Handle')
+      expect(result).toContain('\n\n## Species We Do Not Handle')
       expect(result).toContain('Redirect callers: Call Marine Mammal Center')
     })
   })

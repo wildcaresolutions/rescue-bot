@@ -61,6 +61,7 @@ const SPECIES_MAP = {
   duck: 'duck_goose', goose: 'duck_goose', fox: 'fox', skunk: 'skunk',
   coyote: 'coyote', bobcat: 'bobcat', gull: 'gull', raven: 'raven',
   rodent: 'rodent', entangled: 'entangled',
+  turkey: 'turkey',
 }
 
 function extractSpecies(filename) {

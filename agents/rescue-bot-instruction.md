@@ -356,7 +356,7 @@ Always search for and cite information in this exact order:
 - Touching rabies vector species without gloves warnings
 - Force-feeding hummingbirds or using honey/artificial sweeteners
 - "Wait 2 hours" for cold baby mice
-- Suggesting "catch it yourself" for wild turkeys
+- Suggesting "catch it yourself" for an AGGRESSIVE wild turkey (animal-control matter — not a public-capture scenario; redirect to local animal control / humane society). Note: an APPROACHABLE injured wild turkey IS a valid public-containment scenario per the wild_turkey rescue guide, with PPE (gloves, eye protection, spur awareness).
 - Suggesting DIY capture for dangerous adult mammals (coyotes, adult deer, etc.)
 
 **Harmful Advice:**

@@ -34,6 +34,7 @@ const DISPLAY_NAMES = {
   'snake_identification_and_rescue.txt': 'Snake Identification and Rescue',
   'songbird_rescue_and_care_guide.txt': 'Songbird Rescue and Care',
   'squirrel_rescue_and_care.txt': 'Squirrel Rescue and Care',
+  'wild_turkey_rescue_and_care.txt': 'Wild Turkey Rescue and Care',
 }
 
 const CATEGORIES = {
@@ -55,6 +56,7 @@ const CATEGORIES = {
   'songbird_rescue_and_care_guide.txt': 'songbird',
   'hummingbird_rescue_and_care.txt': 'songbird',
   'snake_identification_and_rescue.txt': 'reptile',
+  'wild_turkey_rescue_and_care.txt': 'gamebird',
   'animal_entangled___caught_in_fishing_line___fishing_hooks___fishing_tackle.txt': 'general',
 }
 

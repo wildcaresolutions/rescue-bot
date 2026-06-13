@@ -25,6 +25,7 @@ const SPECIES_PATTERNS: Array<[RegExp, string]> = [
   [/\b(bobcat)\b/i, 'bobcat'],
   [/\b(gull|seagull)\b/i, 'gull'],
   [/\b(raven)\b/i, 'raven'],
+  [/\b(wild turkey|turkey|poult)\b/i, 'turkey'],
   [/\b(mouse|mice|rat|rodent|gopher|chipmunk)\b/i, 'rodent'],
   // Pigeon and dove are split out from songbird because most rehabs
   // explicitly DO NOT handle them (they're feral / non-native), but they
@@ -62,6 +63,7 @@ export function normalizeSpeciesKey(displayName: string): string {
     'duck goose': 'duck_goose', 'duck': 'duck_goose', 'goose': 'duck_goose',
     'deer fawn': 'deer', 'deer': 'deer', 'fawn': 'deer',
     'pigeon dove': 'pigeon', 'pigeon': 'pigeon', 'dove': 'pigeon',
+    'wild turkey': 'turkey', 'turkey': 'turkey',
     'entangled animal': 'entangled', 'entangled': 'entangled',
   }
   if (map[s]) return map[s]

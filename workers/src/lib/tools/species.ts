@@ -40,7 +40,7 @@ export function speciesTools(ctx: ToolContext) {
         // need to be able to set species_config["Pigeon"] = skip with a
         // redirect destination. Detection in lib/rag.ts knows about this
         // bucket separately from the songbird group.
-        builtin_species: ['Heron & Egret', 'Bat', 'Bobcat', 'Coyote', 'Deer & Fawn', 'Duck & Goose', 'Fox', 'Gull', 'Hummingbird', 'Opossum', 'Pigeon', 'Raccoon', 'Raptor', 'Raven', 'Rodent', 'Skunk', 'Snake', 'Songbird', 'Squirrel', 'Entangled Animal'],
+        builtin_species: ['Heron & Egret', 'Bat', 'Bobcat', 'Coyote', 'Deer & Fawn', 'Duck & Goose', 'Fox', 'Gull', 'Hummingbird', 'Opossum', 'Pigeon', 'Raccoon', 'Raptor', 'Raven', 'Rodent', 'Skunk', 'Snake', 'Songbird', 'Squirrel', 'Wild Turkey', 'Entangled Animal'],
         triage_config: oc.triage_config || [],
       }
     },

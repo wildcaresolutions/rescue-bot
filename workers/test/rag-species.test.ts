@@ -31,6 +31,17 @@ describe('detectSpecies — pigeon split', () => {
   })
 })
 
+describe('detectSpecies — wild turkey', () => {
+  it('detects "turkey" and "wild turkey" as turkey', () => {
+    expect(detectSpecies('There is an injured wild turkey on the side of the road')).toBe('turkey')
+    expect(detectSpecies('a turkey is limping in my yard')).toBe('turkey')
+  })
+
+  it('detects poult (baby turkey) as turkey', () => {
+    expect(detectSpecies('found a poult by itself')).toBe('turkey')
+  })
+})
+
 describe('normalizeSpeciesKey', () => {
   it('lowercases simple labels', () => {
     expect(normalizeSpeciesKey('Pigeon')).toBe('pigeon')
@@ -56,6 +67,15 @@ describe('normalizeSpeciesKey', () => {
 
   it('falls through to underscore-joined lowercase for unknown labels', () => {
     expect(normalizeSpeciesKey('Snowy Plover')).toBe('snowy_plover')
+  })
+
+  it('maps wild-turkey label variants to the same canonical token detection emits', () => {
+    // wildcare's pre-existing org_config uses the key "wild turkey"; once
+    // detection started emitting `turkey`, the skip/builtin lookup would
+    // silently miss without this alias.
+    expect(normalizeSpeciesKey('Wild Turkey')).toBe('turkey')
+    expect(normalizeSpeciesKey('wild turkey')).toBe('turkey')
+    expect(normalizeSpeciesKey('Turkey')).toBe('turkey')
   })
 })
 

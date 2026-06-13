@@ -13,6 +13,8 @@
 import type { Tenant } from './types'
 import { compileInstruction } from './compile-instruction'
 import { parseOrgConfig } from './tenant-loader'
+import { COMBINED_INSTRUCTION } from '../instructions'
+import { buildTenantIdentityBlock, buildHouseRulesBlock } from './chat-prompt'
 
 export interface PromptSection {
   name: string
@@ -55,6 +57,12 @@ export interface PromptStateResult {
   compiled_preview: string
   drift: boolean
   sections: PromptSection[]
+  /** Read-only "what your bot sees" views, assembled the way the live chat
+   *  prompt is. org_view = just YOUR org's facts/rules/protocols (for the
+   *  operator to verify); full_view additionally includes the built-in
+   *  rescue training. Both omit per-conversation RAG + turn pacing. */
+  org_view: string
+  full_view: string
 }
 
 export function buildPromptState(tenant: Tenant): PromptStateResult {
@@ -70,7 +78,22 @@ export function buildPromptState(tenant: Tenant): PromptStateResult {
 
   const pendingReview = tenant.custom_instruction_locked_pending_review === 1
 
+  // Assemble the read-only "what your bot sees" views in the same order the
+  // live chat prompt uses (identity → house rules → [generic] → org protocols).
+  const identity = buildTenantIdentityBlock(tenant)
+  const houseBlock = buildHouseRulesBlock(tenant)
+  const orgProtocols = tenant.custom_instruction
+    ? `## Organization-Specific Protocols\n\n${tenant.custom_instruction.trim()}`
+    : ''
+  const orgView = [identity, houseBlock, orgProtocols].map(s => s.trim()).filter(Boolean).join('\n\n')
+  const fullView = [
+    identity, houseBlock, COMBINED_INSTRUCTION, orgProtocols,
+    '_(At chat time the bot also receives relevant knowledge-base passages for the visitor’s question and turn-specific pacing guidance.)_',
+  ].map(s => s.trim()).filter(Boolean).join('\n\n')
+
   return {
+    org_view: orgView,
+    full_view: fullView,
     custom_instruction: tenant.custom_instruction || '',
     house_rules: tenant.house_rules || '',
     locked: tenant.custom_instruction_locked === 1,

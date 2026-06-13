@@ -4743,3 +4743,12 @@ body {
   .pb-referral-row { grid-template-columns: 1fr auto; }
   .pb-referral-row .pb-ref-covers { grid-column: 1 / -1; }
 }
+
+/* Referral row gains an Area column; extra (non-built-in) species rows */
+.pb-referral-row { grid-template-columns: 1fr 1fr 1.2fr 1fr auto; }
+.kb-species-extra-tag { font-size: 0.58rem; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--color-ochre); background: rgba(196,136,58,0.14); padding: 2px 6px; border-radius: var(--radius-full); margin-left: 6px; }
+.kb-species-extra-remove { color: var(--color-storm); margin-left: 6px; padding: 0 6px; }
+@media (max-width: 900px) {
+  .pb-referral-row { grid-template-columns: 1fr auto; }
+  .pb-referral-row .pb-ref-covers, .pb-referral-row .pb-ref-area { grid-column: 1 / -1; }
+}

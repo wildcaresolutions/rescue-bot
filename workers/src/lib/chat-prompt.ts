@@ -44,7 +44,7 @@ export interface ChatPromptOptions {
  * presenting any other phone numbers (which might appear in redirect rules
  * inside house_rules) as if they belonged to this tenant.
  */
-function buildTenantIdentityBlock(tenant: Tenant): string {
+export function buildTenantIdentityBlock(tenant: Tenant): string {
   const orgConfig = tenant.org_config ? safeParse(tenant.org_config) : {}
   const tenantPhones: string[] = []
   if (tenant.phone) tenantPhones.push(tenant.phone)
@@ -110,7 +110,7 @@ function safeParse(s: string): Record<string, unknown> {
  * Returns '' (empty) when the tenant has no house rules — no section
  * emitted, no wasted tokens.
  */
-function buildHouseRulesBlock(tenant: Tenant): string {
+export function buildHouseRulesBlock(tenant: Tenant): string {
   const text = (tenant.house_rules || '').trim()
   if (!text) return ''
   return [

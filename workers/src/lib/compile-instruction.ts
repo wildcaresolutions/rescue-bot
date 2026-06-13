@@ -29,6 +29,7 @@ export interface Referral {
   name: string
   contact?: string   // phone and/or URL, e.g. "(415) 883-4621 · marinhumane.org/report"
   covers?: string    // what they handle, e.g. "animal control, wild turkeys, mange coyotes, after-hours"
+  area?: string      // geographic coverage, e.g. "San Mateo County" — used to route out-of-area callers
 }
 
 export interface OrgConfig {
@@ -138,10 +139,14 @@ export function compileInstruction(
   const referrals = (orgConfig.referrals || []).filter(r => r && r.name && r.name.trim())
   if (referrals.length) {
     const lines = referrals.map(r => {
-      const tail = [r.contact?.trim(), r.covers?.trim() && `covers: ${r.covers.trim()}`].filter(Boolean).join(' — ')
+      const tail = [
+        r.contact?.trim(),
+        r.area?.trim() && `area: ${r.area.trim()}`,
+        r.covers?.trim() && `covers: ${r.covers.trim()}`,
+      ].filter(Boolean).join(' — ')
       return `- ${r.name.trim()}${tail ? ` — ${tail}` : ''}`
     })
-    sections.push(`## Referrals & Emergency Contacts\nWhen we can't help, or for emergencies, direct the caller to the right one of these:\n${lines.join('\n')}`)
+    sections.push(`## Referrals & Emergency Contacts\nWhen we can't help, direct the caller to the right one of these — by SPECIES (the "covers" tag) or, for out-of-area callers, by their location (the "area" tag):\n${lines.join('\n')}`)
   } else if (orgConfig.emergency_contacts) {
     sections.push(`## Emergency Contacts\n${orgConfig.emergency_contacts}`)
   }

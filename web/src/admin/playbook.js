@@ -75,6 +75,13 @@ function renderSetup(body) {
   const bo = config.bot_overrides || {}
   const sc = oc.species_config || {}
   const customSpecies = (oc.custom_species || []).filter(cs => cs.name)
+  // Species you've configured that aren't one of the 19 built-ins (e.g.
+  // wildcare's granular "red fox"/"gray fox") used to be invisible — they
+  // drove the bot but had no row. Render them as extra rows so every rule
+  // shows up and is editable.
+  const normSp = s => s.toLowerCase().replace(/[^a-z0-9]/g, '')
+  const builtinNorm = new Set(BUILTIN_SPECIES.map(normSp))
+  const extraSpecies = Object.keys(sc).filter(k => k && k.trim() && !builtinNorm.has(normSp(k)))
   const serviceArea = config.location?.service_area ?? config.location_service_area ?? ''
   const county = config.location?.county ?? config.location_county ?? ''
   const state = config.location?.state ?? config.location_state ?? ''
@@ -125,6 +132,7 @@ function renderSetup(body) {
           <div class="kb-species-table" id="kbSpeciesTable">
             <div class="kb-species-header"><span class="kb-species-name-hdr">Species (built-in guide)</span><span class="kb-species-mode-hdr">Mode</span></div>
             ${BUILTIN_SPECIES.map(s => renderSpeciesRow(s, sc[s] || {}, referralNames)).join('')}
+            ${extraSpecies.map(name => renderSpeciesRow(name, sc[name] || {}, referralNames, true)).join('')}
           </div>
           <div class="kb-species-add-row">
             <button class="btn btn-sm" id="kbAddSpeciesBtn" type="button" style="width:100%;text-align:left;color:var(--color-sage)">+ Add a species not on this list (opens assistant)</button>
@@ -161,7 +169,6 @@ function renderSetup(body) {
               <div class="pb-field pb-field-full"><label>Tone</label><input type="text" id="kbTone" value="${esc(bo.tone || '')}" placeholder="Warm, reassuring, professional" autocomplete="off" data-1p-ignore></div>
               <div class="pb-field pb-field-full"><label>Always mention</label><textarea id="kbAlwaysSay" rows="2" placeholder="Always remind callers not to feed the animal" autocomplete="off" data-1p-ignore>${esc(bo.always_say || '')}</textarea></div>
               <div class="pb-field pb-field-full"><label>Never say</label><textarea id="kbNeverSay" rows="2" placeholder="Never recommend euthanasia or DIY medical treatment" autocomplete="off" data-1p-ignore>${esc(bo.never_say || '')}</textarea></div>
-              <div class="pb-field pb-field-full"><label>Custom greeting</label><input type="text" id="kbGreeting" value="${esc(bo.greeting || '')}" placeholder="Hi! I'm the rescue assistant." autocomplete="off" data-1p-ignore></div>
             </div>
           </details>
         </section>
@@ -180,12 +187,17 @@ function renderSetup(body) {
   wireSetupSave(oc)
 }
 
-function renderSpeciesRow(species, cfg, referralNames) {
+function renderSpeciesRow(species, cfg, referralNames, isExtra = false) {
   const key = species.replace(/[^a-zA-Z0-9]/g, '_')
-  const mode = cfg.mode || 'builtin'
+  // Extra (non-built-in) species default to "your notes" since there's no
+  // built-in guide named exactly for them, and get a remove control.
+  const mode = cfg.mode || (isExtra ? 'augment' : 'builtin')
   const detail = mode === 'builtin' ? '' : speciesDetailHtml(mode, cfg, referralNames)
-  return `<div class="kb-species-row" data-species="${esc(species)}">
-    <span class="kb-species-name">${species}</span>
+  const nameCell = isExtra
+    ? `<span class="kb-species-name">${esc(species)} <span class="kb-species-extra-tag">added</span><button class="btn btn-sm kb-species-extra-remove" title="Remove this species">&times;</button></span>`
+    : `<span class="kb-species-name">${esc(species)}</span>`
+  return `<div class="kb-species-row${isExtra ? ' kb-species-extra' : ''}" data-species="${esc(species)}">
+    ${nameCell}
     <select class="kb-species-mode" data-key="${esc(key)}">
       <option value="builtin" ${mode === 'builtin' ? 'selected' : ''}>Use built-in guide</option>
       <option value="augment" ${mode === 'augment' ? 'selected' : ''}>Built-in + your notes</option>
@@ -211,7 +223,8 @@ function renderReferralRow(r, i) {
   return `<div class="pb-referral-row" data-idx="${i}">
     <input type="text" class="pb-ref-name" value="${esc(r.name || '')}" placeholder="Name (e.g., Marin Humane)" autocomplete="off" data-1p-ignore>
     <input type="text" class="pb-ref-contact" value="${esc(r.contact || '')}" placeholder="Phone / website" autocomplete="off" data-1p-ignore>
-    <input type="text" class="pb-ref-covers" value="${esc(r.covers || '')}" placeholder="What they cover (animal control, turkeys, after-hours…)" autocomplete="off" data-1p-ignore>
+    <input type="text" class="pb-ref-covers" value="${esc(r.covers || '')}" placeholder="Covers (species/topics: turkeys, animal control…)" autocomplete="off" data-1p-ignore>
+    <input type="text" class="pb-ref-area" value="${esc(r.area || '')}" placeholder="Area (e.g., San Mateo County)" autocomplete="off" data-1p-ignore>
     <button class="btn btn-sm pb-ref-remove" type="button" title="Remove">&times;</button>
   </div>`
 }
@@ -232,7 +245,8 @@ function collectReferrals() {
     const name = row.querySelector('.pb-ref-name')?.value?.trim() || ''
     const contact = row.querySelector('.pb-ref-contact')?.value?.trim() || ''
     const covers = row.querySelector('.pb-ref-covers')?.value?.trim() || ''
-    if (name) out.push({ name, contact, covers })
+    const area = row.querySelector('.pb-ref-area')?.value?.trim() || ''
+    if (name) out.push({ name, contact, covers, area })
   })
   return out
 }
@@ -258,6 +272,7 @@ function wireSpecies() {
     if (input) { input.value = 'I need to add a custom species that is not in the built-in list. Help me write the rescue protocol.'; setTimeout(() => _deps.sendAgentMessage?.(), 100) }
   })
   document.querySelectorAll('.kb-custom-sp-remove').forEach(btn => btn.addEventListener('click', () => btn.closest('.kb-custom-species-row')?.remove()))
+  document.querySelectorAll('.kb-species-extra-remove').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); btn.closest('.kb-species-row')?.remove() }))
 }
 
 // The skip-mode "Use a referral…" dropdown fills the free-text redirect with
@@ -341,7 +356,9 @@ function wireSetupSave(prevOc) {
     if (referrals.length) orgConfig.emergency_contacts = ''
     else orgConfig.emergency_contacts = prevOc.emergency_contacts || ''
 
-    const botOverrides = { tone: val('kbTone'), always_say: val('kbAlwaysSay'), never_say: val('kbNeverSay'), greeting: val('kbGreeting') }
+    // greeting intentionally dropped — the widget opens silently by design and
+    // greeting/opening copy belongs to the Preview tab, not the bot prompt.
+    const botOverrides = { tone: val('kbTone'), always_say: val('kbAlwaysSay'), never_say: val('kbNeverSay') }
     const payload = {
       phone: val('pbPhone'), email: val('pbEmail'), url: val('pbUrl'),
       location_service_area: val('pbServiceArea'), location_county: val('pbCounty'), location_state: val('pbState'),
@@ -517,14 +534,14 @@ function renderKnowledge(body) {
     <div class="pb-page pb-page-single">
       <div class="pb-content">
         <p class="pb-lead">Inspect what your bot knows and exactly what it retrieves. Read-only.</p>
-        <section class="pb-section"><h2 class="pb-section-title">RAG explorer</h2><p class="pb-section-sub">Type a question to see which guide sections the bot would pull up. Higher scores = closer matches.</p><div id="pbRag"></div></section>
         <section class="pb-section"><h2 class="pb-section-title">What your bot sees</h2><div id="pbPrompt"><div class="loading">Loading…</div></div></section>
+        <section class="pb-section"><h2 class="pb-section-title">RAG explorer</h2><p class="pb-section-sub">Type a question to see which guide sections the bot would pull up. Higher scores = closer matches.</p><div id="pbRag"></div></section>
         <section class="pb-section"><h2 class="pb-section-title">Built-in species guides</h2><div id="pbGuides"><div class="loading">Loading…</div></div></section>
         <div style="height:40px"></div>
       </div>
     </div>`
-  renderRagExplorer(document.getElementById('pbRag'))
   loadPromptPreview(document.getElementById('pbPrompt'))
+  renderRagExplorer(document.getElementById('pbRag'))
   renderGuides(document.getElementById('pbGuides'))
 }
 
@@ -533,9 +550,13 @@ async function loadPromptPreview(el) {
     const res = await apiFetch('/admin/prompt')
     if (!res.ok) throw new Error('fetch failed')
     const data = await res.json()
-    const text = (data.custom_instruction || data.compiled_preview || '').trim()
-    el.innerHTML = `<p class="pb-section-sub">The org-specific instructions your bot runs on top of its built-in rescue training — generated from your Setup tab. Edit there and Save to change it.</p><textarea class="pb-diag-prompt" rows="16" readonly>${escapeHtml(text || '(nothing configured yet)')}</textarea>`
-  } catch { el.innerHTML = '<div class="error">Could not load the compiled instructions.</div>' }
+    const orgView = (data.org_view || data.custom_instruction || '').trim()
+    const fullView = (data.full_view || '').trim()
+    el.innerHTML = `
+      <p class="pb-section-sub">Everything your bot knows about <strong>you</strong> — your contact facts, rules, and protocols, assembled exactly as the bot receives them. Auto-generated from your Setup tab and read-only; to change it, edit Setup.</p>
+      <textarea class="pb-diag-prompt" rows="18" readonly>${escapeHtml(orgView || '(nothing configured yet)')}</textarea>
+      ${fullView ? `<details class="pb-advanced" style="margin-top:12px"><summary>Show the complete prompt the AI receives (includes built-in rescue training)</summary><textarea class="pb-diag-prompt" rows="22" readonly style="margin-top:10px">${escapeHtml(fullView)}</textarea></details>` : ''}`
+  } catch { el.innerHTML = '<div class="error">Could not load.</div>' }
 }
 
 function renderRagExplorer(el) {

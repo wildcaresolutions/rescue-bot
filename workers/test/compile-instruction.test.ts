@@ -428,11 +428,13 @@ describe('compileInstruction', () => {
       const result = compileInstruction(baseTenant(), {
         referrals: [
           { name: 'Marin Humane', contact: '(415) 883-4621', covers: 'animal control, wild turkeys' },
+          { name: 'Peninsula Humane', contact: '650-340-7022', area: 'San Mateo County' },
           { name: 'Marine Mammal Center', contact: '415-289-7325' },
         ],
       }, emptyBot)
       expect(result).toContain('## Referrals & Emergency Contacts')
       expect(result).toContain('- Marin Humane — (415) 883-4621 — covers: animal control, wild turkeys')
+      expect(result).toContain('- Peninsula Humane — 650-340-7022 — area: San Mateo County')
       expect(result).toContain('- Marine Mammal Center — 415-289-7325')
     })
 

@@ -1,31 +1,19 @@
-// The Settings drawer is retired. Everything it held — Organization info,
-// Daily Report, Allowed Domains, Team Members — now lives on the single
-// consolidated Playbook page (web/src/admin/playbook.js). The gear icon and
-// any "Open Settings" shortcut just navigate there, scrolled to the relevant
-// section, so there is one place to enter information instead of a separate
-// drawer that duplicated half of it.
-//
-// These exports are kept (admin.js + test-cases.js import them) but now route
-// into the Playbook instead of opening a drawer.
+// The Settings drawer is retired. Org info, domains, team, and daily report
+// now live in the Playbook (Setup + Account tabs), and the header gear is
+// gone. These exports remain only because admin.js calls bindSettings and
+// test-cases.js calls openSettings ("Open Settings" on a failed test) — both
+// now just route into the Playbook.
+
+import { setKbTab } from './playbook.js'
 
 let _showKbView = null
+export function bindSettings({ showKbView }) { _showKbView = showKbView }
 
-export function bindSettings({ showKbView }) {
-  _showKbView = showKbView
-}
-
-/** Open the consolidated Playbook. `section` is an optional element id to
- *  scroll to (e.g. 'pb-org' for the old "Organization Info", 'pb-site' for
- *  domains/team/report). Defaults to the Organization section since that's
- *  what the old Settings drawer led with. */
-export function openSettings(section = 'pb-org') {
+/** Open the Playbook on the Setup tab (where org facts now live). */
+export function openSettings() {
+  setKbTab('setup')
   if (_showKbView) _showKbView()
-  // Let the Playbook render, then scroll to the requested section.
-  setTimeout(() => {
-    const el = document.getElementById(typeof section === 'string' ? section : 'pb-org')
-    el?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-  }, 60)
+  setTimeout(() => document.getElementById('pb-org')?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80)
 }
 
-// No drawer to close anymore; kept as a no-op so existing callers don't break.
 export function closeSettings() { /* retired — Settings lives in the Playbook */ }

@@ -21,14 +21,25 @@ export interface TriageRule {
   hint: string  // suggested action for front desk staff
 }
 
+/** A place we point callers to when we can't help, or for emergencies —
+ *  the single structured home for what used to be split across the free-text
+ *  `redirect_info` and `emergency_contacts` fields plus ad-hoc per-species
+ *  redirect strings. A skipped species references one of these by name. */
+export interface Referral {
+  name: string
+  contact?: string   // phone and/or URL, e.g. "(415) 883-4621 · marinhumane.org/report"
+  covers?: string    // what they handle, e.g. "animal control, wild turkeys, mange coyotes, after-hours"
+}
+
 export interface OrgConfig {
   hours?: string
   after_hours_phone?: string
   public_address?: string
   species_config?: Record<string, SpeciesConfig>
   custom_species?: CustomSpecies[]
-  redirect_info?: string
-  emergency_contacts?: string
+  referrals?: Referral[]
+  redirect_info?: string       // default referral text for skipped species with no specific destination
+  emergency_contacts?: string  // legacy free-text; superseded by referrals[] (kept for back-compat)
   triage_config?: TriageRule[]
   // Legacy fields (backward compat)
   species_handled?: string[]
@@ -120,8 +131,18 @@ export function compileInstruction(
   if (orgConfig.triage_rules) sections.push(`## Triage Rules\n${orgConfig.triage_rules}`)
   if (orgConfig.intake_procedures) sections.push(`## Intake Procedures\n${orgConfig.intake_procedures}`)
 
-  // Emergency
-  if (orgConfig.emergency_contacts) {
+  // Referrals & emergency contacts — one structured list of who we point
+  // callers to. Replaces the old standalone "Emergency Contacts" free-text
+  // section; falls back to that legacy field only when no structured
+  // referrals exist (so pre-migration tenants don't lose their text).
+  const referrals = (orgConfig.referrals || []).filter(r => r && r.name && r.name.trim())
+  if (referrals.length) {
+    const lines = referrals.map(r => {
+      const tail = [r.contact?.trim(), r.covers?.trim() && `covers: ${r.covers.trim()}`].filter(Boolean).join(' — ')
+      return `- ${r.name.trim()}${tail ? ` — ${tail}` : ''}`
+    })
+    sections.push(`## Referrals & Emergency Contacts\nWhen we can't help, or for emergencies, direct the caller to the right one of these:\n${lines.join('\n')}`)
+  } else if (orgConfig.emergency_contacts) {
     sections.push(`## Emergency Contacts\n${orgConfig.emergency_contacts}`)
   }
 

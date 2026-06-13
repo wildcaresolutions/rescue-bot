@@ -423,6 +423,37 @@ describe('compileInstruction', () => {
     })
   })
 
+  describe('referrals', () => {
+    it('renders a structured Referrals & Emergency Contacts section', () => {
+      const result = compileInstruction(baseTenant(), {
+        referrals: [
+          { name: 'Marin Humane', contact: '(415) 883-4621', covers: 'animal control, wild turkeys' },
+          { name: 'Marine Mammal Center', contact: '415-289-7325' },
+        ],
+      }, emptyBot)
+      expect(result).toContain('## Referrals & Emergency Contacts')
+      expect(result).toContain('- Marin Humane — (415) 883-4621 — covers: animal control, wild turkeys')
+      expect(result).toContain('- Marine Mammal Center — 415-289-7325')
+    })
+
+    it('falls back to legacy emergency_contacts only when no referrals', () => {
+      const withReferrals = compileInstruction(baseTenant(), {
+        referrals: [{ name: 'X', contact: '1' }], emergency_contacts: 'LEGACY TEXT',
+      }, emptyBot)
+      expect(withReferrals).not.toContain('LEGACY TEXT')
+      const legacyOnly = compileInstruction(baseTenant(), { emergency_contacts: 'LEGACY TEXT' }, emptyBot)
+      expect(legacyOnly).toContain('## Emergency Contacts')
+      expect(legacyOnly).toContain('LEGACY TEXT')
+    })
+
+    it('ignores referral rows with a blank name', () => {
+      const result = compileInstruction(baseTenant(), {
+        referrals: [{ name: '', contact: 'x' }, { name: '  ', contact: 'y' }],
+      }, emptyBot)
+      expect(result).not.toContain('## Referrals')
+    })
+  })
+
   describe('full integration', () => {
     it('generates all sections in order when all fields provided', () => {
       const result = compileInstruction(

@@ -1,56 +1,33 @@
-// Playbook — ONE consolidated page (internal view id 'kb').
+// Playbook — the operator's home for everything bot-related, organized by JOB
+// into four sub-tabs (not one giant scroll, and no separate Settings drawer):
 //
-// Replaces the old four-sub-tab Playbook (+ the separate Settings drawer
-// org-info form). Everything that shapes the bot now lives on a single
-// scrollable page with a left section rail and one sticky Save bar; the
-// docked copilot (admin.js agent panel) is the primary way to fill it in and
-// re-renders this page live after it writes config.
+//   Setup      — teach the bot: Organization facts · Animals you handle ·
+//                Referrals & emergencies · House rules. One page (section rail
+//                + one sticky Save). Each fact has exactly one home here.
+//   Triage     — configure which conversations surface on the STAFF dashboard.
+//                Separate job; does not change the bot's answers.
+//   Knowledge  — read-only: built-in species guides, RAG explorer, and the
+//                compiled "what your bot sees" instruction.
+//   Account    — operational: allowed domains, team members, daily report.
+//                No bot facts here — those live in Setup.
 //
-// Sections, top to bottom:
-//   1. Organization        — name, phone, email, website, service area,
-//                            county, state, hours, after-hours phone,
-//                            drop-off address. The single home for every
-//                            fact the bot states (was split across Settings
-//                            + Playbook before).
-//   2. Species & protocols — 19 built-in species mode picker, custom
-//                            species, general redirect, emergency contacts.
-//   3. Extra instructions   — general rescue rules, house rules (free prose),
-//                            and an Advanced expander for tone/always/never/
-//                            greeting. (The old raw-prompt "lock" is gone.)
-//   4. Dashboard triage     — staff-only urgency rules + live tester. Does
-//                            NOT change bot answers.
-//   5. Diagnostics          — read-only: built-in guides, RAG explorer, and
-//                            "what your bot sees" (compiled prompt preview).
-//   6. Site & access        — daily report, allowed domains, team members.
-//
-// One sticky Save persists sections 1–4 in a single /platform/setup call
-// (columns + org_config + bot_overrides + house_rules). Section 6's list
-// ops (domains/team) and the daily-report form save on their own, as before.
+// The header gear is gone; this view is the single entry for all of it.
 
 import { apiFetch, getTenantSlug } from './api.js'
 import { escapeHtml, esc, tip, safeMarkdown, showSetupMsg } from './helpers.js'
 import { getTenantConfig, setTenantConfig } from './state.js'
 
-// Callbacks injected from the portal shell (admin.js).
-let _deps = {
-  expandAgent: null,
-  sendAgentMessage: null,
-  showCopilotToast: null,
+let _deps = { expandAgent: null, sendAgentMessage: null, showCopilotToast: null }
+export function bindPlaybook(deps) { _deps = { ..._deps, ...deps } }
+
+// Active sub-tab. Legacy callers pass the old 'your-content' id → 'setup'.
+let kbTab = 'setup'
+export function getKbTab() { return kbTab }
+export function setKbTab(t) {
+  kbTab = (t === 'your-content' || !t) ? 'setup'
+    : (['setup', 'triage', 'knowledge', 'account'].includes(t) ? t : 'setup')
 }
 
-export function bindPlaybook(deps) {
-  _deps = { ..._deps, ...deps }
-}
-
-// Legacy shim: a couple of call sites still flip a "sub-tab" before showing
-// the Playbook (e.g. the failed-test "Open General Rescue Rules" button).
-// There are no sub-tabs anymore — we just scroll to the right section — so
-// these are no-ops kept for import compatibility.
-let _pendingScroll = null
-export function getKbTab() { return 'your-content' }
-export function setKbTab(_t) { /* no-op: single page now */ }
-
-// Built-in species from the platform's 19 guides.
 const BUILTIN_SPECIES = [
   'Heron & Egret', 'Bat', 'Bobcat', 'Coyote', 'Deer & Fawn',
   'Duck & Goose', 'Fox', 'Gull', 'Hummingbird', 'Opossum',
@@ -58,7 +35,6 @@ const BUILTIN_SPECIES = [
   'Snake', 'Songbird', 'Squirrel', 'Entangled Animal',
 ]
 
-// Default triage rules (must match workers/src/lib/triage-defaults.ts).
 const DEFAULT_TRIAGE_RULES = [
   { id: 'bat-exposure', label: 'Bat in living space / rabies exposure', patterns: ['bat.*house', 'bat.*bedroom', 'bat.*room', 'rabies', 'bat.*inside'], urgency: 'critical', hint: 'Potential rabies exposure. Transfer to intake coordinator immediately.' },
   { id: 'snake-bite', label: 'Snake bite or venomous animal contact', patterns: ['snake.*bite', 'bitten.*snake', 'rattlesnake', 'venomous'], urgency: 'critical', hint: 'Direct caller to 911 or poison control first, then wildlife intake.' },
@@ -70,51 +46,70 @@ const DEFAULT_TRIAGE_RULES = [
   { id: 'general-question', label: 'General wildlife question', patterns: ['what.*do', 'how.*help', 'should.*i', 'is.*it.*normal'], urgency: 'info', hint: 'Informational only. Bot handles this. No follow-up needed.' },
 ]
 
-// ── Page shell ────────────────────────────────────────────────────────────────
+const TABS = [['setup', 'Setup'], ['triage', 'Triage'], ['knowledge', 'Knowledge'], ['account', 'Account']]
 
 export function renderKbView() {
   const container = document.getElementById('kbView')
+  container.innerHTML = `
+    <div class="pb-shell">
+      <div class="pb-tabs">
+        ${TABS.map(([id, label]) => `<button class="pb-tab ${kbTab === id ? 'active' : ''}" data-tab="${id}">${label}</button>`).join('')}
+      </div>
+      <div class="pb-tabbody" id="pbTabBody"></div>
+    </div>`
+  container.querySelectorAll('.pb-tab').forEach(btn => {
+    btn.addEventListener('click', () => { kbTab = btn.dataset.tab; renderKbView() })
+  })
+  const body = document.getElementById('pbTabBody')
+  if (kbTab === 'setup') renderSetup(body)
+  else if (kbTab === 'triage') renderTriage(body)
+  else if (kbTab === 'knowledge') renderKnowledge(body)
+  else if (kbTab === 'account') renderAccount(body)
+}
+
+// ── SETUP ───────────────────────────────────────────────────────────────────
+
+function renderSetup(body) {
   const config = getTenantConfig() || {}
   const oc = config.org_config || {}
   const bo = config.bot_overrides || {}
   const sc = oc.species_config || {}
   const customSpecies = (oc.custom_species || []).filter(cs => cs.name)
-
   const serviceArea = config.location?.service_area ?? config.location_service_area ?? ''
   const county = config.location?.county ?? config.location_county ?? ''
   const state = config.location?.state ?? config.location_state ?? ''
 
-  const sections = [
-    ['pb-org', 'Organization'],
-    ['pb-species', 'Species & protocols'],
-    ['pb-extra', 'Extra instructions'],
-    ['pb-triage', 'Dashboard triage'],
-    ['pb-diag', 'Diagnostics'],
-    ['pb-site', 'Site & access'],
-  ]
+  // Referrals: structured list. Seed a starter row from legacy emergency_contacts
+  // so pre-migration text isn't lost (operator just adds a name).
+  let referrals = Array.isArray(oc.referrals) ? oc.referrals.filter(r => r && (r.name || r.contact || r.covers)) : []
+  if (!referrals.length && oc.emergency_contacts?.trim()) {
+    referrals = [{ name: '', contact: '', covers: oc.emergency_contacts.trim() }]
+  }
+  if (!referrals.length) referrals = [{ name: '', contact: '', covers: '' }]
+  const referralNames = referrals.map(r => r.name).filter(Boolean)
 
-  container.innerHTML = `
+  // House rules: merge legacy general-rescue-rules (intake_procedures) into the
+  // one box so there's a single place for cross-cutting instructions.
+  const houseRulesInit = [config.house_rules, oc.intake_procedures].map(s => (s || '').trim()).filter(Boolean).join('\n\n')
+
+  const sections = [['pb-org', 'Organization'], ['pb-animals', 'Animals you handle'], ['pb-referrals', 'Referrals & emergencies'], ['pb-rules', 'House rules']]
+
+  body.innerHTML = `
     <div class="pb-page">
       <nav class="pb-rail" id="pbRail">
         ${sections.map(([id, label], i) => `<a href="#${id}" class="pb-rail-link ${i === 0 ? 'active' : ''}" data-target="${id}">${label}</a>`).join('')}
       </nav>
-
       <div class="pb-content" id="pbContent">
-        <p class="pb-lead">Everything that shapes your bot lives here. Edit a field, or just tell the
-          <a href="#" id="pbAskAgent">assistant</a> what to change — it updates these fields for you. One <strong>Save</strong> at the bottom saves the whole page.</p>
+        <p class="pb-lead">Teach your bot here. Edit a field, or tell the <a href="#" id="pbAskAgent">assistant</a> what to change. One <strong>Save</strong> at the bottom saves this whole tab.</p>
 
-        <!-- 1. ORGANIZATION -->
         <section class="pb-section" id="pb-org">
           <h2 class="pb-section-title">Organization</h2>
-          <p class="pb-section-sub">The facts your bot states to visitors — phone, hours, where to drop off an animal. This is the only place to set them now.</p>
+          <p class="pb-section-sub">The facts your bot states to visitors. The only place to set them.</p>
           <div class="pb-grid">
-            <div class="pb-field pb-field-full">
-              <label>Organization name</label>
-              <input type="text" value="${esc(config.name || '')}" disabled class="input-disabled">
-            </div>
+            <div class="pb-field pb-field-full"><label>Organization name</label><input type="text" value="${esc(config.name || '')}" disabled class="input-disabled"></div>
             <div class="pb-field"><label>Phone</label><input type="text" id="pbPhone" value="${esc(config.phone || '')}" placeholder="(415) 555-0100" autocomplete="off" data-1p-ignore></div>
             <div class="pb-field"><label>Email</label><input type="text" id="pbEmail" value="${esc(config.email || '')}" placeholder="help@yourorg.org" autocomplete="off" data-1p-ignore></div>
-            <div class="pb-field pb-field-full"><label>Website</label><input type="text" id="pbUrl" value="${esc(config.url || '')}" placeholder="https://yourorg.org" autocomplete="off" data-1p-ignore></div>
+            <div class="pb-field pb-field-full"><label>Your public website</label><input type="text" id="pbUrl" value="${esc(config.url || '')}" placeholder="https://yourorg.org" autocomplete="off" data-1p-ignore></div>
             <div class="pb-field pb-field-full"><label>Service area</label><input type="text" id="pbServiceArea" value="${esc(serviceArea)}" placeholder="Marin County and surrounding areas" autocomplete="off" data-1p-ignore></div>
             <div class="pb-field"><label>County</label><input type="text" id="pbCounty" value="${esc(county)}" placeholder="Marin" autocomplete="off" data-1p-ignore></div>
             <div class="pb-field"><label>State</label><input type="text" id="pbState" value="${esc(state)}" placeholder="CA" autocomplete="off" data-1p-ignore></div>
@@ -124,13 +119,12 @@ export function renderKbView() {
           </div>
         </section>
 
-        <!-- 2. SPECIES & PROTOCOLS -->
-        <section class="pb-section" id="pb-species">
-          <h2 class="pb-section-title">Species &amp; protocols ${tip('Your bot ships with 19 built-in species guides. For each, choose how your org handles it; add species not on the list too.')}</h2>
-          <p class="pb-section-sub">Each species has a built-in rescue guide. Choose how your org uses it.</p>
+        <section class="pb-section" id="pb-animals">
+          <h2 class="pb-section-title">Animals you handle ${tip('19 built-in species guides. For each, choose how your org handles it; add species not on the list too.')}</h2>
+          <p class="pb-section-sub">Pick how the bot handles each species. For "we don't handle this," choose who to send people to (from your Referrals).</p>
           <div class="kb-species-table" id="kbSpeciesTable">
             <div class="kb-species-header"><span class="kb-species-name-hdr">Species (built-in guide)</span><span class="kb-species-mode-hdr">Mode</span></div>
-            ${BUILTIN_SPECIES.map(s => renderSpeciesRow(s, sc[s] || {})).join('')}
+            ${BUILTIN_SPECIES.map(s => renderSpeciesRow(s, sc[s] || {}, referralNames)).join('')}
           </div>
           <div class="kb-species-add-row">
             <button class="btn btn-sm" id="kbAddSpeciesBtn" type="button" style="width:100%;text-align:left;color:var(--color-sage)">+ Add a species not on this list (opens assistant)</button>
@@ -138,37 +132,28 @@ export function renderKbView() {
           <div id="kbCustomSpecies">
             ${customSpecies.map((cs, i) => `
               <div class="kb-species-row kb-custom-species-row" data-custom="${i}" data-species="${esc(cs.name)}">
-                <div class="kb-species-left">
-                  <span class="kb-species-name">${esc(cs.name)}</span>
-                  <span style="font-size:0.72rem;color:var(--color-storm)">(custom)</span>
-                  <button class="btn btn-sm kb-custom-sp-remove" data-idx="${i}" title="Remove">&times;</button>
-                </div>
-                <div class="kb-species-detail" style="padding-left:0;margin-top:6px">
-                  <textarea class="kb-custom-sp-protocol" rows="3" placeholder="Full rescue and care protocol for ${esc(cs.name)}...">${esc(cs.protocol || '')}</textarea>
-                </div>
+                <div class="kb-species-left"><span class="kb-species-name">${esc(cs.name)}</span><span style="font-size:0.72rem;color:var(--color-storm)">(custom)</span><button class="btn btn-sm kb-custom-sp-remove" data-idx="${i}" title="Remove">&times;</button></div>
+                <div class="kb-species-detail" style="padding-left:0;margin-top:6px"><textarea class="kb-custom-sp-protocol" rows="3" placeholder="Full rescue and care protocol for ${esc(cs.name)}...">${esc(cs.protocol || '')}</textarea></div>
               </div>`).join('')}
-          </div>
-          <div class="pb-field" style="margin-top:14px">
-            <label>General redirect info ${tip('Default message when someone asks about a species you set to "we don\'t handle this".')}</label>
-            <textarea id="kbRedirectInfo" rows="2" placeholder="For species we do not handle, please contact your local wildlife agency" autocomplete="off" data-1p-ignore>${esc(oc.redirect_info || '')}</textarea>
-          </div>
-          <div class="pb-field" style="margin-top:10px">
-            <label>Emergency contacts</label>
-            <textarea id="kbEmergencyContacts" rows="2" placeholder="Rabies exposure: County Animal Control (415) 555-0100" autocomplete="off" data-1p-ignore>${esc(oc.emergency_contacts || '')}</textarea>
           </div>
         </section>
 
-        <!-- 3. EXTRA INSTRUCTIONS -->
-        <section class="pb-section" id="pb-extra">
-          <h2 class="pb-section-title">Extra instructions</h2>
-          <p class="pb-section-sub">Cross-cutting rules the bot should follow, in plain language. Species-specific details belong above.</p>
-          <div class="pb-field">
-            <label>General rescue rules ${tip('Instructions that apply across many calls — when to include phone/hours, intake limits, safety reminders.')}</label>
-            <textarea id="kbIntakeProcedures" rows="4" placeholder="For in-area injured wildlife calls, include our public phone number and current hours after immediate safety and containment guidance." autocomplete="off" data-1p-ignore>${esc(oc.intake_procedures || '')}</textarea>
+        <section class="pb-section" id="pb-referrals">
+          <h2 class="pb-section-title">Referrals &amp; emergencies ${tip('The places you point callers to when you can\'t help, or for emergencies. One list — used by the species you don\'t handle and for rabies/animal-control situations.')}</h2>
+          <p class="pb-section-sub">Who do you send people to? Add each partner once; species set to "we don't handle this" can point at them.</p>
+          <div id="pbReferralList">${referrals.map((r, i) => renderReferralRow(r, i)).join('')}</div>
+          <button class="btn btn-sm" id="pbAddReferral" type="button" style="color:var(--color-sage)">+ Add referral</button>
+          <div class="pb-field" style="margin-top:14px">
+            <label>Default referral ${tip('Used for a "we don\'t handle this" species that doesn\'t name a specific destination.')}</label>
+            <input type="text" id="pbRedirectInfo" value="${esc(oc.redirect_info || '')}" placeholder="Contact your local wildlife agency or animal control" autocomplete="off" data-1p-ignore>
           </div>
-          <div class="pb-field" style="margin-top:12px">
-            <label>House rules ${tip('Pinned rules the bot follows on every response — sign-offs, phrasing, hard "always/never" rules. Free-form text.')}</label>
-            <textarea id="pbHouseRules" rows="6" placeholder="e.g. Always end with: &quot;Is there anything else I can help with?&quot;  ·  Never recommend handling raccoons without gloves.">${esc(config.house_rules || '')}</textarea>
+        </section>
+
+        <section class="pb-section" id="pb-rules">
+          <h2 class="pb-section-title">House rules</h2>
+          <p class="pb-section-sub">Cross-cutting instructions and exceptions the bot follows on every call — sign-offs, phrasing, special cases. One place, plain language.</p>
+          <div class="pb-field">
+            <textarea id="pbHouseRules" rows="8" placeholder="e.g. Always end with: &quot;Is there anything else I can help with?&quot;&#10;For overnight or unfeathered baby birds, do NOT send callers to Marin Humane — keep the bird warm and dark and call us when we open.&#10;Never recommend handling raccoons without gloves.">${esc(houseRulesInit)}</textarea>
           </div>
           <details class="pb-advanced">
             <summary>Advanced bot voice</summary>
@@ -180,101 +165,25 @@ export function renderKbView() {
             </div>
           </details>
         </section>
-
-        <!-- 4. DASHBOARD TRIAGE -->
-        <section class="pb-section" id="pb-triage">
-          <h2 class="pb-section-title">Dashboard triage <span class="pb-staff-tag">staff only</span></h2>
-          <p class="pb-section-sub">These rules decide which conversations show up on your dashboard for staff review. They do <strong>not</strong> change what the bot says to visitors.</p>
-          <div class="kb-triage-tester">
-            <label class="kb-triage-tester-label">Test a sample message</label>
-            <div class="kb-triage-tester-row">
-              <input type="text" id="kbTriageTestInput" placeholder="e.g., A bat is in my bedroom" autocomplete="off" data-1p-ignore>
-              <button class="btn btn-sm" id="kbTriageTestRun">Test</button>
-            </div>
-            <div id="kbTriageTestResult" class="kb-triage-tester-result"></div>
-          </div>
-          <div id="kbTriageRules">${renderTriageRules(oc.triage_config || [])}</div>
-          <button class="btn btn-sm" id="kbAddTriageRule" style="margin-top:6px">+ Add custom rule</button>
-        </section>
-
-        <!-- 5. DIAGNOSTICS -->
-        <section class="pb-section" id="pb-diag">
-          <h2 class="pb-section-title">Diagnostics <span class="pb-staff-tag">read-only</span></h2>
-          <p class="pb-section-sub">Inspect what your bot knows and exactly what it would retrieve.</p>
-          <details class="pb-diag-block" data-diag="prompt"><summary>What your bot sees (compiled instructions)</summary><div class="pb-diag-body"><div class="loading">Loading…</div></div></details>
-          <details class="pb-diag-block" data-diag="rag"><summary>RAG explorer — see what the bot retrieves for a question</summary><div class="pb-diag-body"></div></details>
-          <details class="pb-diag-block" data-diag="guides"><summary>Built-in species guides</summary><div class="pb-diag-body"><div class="loading">Loading…</div></div></details>
-        </section>
-
-        <!-- 6. SITE & ACCESS -->
-        <section class="pb-section" id="pb-site">
-          <h2 class="pb-section-title">Site &amp; access</h2>
-          <p class="pb-section-sub">Operational settings that aren't part of the bot's answers.</p>
-
-          <div class="pb-subsection">
-            <h3 class="pb-subhead">Daily report ${tip('A once-daily email summarizing yesterday\'s chats. Off by default.')}</h3>
-            <form id="pbReportForm" data-1p-ignore>
-              <label class="pb-checkbox"><input type="checkbox" id="pbReportEnabled" ${config.daily_reports_enabled ? 'checked' : ''}><span>Send daily report email</span></label>
-              <div class="pb-field" style="margin-top:8px"><label>Recipients</label><input type="text" id="pbReportRecipients" value="${esc(config.report_recipients || '')}" placeholder="ai@example.org, frontdesk@example.org" autocomplete="off" data-1p-ignore></div>
-              <button type="submit" class="btn btn-sm btn-primary" style="margin-top:8px">Save report settings</button>
-              <span class="setup-msg" id="pbReportMsg"></span>
-            </form>
-          </div>
-
-          <div class="pb-subsection">
-            <h3 class="pb-subhead">Allowed domains ${tip('Your chat widget only loads on domains you approve here.')}</h3>
-            <form id="pbDomainForm" data-1p-ignore>
-              <div class="pb-inline-add"><input type="text" id="pbDomainInput" placeholder="yourorg.org" autocomplete="off" data-1p-ignore><button type="submit" class="btn btn-sm btn-primary">Add</button></div>
-              <span class="setup-msg" id="pbDomainMsg"></span>
-            </form>
-            <div id="pbDomainList" class="domains-list"></div>
-          </div>
-
-          <div class="pb-subsection">
-            <h3 class="pb-subhead">Team members ${tip('People who can sign in to this admin portal via an emailed magic link.')}</h3>
-            <form id="pbTeamForm" data-1p-ignore>
-              <div class="pb-inline-add"><input type="email" id="pbTeamInput" placeholder="team@example.com" autocomplete="off" data-1p-ignore><button type="submit" class="btn btn-sm btn-primary">Invite</button></div>
-              <span class="setup-msg" id="pbTeamMsg"></span>
-            </form>
-            <div id="pbTeamList" class="domains-list"></div>
-          </div>
-        </section>
-
         <div style="height:80px"></div>
       </div>
-
       <div class="pb-savebar">
         <span class="pb-save-msg" id="kbSaveMsg"></span>
         <button class="btn btn-primary" id="kbSaveAll">Save changes</button>
       </div>
-    </div>
-  `
+    </div>`
 
   wireRail()
   wireSpecies()
-  wireTriage()
-  wireDiagnostics()
-  wireSiteAccess()
-  wireSaveAll()
-
+  wireReferrals()
   document.getElementById('pbAskAgent')?.addEventListener('click', (e) => { e.preventDefault(); _deps.expandAgent?.() })
-
-  // Honor a pending scroll target set by setKbTab-era callers.
-  if (_pendingScroll) {
-    const el = document.getElementById(_pendingScroll)
-    _pendingScroll = null
-    if (el) setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50)
-  }
+  wireSetupSave(oc)
 }
 
-function renderSpeciesRow(species, cfg) {
+function renderSpeciesRow(species, cfg, referralNames) {
   const key = species.replace(/[^a-zA-Z0-9]/g, '_')
   const mode = cfg.mode || 'builtin'
-  const notes = cfg.notes || ''
-  const redirect = cfg.redirect || ''
-  const detail = mode === 'skip'
-    ? `<input type="text" class="kb-species-redirect" value="${esc(redirect)}" placeholder="Where to redirect (e.g., Marine Mammal Center at 415-289-7325)">`
-    : `<textarea class="kb-species-notes" rows="2" placeholder="${mode === 'override' ? 'Your full protocol for this species...' : 'Additional notes for your org...'}">${esc(notes)}</textarea>`
+  const detail = mode === 'builtin' ? '' : speciesDetailHtml(mode, cfg, referralNames)
   return `<div class="kb-species-row" data-species="${esc(species)}">
     <span class="kb-species-name">${species}</span>
     <select class="kb-species-mode" data-key="${esc(key)}">
@@ -283,65 +192,91 @@ function renderSpeciesRow(species, cfg) {
       <option value="override" ${mode === 'override' ? 'selected' : ''}>Replace with your protocol</option>
       <option value="skip" ${mode === 'skip' ? 'selected' : ''}>We don't handle this</option>
     </select>
-    <div class="kb-species-detail" data-key="${esc(key)}" style="display:${mode === 'builtin' ? 'none' : ''}">${mode === 'builtin' ? '' : detail}</div>
+    <div class="kb-species-detail" data-key="${esc(key)}" style="display:${mode === 'builtin' ? 'none' : ''}">${detail}</div>
   </div>`
 }
 
-function renderTriageRules(tenantRules) {
-  const tenantById = {}
-  const customRules = []
-  for (const r of tenantRules) {
-    if (r.id && DEFAULT_TRIAGE_RULES.some(d => d.id === r.id)) tenantById[r.id] = r
-    else if (!r.deleted) customRules.push(r)
+function speciesDetailHtml(mode, cfg, referralNames) {
+  if (mode === 'skip') {
+    const opts = (referralNames || []).map(n => `<option value="${esc(n)}">${esc(n)}</option>`).join('')
+    return `<div class="kb-skip-detail">
+      ${referralNames && referralNames.length ? `<select class="kb-species-referral"><option value="">Use a referral…</option>${opts}<option value="__custom">Other / type below</option></select>` : ''}
+      <input type="text" class="kb-species-redirect" value="${esc(cfg.redirect || '')}" placeholder="Where to send them (e.g., Marine Mammal Center at 415-289-7325)">
+    </div>`
   }
-  const merged = DEFAULT_TRIAGE_RULES.map(d => {
-    const override = tenantById[d.id]
-    if (override?.deleted) return { ...d, deleted: true }
-    return override ? { ...d, ...override } : d
-  }).concat(customRules)
-
-  return merged.map((rule, i) => {
-    const isDeleted = rule.deleted
-    const isBuiltin = DEFAULT_TRIAGE_RULES.some(d => d.id === rule.id)
-    const urgencyColors = { critical: '#991b1b', urgent: '#b44233', moderate: '#92702d', info: '#4a6670' }
-    return `
-      <div class="kb-triage-rule ${isDeleted ? 'kb-triage-deleted' : ''}" data-idx="${i}" data-id="${esc(rule.id || '')}">
-        <div class="kb-triage-rule-header">
-          <span class="kb-triage-urgency-badge" style="background:${urgencyColors[rule.urgency] || '#666'}">${rule.urgency?.toUpperCase()}</span>
-          <input type="text" class="kb-triage-label" value="${esc(rule.label || '')}" ${isDeleted ? 'disabled' : ''} placeholder="Rule name">
-          ${isBuiltin ? '<span class="kb-triage-builtin-tag">built-in</span>' : ''}
-          ${isDeleted
-    ? '<button class="btn btn-sm kb-triage-restore" title="Restore this rule">Restore</button>'
-    : `<button class="btn btn-sm kb-triage-remove" title="${isBuiltin ? 'Disable this default rule' : 'Remove'}">&times;</button>`}
-        </div>
-        ${!isDeleted ? `
-          <div class="kb-triage-rule-body">
-            <select class="kb-triage-urgency">
-              <option value="critical" ${rule.urgency === 'critical' ? 'selected' : ''}>Critical (always needs follow-up)</option>
-              <option value="urgent" ${rule.urgency === 'urgent' ? 'selected' : ''}>Urgent (always needs follow-up)</option>
-              <option value="moderate" ${rule.urgency === 'moderate' ? 'selected' : ''}>Moderate (follow-up if contact info provided)</option>
-              <option value="info" ${rule.urgency === 'info' ? 'selected' : ''}>Info (bot handles, no follow-up)</option>
-            </select>
-            <input type="text" class="kb-triage-patterns" value="${esc((rule.patterns || []).join(', '))}" placeholder="Keywords (comma-separated)">
-            <input type="text" class="kb-triage-hint" value="${esc(rule.hint || '')}" placeholder="Front desk hint">
-          </div>
-        ` : ''}
-      </div>`
-  }).join('')
+  return `<textarea class="kb-species-notes" rows="2" placeholder="${mode === 'override' ? 'Your full protocol for this species...' : 'Additional notes / exceptions for your org...'}">${esc(cfg.notes || '')}</textarea>`
 }
 
-// ── Section rail (scroll-spy) ──────────────────────────────────────────────────
+function renderReferralRow(r, i) {
+  return `<div class="pb-referral-row" data-idx="${i}">
+    <input type="text" class="pb-ref-name" value="${esc(r.name || '')}" placeholder="Name (e.g., Marin Humane)" autocomplete="off" data-1p-ignore>
+    <input type="text" class="pb-ref-contact" value="${esc(r.contact || '')}" placeholder="Phone / website" autocomplete="off" data-1p-ignore>
+    <input type="text" class="pb-ref-covers" value="${esc(r.covers || '')}" placeholder="What they cover (animal control, turkeys, after-hours…)" autocomplete="off" data-1p-ignore>
+    <button class="btn btn-sm pb-ref-remove" type="button" title="Remove">&times;</button>
+  </div>`
+}
+
+function wireReferrals() {
+  const list = document.getElementById('pbReferralList')
+  document.getElementById('pbAddReferral')?.addEventListener('click', () => {
+    const i = list.querySelectorAll('.pb-referral-row').length
+    list.insertAdjacentHTML('beforeend', renderReferralRow({}, i))
+    list.lastElementChild.querySelector('.pb-ref-remove').addEventListener('click', (e) => e.target.closest('.pb-referral-row').remove())
+  })
+  list?.querySelectorAll('.pb-ref-remove').forEach(btn => btn.addEventListener('click', () => btn.closest('.pb-referral-row').remove()))
+}
+
+function collectReferrals() {
+  const out = []
+  document.querySelectorAll('#pbReferralList .pb-referral-row').forEach(row => {
+    const name = row.querySelector('.pb-ref-name')?.value?.trim() || ''
+    const contact = row.querySelector('.pb-ref-contact')?.value?.trim() || ''
+    const covers = row.querySelector('.pb-ref-covers')?.value?.trim() || ''
+    if (name) out.push({ name, contact, covers })
+  })
+  return out
+}
+
+function wireSpecies() {
+  document.querySelectorAll('.kb-species-mode').forEach(select => {
+    select.addEventListener('change', () => {
+      const row = select.closest('.kb-species-row')
+      const detail = row.querySelector('.kb-species-detail')
+      const mode = select.value
+      if (mode === 'builtin') { detail.style.display = 'none'; detail.innerHTML = ''; return }
+      detail.style.display = ''
+      const names = collectReferrals().map(r => r.name)
+      detail.innerHTML = speciesDetailHtml(mode, {}, names)
+      wireSkipPicker(detail)
+    })
+  })
+  document.querySelectorAll('.kb-species-detail').forEach(wireSkipPicker)
+
+  document.getElementById('kbAddSpeciesBtn')?.addEventListener('click', () => {
+    _deps.expandAgent?.()
+    const input = document.getElementById('agentInput')
+    if (input) { input.value = 'I need to add a custom species that is not in the built-in list. Help me write the rescue protocol.'; setTimeout(() => _deps.sendAgentMessage?.(), 100) }
+  })
+  document.querySelectorAll('.kb-custom-sp-remove').forEach(btn => btn.addEventListener('click', () => btn.closest('.kb-custom-species-row')?.remove()))
+}
+
+// The skip-mode "Use a referral…" dropdown fills the free-text redirect with
+// the chosen partner so the operator doesn't retype contact details.
+function wireSkipPicker(detail) {
+  const select = detail.querySelector('.kb-species-referral')
+  const text = detail.querySelector('.kb-species-redirect')
+  if (!select || !text) return
+  select.addEventListener('change', () => {
+    if (!select.value || select.value === '__custom') { text.focus(); return }
+    const ref = collectReferrals().find(r => r.name === select.value)
+    text.value = ref ? `${ref.name}${ref.contact ? ` at ${ref.contact}` : ''}` : select.value
+  })
+}
 
 function wireRail() {
   const content = document.getElementById('pbContent')
   const links = [...document.querySelectorAll('.pb-rail-link')]
-  links.forEach(link => {
-    link.addEventListener('click', (e) => {
-      e.preventDefault()
-      document.getElementById(link.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-    })
-  })
-  // Highlight the section nearest the top of the scroll container.
+  links.forEach(link => link.addEventListener('click', (e) => { e.preventDefault(); document.getElementById(link.dataset.target)?.scrollIntoView({ behavior: 'smooth', block: 'start' }) }))
   if (!content) return
   let raf = null
   content.addEventListener('scroll', () => {
@@ -359,37 +294,140 @@ function wireRail() {
   })
 }
 
-// ── Species wiring ─────────────────────────────────────────────────────────────
+function wireSetupSave(prevOc) {
+  document.getElementById('kbSaveAll')?.addEventListener('click', async () => {
+    const slug = getTenantSlug()
+    const btn = document.getElementById('kbSaveAll')
+    const msg = document.getElementById('kbSaveMsg')
+    if (!slug) { msg.textContent = 'No tenant context'; msg.className = 'pb-save-msg kb-save-error'; return }
+    btn.disabled = true; btn.textContent = 'Saving...'
 
-function wireSpecies() {
-  document.querySelectorAll('.kb-species-mode').forEach(select => {
-    select.addEventListener('change', () => {
-      const row = select.closest('.kb-species-row')
+    const speciesConfig = {}
+    document.querySelectorAll('#kbSpeciesTable .kb-species-row').forEach(row => {
+      const species = row.dataset.species
+      const mode = row.querySelector('.kb-species-mode')?.value || 'builtin'
+      if (!species || mode === 'builtin') return
       const detail = row.querySelector('.kb-species-detail')
-      const mode = select.value
-      if (mode === 'builtin') { detail.style.display = 'none'; return }
-      detail.style.display = ''
-      detail.innerHTML = mode === 'skip'
-        ? '<input type="text" class="kb-species-redirect" placeholder="Where to redirect (e.g., Marine Mammal Center at 415-289-7325)">'
-        : `<textarea class="kb-species-notes" rows="2" placeholder="${mode === 'override' ? 'Your full protocol for this species...' : 'Additional notes for your org...'}"></textarea>`
+      speciesConfig[species] = {
+        mode,
+        notes: detail?.querySelector('.kb-species-notes')?.value?.trim() || '',
+        redirect: detail?.querySelector('.kb-species-redirect')?.value?.trim() || '',
+      }
     })
-  })
+    const customSpecies = []
+    document.querySelectorAll('.kb-custom-species-row').forEach(row => {
+      const name = row.dataset.species
+      const protocol = row.querySelector('.kb-custom-sp-protocol')?.value?.trim()
+      if (name) customSpecies.push({ name, protocol: protocol || '' })
+    })
+    const referrals = collectReferrals()
 
-  document.getElementById('kbAddSpeciesBtn')?.addEventListener('click', () => {
-    _deps.expandAgent?.()
-    const input = document.getElementById('agentInput')
-    if (input) {
-      input.value = 'I need to add a custom species that is not in the built-in list. Help me write the rescue protocol.'
-      setTimeout(() => _deps.sendAgentMessage?.(), 100)
+    // Merge: preserve other tabs' data (triage_config etc.) via the spread.
+    const orgConfig = {
+      ...(getTenantConfig()?.org_config || {}),
+      hours: val('pbHours'),
+      after_hours_phone: val('pbAfterHours'),
+      public_address: val('pbAddress'),
+      species_config: speciesConfig,
+      custom_species: customSpecies,
+      referrals,
+      redirect_info: val('pbRedirectInfo'),
     }
-  })
+    // House rules absorbed the legacy general-rescue-rules box; clear the old
+    // field once at least one of them had content, so it isn't double-rendered.
+    orgConfig.intake_procedures = ''
+    // Only retire the legacy emergency_contacts free-text once it's been
+    // captured as a structured referral; otherwise keep it as the fallback.
+    if (referrals.length) orgConfig.emergency_contacts = ''
+    else orgConfig.emergency_contacts = prevOc.emergency_contacts || ''
 
-  document.querySelectorAll('.kb-custom-sp-remove').forEach(btn => {
-    btn.addEventListener('click', () => btn.closest('.kb-custom-species-row')?.remove())
+    const botOverrides = { tone: val('kbTone'), always_say: val('kbAlwaysSay'), never_say: val('kbNeverSay'), greeting: val('kbGreeting') }
+    const payload = {
+      phone: val('pbPhone'), email: val('pbEmail'), url: val('pbUrl'),
+      location_service_area: val('pbServiceArea'), location_county: val('pbCounty'), location_state: val('pbState'),
+      org_config: orgConfig, bot_overrides: botOverrides, house_rules: val('pbHouseRules'),
+    }
+    try {
+      const res = await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
+      if (res.ok) {
+        const cfg = getTenantConfig() || {}
+        cfg.org_config = orgConfig; cfg.bot_overrides = botOverrides; cfg.house_rules = payload.house_rules
+        cfg.phone = payload.phone; cfg.email = payload.email; cfg.url = payload.url
+        cfg.location_service_area = payload.location_service_area; cfg.location_county = payload.location_county; cfg.location_state = payload.location_state
+        setTenantConfig(cfg)
+        msg.textContent = 'Saved!'; msg.className = 'pb-save-msg kb-save-ok'
+      } else {
+        const d = await res.json().catch(() => ({}))
+        msg.textContent = d.error || 'Save failed'; msg.className = 'pb-save-msg kb-save-error'
+      }
+    } catch { msg.textContent = 'Network error'; msg.className = 'pb-save-msg kb-save-error' }
+    btn.disabled = false; btn.textContent = 'Save changes'
+    setTimeout(() => { msg.textContent = '' }, 3000)
   })
 }
 
-// ── Triage wiring ──────────────────────────────────────────────────────────────
+// ── TRIAGE ──────────────────────────────────────────────────────────────────
+
+function renderTriage(body) {
+  const oc = getTenantConfig()?.org_config || {}
+  body.innerHTML = `
+    <div class="pb-page pb-page-single">
+      <div class="pb-content">
+        <section class="pb-section">
+          <h2 class="pb-section-title">Dashboard triage <span class="pb-staff-tag">staff only</span></h2>
+          <p class="pb-section-sub">These rules decide which conversations show up on your <strong>staff dashboard</strong> for review, and at what urgency. They do <strong>not</strong> change what the bot says to visitors.</p>
+          <div class="kb-triage-tester">
+            <label class="kb-triage-tester-label">Test a sample message</label>
+            <div class="kb-triage-tester-row"><input type="text" id="kbTriageTestInput" placeholder="e.g., A bat is in my bedroom" autocomplete="off" data-1p-ignore><button class="btn btn-sm" id="kbTriageTestRun">Test</button></div>
+            <div id="kbTriageTestResult" class="kb-triage-tester-result"></div>
+          </div>
+          <div id="kbTriageRules">${renderTriageRules(oc.triage_config || [])}</div>
+          <button class="btn btn-sm" id="kbAddTriageRule" style="margin-top:6px">+ Add custom rule</button>
+        </section>
+        <div style="height:80px"></div>
+      </div>
+      <div class="pb-savebar"><span class="pb-save-msg" id="kbTriageMsg"></span><button class="btn btn-primary" id="kbTriageSave">Save triage rules</button></div>
+    </div>`
+  wireTriage()
+  document.getElementById('kbTriageSave')?.addEventListener('click', saveTriage)
+}
+
+function renderTriageRules(tenantRules) {
+  const tenantById = {}
+  const customRules = []
+  for (const r of tenantRules) {
+    if (r.id && DEFAULT_TRIAGE_RULES.some(d => d.id === r.id)) tenantById[r.id] = r
+    else if (!r.deleted) customRules.push(r)
+  }
+  const merged = DEFAULT_TRIAGE_RULES.map(d => {
+    const o = tenantById[d.id]
+    if (o?.deleted) return { ...d, deleted: true }
+    return o ? { ...d, ...o } : d
+  }).concat(customRules)
+  return merged.map((rule) => {
+    const isDeleted = rule.deleted
+    const isBuiltin = DEFAULT_TRIAGE_RULES.some(d => d.id === rule.id)
+    const colors = { critical: '#991b1b', urgent: '#b44233', moderate: '#92702d', info: '#4a6670' }
+    return `<div class="kb-triage-rule ${isDeleted ? 'kb-triage-deleted' : ''}" data-id="${esc(rule.id || '')}">
+        <div class="kb-triage-rule-header">
+          <span class="kb-triage-urgency-badge" style="background:${colors[rule.urgency] || '#666'}">${rule.urgency?.toUpperCase()}</span>
+          <input type="text" class="kb-triage-label" value="${esc(rule.label || '')}" ${isDeleted ? 'disabled' : ''} placeholder="Rule name">
+          ${isBuiltin ? '<span class="kb-triage-builtin-tag">built-in</span>' : ''}
+          ${isDeleted ? '<button class="btn btn-sm kb-triage-restore">Restore</button>' : `<button class="btn btn-sm kb-triage-remove" title="${isBuiltin ? 'Disable this default rule' : 'Remove'}">&times;</button>`}
+        </div>
+        ${!isDeleted ? `<div class="kb-triage-rule-body">
+            <select class="kb-triage-urgency">
+              <option value="critical" ${rule.urgency === 'critical' ? 'selected' : ''}>Critical (always needs follow-up)</option>
+              <option value="urgent" ${rule.urgency === 'urgent' ? 'selected' : ''}>Urgent (always needs follow-up)</option>
+              <option value="moderate" ${rule.urgency === 'moderate' ? 'selected' : ''}>Moderate (follow-up if contact info provided)</option>
+              <option value="info" ${rule.urgency === 'info' ? 'selected' : ''}>Info (bot handles, no follow-up)</option>
+            </select>
+            <input type="text" class="kb-triage-patterns" value="${esc((rule.patterns || []).join(', '))}" placeholder="Keywords (comma-separated)">
+            <input type="text" class="kb-triage-hint" value="${esc(rule.hint || '')}" placeholder="Front desk hint">
+          </div>` : ''}
+      </div>`
+  }).join('')
+}
 
 function wireTriage() {
   const input = document.getElementById('kbTriageTestInput')
@@ -404,18 +442,13 @@ function wireTriage() {
       const res = await apiFetch('/admin/triage/test', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ message }) })
       if (!res.ok) throw new Error(await res.text())
       const data = await res.json()
-      const urgencyColors = { critical: '#991b1b', urgent: '#b44233', moderate: '#92702d', info: '#4a6670', none: '#6b7f5e' }
+      const colors = { critical: '#991b1b', urgent: '#b44233', moderate: '#92702d', info: '#4a6670', none: '#6b7f5e' }
       result.innerHTML = data.matched
-        ? `<span class="kb-triage-urgency-badge" style="background:${urgencyColors[data.urgency] || '#666'}">${esc(String(data.urgency).toUpperCase())}</span>
-           <span class="kb-triage-tester-rule"><strong>${esc(data.ruleLabel)}</strong> matched on <code>${esc(data.matchedPattern)}</code></span>
-           ${data.hint ? `<div class="kb-triage-tester-hint">${esc(data.hint)}</div>` : ''}`
-        : `<span class="kb-triage-urgency-badge" style="background:${urgencyColors.none}">NONE</span>
-           <span class="kb-triage-tester-rule">No rule matched. This conversation would not be flagged.</span>`
+        ? `<span class="kb-triage-urgency-badge" style="background:${colors[data.urgency] || '#666'}">${esc(String(data.urgency).toUpperCase())}</span><span class="kb-triage-tester-rule"><strong>${esc(data.ruleLabel)}</strong> matched on <code>${esc(data.matchedPattern)}</code></span>${data.hint ? `<div class="kb-triage-tester-hint">${esc(data.hint)}</div>` : ''}`
+        : `<span class="kb-triage-urgency-badge" style="background:${colors.none}">NONE</span><span class="kb-triage-tester-rule">No rule matched. This conversation would not be flagged.</span>`
     } catch (e) {
       result.innerHTML = `<span class="kb-triage-tester-error">Test failed: ${esc(String(e.message || e))}</span>`
-    } finally {
-      btn.disabled = false; btn.textContent = 'Test'
-    }
+    } finally { btn.disabled = false; btn.textContent = 'Test' }
   }
   btn?.addEventListener('click', run)
   input?.addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); run() } })
@@ -424,81 +457,75 @@ function wireTriage() {
     const container = document.getElementById('kbTriageRules')
     const row = document.createElement('div')
     row.className = 'kb-triage-rule'
-    row.innerHTML = `
-      <div class="kb-field-grid" style="grid-template-columns: 1fr 120px auto">
+    row.innerHTML = `<div class="kb-field-grid" style="grid-template-columns: 1fr 120px auto">
         <input type="text" class="kb-triage-label" placeholder="Rule name (e.g., Rabies exposure)">
-        <select class="kb-triage-urgency">
-          <option value="critical">Critical (always needs follow-up)</option>
-          <option value="urgent">Urgent (always needs follow-up)</option>
-          <option value="moderate">Moderate (follow-up if contact info provided)</option>
-          <option value="info">Info (bot handles, no follow-up)</option>
-        </select>
-        <button class="btn btn-sm kb-triage-remove" title="Remove rule">&times;</button>
-      </div>
+        <select class="kb-triage-urgency"><option value="critical">Critical (always needs follow-up)</option><option value="urgent">Urgent (always needs follow-up)</option><option value="moderate">Moderate (follow-up if contact info provided)</option><option value="info">Info (bot handles, no follow-up)</option></select>
+        <button class="btn btn-sm kb-triage-remove" title="Remove rule">&times;</button></div>
       <input type="text" class="kb-triage-patterns" placeholder="Keywords (comma-separated)" style="margin-top:4px;width:100%">
       <input type="text" class="kb-triage-hint" placeholder="Front desk hint" style="margin-top:4px;width:100%">`
     container.appendChild(row)
     row.querySelector('.kb-triage-remove')?.addEventListener('click', () => row.remove())
   })
-
-  document.querySelectorAll('.kb-triage-remove').forEach(btn => {
-    btn.addEventListener('click', () => {
-      const rule = btn.closest('.kb-triage-rule')
-      const id = rule?.dataset.id
-      if (id && DEFAULT_TRIAGE_RULES.some(d => d.id === id)) {
-        rule.classList.add('kb-triage-deleted')
-        rule.dataset.deleted = 'true'
-        const body = rule.querySelector('.kb-triage-rule-body')
-        if (body) body.style.display = 'none'
-        btn.outerHTML = '<button class="btn btn-sm kb-triage-restore" title="Restore this rule">Restore</button>'
-        rule.querySelector('.kb-triage-restore')?.addEventListener('click', () => restoreTriage(rule))
-      } else {
-        rule?.remove()
-      }
-    })
-  })
-  document.querySelectorAll('.kb-triage-restore').forEach(btn => {
-    btn.addEventListener('click', () => restoreTriage(btn.closest('.kb-triage-rule')))
-  })
+  document.querySelectorAll('.kb-triage-remove').forEach(btn => btn.addEventListener('click', () => triageRemove(btn)))
+  document.querySelectorAll('.kb-triage-restore').forEach(btn => btn.addEventListener('click', () => triageRestore(btn.closest('.kb-triage-rule'))))
 }
 
-function restoreTriage(rule) {
+function triageRemove(btn) {
+  const rule = btn.closest('.kb-triage-rule')
+  const id = rule?.dataset.id
+  if (id && DEFAULT_TRIAGE_RULES.some(d => d.id === id)) {
+    rule.classList.add('kb-triage-deleted'); rule.dataset.deleted = 'true'
+    const body = rule.querySelector('.kb-triage-rule-body'); if (body) body.style.display = 'none'
+    btn.outerHTML = '<button class="btn btn-sm kb-triage-restore">Restore</button>'
+    rule.querySelector('.kb-triage-restore')?.addEventListener('click', () => triageRestore(rule))
+  } else rule?.remove()
+}
+function triageRestore(rule) {
   if (!rule) return
-  rule.classList.remove('kb-triage-deleted')
-  delete rule.dataset.deleted
-  const body = rule.querySelector('.kb-triage-rule-body')
-  if (body) body.style.display = ''
+  rule.classList.remove('kb-triage-deleted'); delete rule.dataset.deleted
+  const body = rule.querySelector('.kb-triage-rule-body'); if (body) body.style.display = ''
   const btn = rule.querySelector('.kb-triage-restore')
-  if (btn) {
-    btn.outerHTML = '<button class="btn btn-sm kb-triage-remove" title="Disable">&times;</button>'
-    rule.querySelector('.kb-triage-remove')?.addEventListener('click', () => {
-      const id = rule.dataset.id
-      if (id && DEFAULT_TRIAGE_RULES.some(d => d.id === id)) {
-        rule.classList.add('kb-triage-deleted'); rule.dataset.deleted = 'true'
-        const b = rule.querySelector('.kb-triage-rule-body'); if (b) b.style.display = 'none'
-      } else rule.remove()
-    })
-  }
+  if (btn) { btn.outerHTML = '<button class="btn btn-sm kb-triage-remove" title="Disable">&times;</button>'; rule.querySelector('.kb-triage-remove')?.addEventListener('click', (e) => triageRemove(e.target)) }
 }
 
-// ── Diagnostics (lazy-loaded read-only tools) ──────────────────────────────────
-
-function wireDiagnostics() {
-  document.querySelectorAll('.pb-diag-block').forEach(block => {
-    const summary = block.querySelector('summary')
-    summary.addEventListener('click', () => {
-      // Load on first open only.
-      if (block.dataset.loaded) return
-      // `open` flips AFTER this handler, so check the pre-toggle state.
-      if (block.hasAttribute('open')) return
-      block.dataset.loaded = '1'
-      const body = block.querySelector('.pb-diag-body')
-      const kind = block.dataset.diag
-      if (kind === 'prompt') loadPromptPreview(body)
-      else if (kind === 'rag') renderRagExplorer(body)
-      else if (kind === 'guides') renderGuides(body)
-    })
+async function saveTriage() {
+  const slug = getTenantSlug()
+  const msg = document.getElementById('kbTriageMsg')
+  if (!slug) { showSetupMsg(msg, 'No tenant context', false); return }
+  const triageConfig = []
+  document.querySelectorAll('.kb-triage-rule').forEach(row => {
+    const id = row.dataset.id || undefined
+    if (row.dataset.deleted === 'true' && id) { triageConfig.push({ id, deleted: true }); return }
+    const label = row.querySelector('.kb-triage-label')?.value?.trim()
+    const urgency = row.querySelector('.kb-triage-urgency')?.value
+    const patterns = row.querySelector('.kb-triage-patterns')?.value?.split(',').map(p => p.trim()).filter(Boolean) || []
+    const hint = row.querySelector('.kb-triage-hint')?.value?.trim() || ''
+    if (label) triageConfig.push({ id, label, urgency, patterns, hint })
   })
+  const orgConfig = { ...(getTenantConfig()?.org_config || {}), triage_config: triageConfig }
+  try {
+    const res = await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ org_config: orgConfig }) })
+    if (res.ok) { const cfg = getTenantConfig() || {}; cfg.org_config = orgConfig; setTenantConfig(cfg); showSetupMsg(msg, 'Saved!', true) }
+    else showSetupMsg(msg, 'Save failed', false)
+  } catch { showSetupMsg(msg, 'Network error', false) }
+}
+
+// ── KNOWLEDGE (read-only) ─────────────────────────────────────────────────────
+
+function renderKnowledge(body) {
+  body.innerHTML = `
+    <div class="pb-page pb-page-single">
+      <div class="pb-content">
+        <p class="pb-lead">Inspect what your bot knows and exactly what it retrieves. Read-only.</p>
+        <section class="pb-section"><h2 class="pb-section-title">RAG explorer</h2><p class="pb-section-sub">Type a question to see which guide sections the bot would pull up. Higher scores = closer matches.</p><div id="pbRag"></div></section>
+        <section class="pb-section"><h2 class="pb-section-title">What your bot sees</h2><div id="pbPrompt"><div class="loading">Loading…</div></div></section>
+        <section class="pb-section"><h2 class="pb-section-title">Built-in species guides</h2><div id="pbGuides"><div class="loading">Loading…</div></div></section>
+        <div style="height:40px"></div>
+      </div>
+    </div>`
+  renderRagExplorer(document.getElementById('pbRag'))
+  loadPromptPreview(document.getElementById('pbPrompt'))
+  renderGuides(document.getElementById('pbGuides'))
 }
 
 async function loadPromptPreview(el) {
@@ -507,22 +534,12 @@ async function loadPromptPreview(el) {
     if (!res.ok) throw new Error('fetch failed')
     const data = await res.json()
     const text = (data.custom_instruction || data.compiled_preview || '').trim()
-    el.innerHTML = `
-      <p class="pb-section-sub">This is the org-specific instruction your bot runs on top of its built-in rescue training. It's generated from the fields above — edit them and Save to change it.</p>
-      <textarea class="pb-diag-prompt" rows="16" readonly>${escapeHtml(text || '(nothing configured yet)')}</textarea>`
-  } catch {
-    el.innerHTML = '<div class="error">Could not load the compiled instructions.</div>'
-  }
+    el.innerHTML = `<p class="pb-section-sub">The org-specific instructions your bot runs on top of its built-in rescue training — generated from your Setup tab. Edit there and Save to change it.</p><textarea class="pb-diag-prompt" rows="16" readonly>${escapeHtml(text || '(nothing configured yet)')}</textarea>`
+  } catch { el.innerHTML = '<div class="error">Could not load the compiled instructions.</div>' }
 }
 
 function renderRagExplorer(el) {
-  el.innerHTML = `
-    <p class="pb-section-sub">Type a question to see which guide sections the bot would pull up. Higher scores = closer matches.</p>
-    <div class="rag-search-bar">
-      <input type="text" id="ragQuery" placeholder="What should I do about a bat in my attic?" autocomplete="off" data-1p-ignore data-lpignore="true">
-      <button class="btn btn-primary" id="ragSearchBtn">Search</button>
-    </div>
-    <div id="ragResults"></div>`
+  el.innerHTML = '<div class="rag-search-bar"><input type="text" id="ragQuery" placeholder="What should I do about a bat in my attic?" autocomplete="off" data-1p-ignore data-lpignore="true"><button class="btn btn-primary" id="ragSearchBtn">Search</button></div><div id="ragResults"></div>'
   const queryInput = el.querySelector('#ragQuery')
   const searchBtn = el.querySelector('#ragSearchBtn')
   const resultsEl = el.querySelector('#ragResults')
@@ -535,11 +552,8 @@ function renderRagExplorer(el) {
       const res = await apiFetch('/admin/rag-search', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ query, top_k: 5 }) })
       if (!res.ok) { const e = await res.json().catch(() => ({})); resultsEl.innerHTML = `<div class="error">${escapeHtml(e.error || 'Search failed')}</div>`; return }
       renderRagResults(resultsEl, await res.json())
-    } catch (err) {
-      resultsEl.innerHTML = '<div class="error">Error: ' + escapeHtml(err.message) + '</div>'
-    } finally {
-      searchBtn.disabled = false; searchBtn.textContent = 'Search'
-    }
+    } catch (err) { resultsEl.innerHTML = '<div class="error">Error: ' + escapeHtml(err.message) + '</div>' }
+    finally { searchBtn.disabled = false; searchBtn.textContent = 'Search' }
   }
   searchBtn.addEventListener('click', doSearch)
   queryInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doSearch() })
@@ -555,16 +569,7 @@ function renderRagResults(el, data) {
   results.forEach((r, i) => {
     const pct = Math.round(r.score * 100)
     const barColor = r.score > 0.8 ? 'var(--color-canopy)' : r.score > 0.6 ? 'var(--color-sage)' : r.score > 0.4 ? 'var(--color-ochre)' : 'var(--color-storm)'
-    html += `
-      <div class="rag-result${r.score < 0.4 ? ' rag-result-dim' : ''}">
-        <div class="rag-result-header">
-          <span class="rag-result-rank">#${i + 1}</span>
-          <span class="rag-result-doc">${escapeHtml(r.document)}</span>
-          <span class="rag-result-score" style="font-family:var(--font-mono);font-size:0.82rem">${r.score.toFixed(3)}</span>
-        </div>
-        <div class="rag-score-bar"><div class="rag-score-fill" style="width:${pct}%;background:${barColor}"></div></div>
-        <div class="rag-result-text">${escapeHtml(r.text.slice(0, 400) + (r.text.length > 400 ? '...' : ''))}</div>
-      </div>`
+    html += `<div class="rag-result${r.score < 0.4 ? ' rag-result-dim' : ''}"><div class="rag-result-header"><span class="rag-result-rank">#${i + 1}</span><span class="rag-result-doc">${escapeHtml(r.document)}</span><span class="rag-result-score" style="font-family:var(--font-mono);font-size:0.82rem">${r.score.toFixed(3)}</span></div><div class="rag-score-bar"><div class="rag-score-fill" style="width:${pct}%;background:${barColor}"></div></div><div class="rag-result-text">${escapeHtml(r.text.slice(0, 400) + (r.text.length > 400 ? '...' : ''))}</div></div>`
   })
   el.innerHTML = html
 }
@@ -574,217 +579,97 @@ async function renderGuides(el) {
     const res = await apiFetch('/admin/knowledge-base')
     if (!res.ok) { el.innerHTML = '<div class="error">Failed to load knowledge base</div>'; return }
     const guides = (await res.json()).builtin_guides || []
-    el.innerHTML = `
-      <p class="pb-section-sub">${guides.length} guides bundled with your bot.</p>
-      <div class="kb-guides">${guides.map((g, i) => `
-        <div class="kb-guide-card" data-index="${i}">
-          <div class="kb-guide-header"><span class="kb-guide-name">${escapeHtml(g.name)}</span><span class="kb-guide-category">${escapeHtml(g.category)}</span><span class="kb-guide-expand">+</span></div>
-          <div class="kb-guide-body" id="pbGuideBody-${i}" style="display:none"><div class="kb-guide-text">${safeMarkdown(g.text)}</div></div>
-        </div>`).join('')}</div>`
+    el.innerHTML = `<p class="pb-section-sub">${guides.length} guides bundled with your bot.</p><div class="kb-guides">${guides.map((g, i) => `<div class="kb-guide-card" data-index="${i}"><div class="kb-guide-header"><span class="kb-guide-name">${escapeHtml(g.name)}</span><span class="kb-guide-category">${escapeHtml(g.category)}</span><span class="kb-guide-expand">+</span></div><div class="kb-guide-body" id="pbGuideBody-${i}" style="display:none"><div class="kb-guide-text">${safeMarkdown(g.text)}</div></div></div>`).join('')}</div>`
     el.querySelectorAll('.kb-guide-card').forEach(card => {
       card.querySelector('.kb-guide-header').addEventListener('click', () => {
-        const body = card.querySelector('.kb-guide-body')
-        const expand = card.querySelector('.kb-guide-expand')
-        const hidden = body.style.display === 'none'
-        body.style.display = hidden ? '' : 'none'
-        expand.textContent = hidden ? '-' : '+'
+        const body = card.querySelector('.kb-guide-body'); const expand = card.querySelector('.kb-guide-expand')
+        const hidden = body.style.display === 'none'; body.style.display = hidden ? '' : 'none'; expand.textContent = hidden ? '-' : '+'
       })
     })
-  } catch (err) {
-    el.innerHTML = '<div class="error">Failed to load: ' + escapeHtml(err.message) + '</div>'
-  }
+  } catch (err) { el.innerHTML = '<div class="error">Failed to load: ' + escapeHtml(err.message) + '</div>' }
 }
 
-// ── Site & access (daily report, domains, team) ────────────────────────────────
+// ── ACCOUNT ──────────────────────────────────────────────────────────────────
 
-function wireSiteAccess() {
+function renderAccount(body) {
+  const config = getTenantConfig() || {}
+  body.innerHTML = `
+    <div class="pb-page pb-page-single">
+      <div class="pb-content">
+        <p class="pb-lead">Operational settings — who can use this and how it's delivered. (Your org's public phone, hours, and address live in <strong>Setup</strong>.)</p>
+        <section class="pb-section">
+          <h3 class="pb-subhead">Daily report ${tip('A once-daily email summarizing yesterday\'s chats. Off by default.')}</h3>
+          <form id="pbReportForm" data-1p-ignore>
+            <label class="pb-checkbox"><input type="checkbox" id="pbReportEnabled" ${config.daily_reports_enabled ? 'checked' : ''}><span>Send daily report email</span></label>
+            <div class="pb-field" style="margin-top:8px"><label>Recipients</label><input type="text" id="pbReportRecipients" value="${esc(config.report_recipients || '')}" placeholder="ai@example.org, frontdesk@example.org" autocomplete="off" data-1p-ignore></div>
+            <button type="submit" class="btn btn-sm btn-primary" style="margin-top:8px">Save report settings</button><span class="setup-msg" id="pbReportMsg"></span>
+          </form>
+        </section>
+        <section class="pb-section">
+          <h3 class="pb-subhead">Allowed domains ${tip('Your chat widget only loads on domains you approve here.')}</h3>
+          <p class="pb-section-sub">Where your embedded widget is allowed to run (not your public website — that's in Setup).</p>
+          <form id="pbDomainForm" data-1p-ignore><div class="pb-inline-add"><input type="text" id="pbDomainInput" placeholder="yourorg.org" autocomplete="off" data-1p-ignore><button type="submit" class="btn btn-sm btn-primary">Add</button></div><span class="setup-msg" id="pbDomainMsg"></span></form>
+          <div id="pbDomainList" class="domains-list"></div>
+        </section>
+        <section class="pb-section">
+          <h3 class="pb-subhead">Team members ${tip('People who can sign in to this admin portal via an emailed magic link.')}</h3>
+          <form id="pbTeamForm" data-1p-ignore><div class="pb-inline-add"><input type="email" id="pbTeamInput" placeholder="team@example.com" autocomplete="off" data-1p-ignore><button type="submit" class="btn btn-sm btn-primary">Invite</button></div><span class="setup-msg" id="pbTeamMsg"></span></form>
+          <div id="pbTeamList" class="domains-list"></div>
+        </section>
+        <div style="height:40px"></div>
+      </div>
+    </div>`
+  wireAccount()
+}
+
+function wireAccount() {
   const slug = getTenantSlug()
-
   document.getElementById('pbReportForm')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const msg = document.getElementById('pbReportMsg')
     if (!slug) { showSetupMsg(msg, 'No tenant context', false); return }
     try {
-      const res = await apiFetch(`/platform/setup/${slug}`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          report_recipients: document.getElementById('pbReportRecipients').value,
-          daily_reports_enabled: document.getElementById('pbReportEnabled').checked,
-        }),
-      })
+      const res = await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ report_recipients: document.getElementById('pbReportRecipients').value, daily_reports_enabled: document.getElementById('pbReportEnabled').checked }) })
       showSetupMsg(msg, res.ok ? 'Saved!' : 'Save failed', res.ok)
     } catch { showSetupMsg(msg, 'Network error', false) }
   })
-
   document.getElementById('pbDomainForm')?.addEventListener('submit', async (e) => {
     e.preventDefault()
-    const msg = document.getElementById('pbDomainMsg')
-    const inp = document.getElementById('pbDomainInput')
-    const domain = inp.value.trim()
-    if (!domain) return
-    try {
-      const res = await apiFetch('/admin/domains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) })
-      showSetupMsg(msg, res.ok ? 'Added!' : 'Failed', res.ok)
-      inp.value = ''
-      loadDomains()
-    } catch { showSetupMsg(msg, 'Network error', false) }
+    const msg = document.getElementById('pbDomainMsg'); const inp = document.getElementById('pbDomainInput')
+    const domain = inp.value.trim(); if (!domain) return
+    try { const res = await apiFetch('/admin/domains', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ domain }) }); showSetupMsg(msg, res.ok ? 'Added!' : 'Failed', res.ok); inp.value = ''; loadDomains() }
+    catch { showSetupMsg(msg, 'Network error', false) }
   })
-
   document.getElementById('pbTeamForm')?.addEventListener('submit', async (e) => {
     e.preventDefault()
-    const msg = document.getElementById('pbTeamMsg')
-    const inp = document.getElementById('pbTeamInput')
-    const email = inp.value.trim()
-    if (!email) return
+    const msg = document.getElementById('pbTeamMsg'); const inp = document.getElementById('pbTeamInput')
+    const email = inp.value.trim(); if (!email) return
     try {
       const res = await apiFetch('/api/auth/users', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email, role: 'admin' }) })
       if (res.ok) { showSetupMsg(msg, 'Invited!', true); inp.value = ''; loadTeam() }
       else { const d = await res.json().catch(() => ({})); showSetupMsg(msg, d.error || 'Failed to add', false) }
     } catch { showSetupMsg(msg, 'Network error', false) }
   })
-
-  loadDomains()
-  loadTeam()
+  loadDomains(); loadTeam()
 }
 
 async function loadDomains() {
-  const el = document.getElementById('pbDomainList')
-  if (!el) return
+  const el = document.getElementById('pbDomainList'); if (!el) return
   try {
-    const res = await apiFetch('/admin/domains')
-    if (!res.ok) return
+    const res = await apiFetch('/admin/domains'); if (!res.ok) return
     const data = await res.json()
     el.innerHTML = (data.domains || []).map(d => `<div class="domain-item"><span>${esc(d.domain)}</span><button class="domain-remove" data-id="${d.id}">Remove</button></div>`).join('') || '<div class="empty-state">No domains configured yet</div>'
-    el.querySelectorAll('.domain-remove').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        if (!confirm('Remove this domain?')) return
-        await apiFetch(`/admin/domains/${btn.dataset.id}`, { method: 'DELETE' })
-        loadDomains()
-      })
-    })
+    el.querySelectorAll('.domain-remove').forEach(btn => btn.addEventListener('click', async () => { if (!confirm('Remove this domain?')) return; await apiFetch(`/admin/domains/${btn.dataset.id}`, { method: 'DELETE' }); loadDomains() }))
   } catch { /* ignore */ }
 }
-
 async function loadTeam() {
-  const el = document.getElementById('pbTeamList')
-  if (!el) return
+  const el = document.getElementById('pbTeamList'); if (!el) return
   try {
-    const res = await apiFetch('/api/auth/users')
-    if (!res.ok) return
+    const res = await apiFetch('/api/auth/users'); if (!res.ok) return
     const data = await res.json()
     el.innerHTML = (data.users || []).map(u => `<div class="domain-item"><span>${esc(u.email)}</span><span style="font-size:0.75rem;color:var(--color-storm)">${esc(u.role)}</span><button class="domain-remove" data-id="${u.id}">Remove</button></div>`).join('') || '<div class="empty-state">No team members yet. Add an email above to invite someone.</div>'
-    el.querySelectorAll('.domain-remove').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        if (!confirm('Remove this team member?')) return
-        await apiFetch(`/api/auth/users/${btn.dataset.id}`, { method: 'DELETE' })
-        loadTeam()
-      })
-    })
+    el.querySelectorAll('.domain-remove').forEach(btn => btn.addEventListener('click', async () => { if (!confirm('Remove this team member?')) return; await apiFetch(`/api/auth/users/${btn.dataset.id}`, { method: 'DELETE' }); loadTeam() }))
   } catch { /* ignore */ }
-}
-
-// ── Save (sections 1–4 in one call) ────────────────────────────────────────────
-
-function wireSaveAll() {
-  document.getElementById('kbSaveAll')?.addEventListener('click', async () => {
-    const slug = getTenantSlug()
-    const btn = document.getElementById('kbSaveAll')
-    const msg = document.getElementById('kbSaveMsg')
-    if (!slug) { msg.textContent = 'No tenant context'; msg.className = 'pb-save-msg kb-save-error'; return }
-    btn.disabled = true; btn.textContent = 'Saving...'
-
-    // Species config
-    const speciesConfig = {}
-    document.querySelectorAll('#kbSpeciesTable .kb-species-row').forEach(row => {
-      const species = row.dataset.species
-      if (!species) return
-      const mode = row.querySelector('.kb-species-mode')?.value || 'builtin'
-      if (mode === 'builtin') return
-      const detail = row.querySelector('.kb-species-detail')
-      speciesConfig[species] = {
-        mode,
-        notes: detail?.querySelector('.kb-species-notes')?.value?.trim() || '',
-        redirect: detail?.querySelector('.kb-species-redirect')?.value?.trim() || '',
-      }
-    })
-
-    // Custom species
-    const customSpecies = []
-    document.querySelectorAll('.kb-custom-species-row').forEach(row => {
-      const name = row.dataset.species
-      const protocol = row.querySelector('.kb-custom-sp-protocol')?.value?.trim()
-      if (name) customSpecies.push({ name, protocol: protocol || '' })
-    })
-
-    // Triage rules
-    const triageConfig = []
-    document.querySelectorAll('.kb-triage-rule').forEach(row => {
-      const id = row.dataset.id || undefined
-      if (row.dataset.deleted === 'true' && id) { triageConfig.push({ id, deleted: true }); return }
-      const label = row.querySelector('.kb-triage-label')?.value?.trim()
-      const urgency = row.querySelector('.kb-triage-urgency')?.value
-      const patterns = row.querySelector('.kb-triage-patterns')?.value?.split(',').map(p => p.trim()).filter(Boolean) || []
-      const hint = row.querySelector('.kb-triage-hint')?.value?.trim() || ''
-      if (label) triageConfig.push({ id, label, urgency, patterns, hint })
-    })
-
-    const orgConfig = {
-      ...(getTenantConfig()?.org_config || {}),
-      hours: val('pbHours'),
-      after_hours_phone: val('pbAfterHours'),
-      public_address: val('pbAddress'),
-      intake_procedures: val('kbIntakeProcedures'),
-      species_config: speciesConfig,
-      custom_species: customSpecies,
-      triage_config: triageConfig,
-      redirect_info: val('kbRedirectInfo'),
-      emergency_contacts: val('kbEmergencyContacts'),
-    }
-    const botOverrides = {
-      tone: val('kbTone'),
-      always_say: val('kbAlwaysSay'),
-      never_say: val('kbNeverSay'),
-      greeting: val('kbGreeting'),
-    }
-
-    // One payload: contact columns + org_config + bot_overrides + house_rules.
-    const payload = {
-      phone: val('pbPhone'),
-      email: val('pbEmail'),
-      url: val('pbUrl'),
-      location_service_area: val('pbServiceArea'),
-      location_county: val('pbCounty'),
-      location_state: val('pbState'),
-      org_config: orgConfig,
-      bot_overrides: botOverrides,
-      house_rules: val('pbHouseRules'),
-    }
-
-    try {
-      const res = await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      if (res.ok) {
-        const cfg = getTenantConfig()
-        if (cfg) {
-          cfg.org_config = orgConfig
-          cfg.bot_overrides = botOverrides
-          cfg.house_rules = payload.house_rules
-          cfg.phone = payload.phone; cfg.email = payload.email; cfg.url = payload.url
-          cfg.location_service_area = payload.location_service_area
-          cfg.location_county = payload.location_county
-          cfg.location_state = payload.location_state
-          setTenantConfig(cfg)
-        }
-        msg.textContent = 'Saved!'; msg.className = 'pb-save-msg kb-save-ok'
-      } else {
-        const d = await res.json().catch(() => ({}))
-        msg.textContent = d.error || 'Save failed'; msg.className = 'pb-save-msg kb-save-error'
-      }
-    } catch {
-      msg.textContent = 'Network error'; msg.className = 'pb-save-msg kb-save-error'
-    }
-    btn.disabled = false; btn.textContent = 'Save changes'
-    setTimeout(() => { msg.textContent = '' }, 3000)
-  })
 }
 
 function val(id) { return document.getElementById(id)?.value?.trim() || '' }

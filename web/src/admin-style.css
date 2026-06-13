@@ -4667,3 +4667,79 @@ body {
   .pb-rail { display: none; }
   .pb-grid { grid-template-columns: 1fr; }
 }
+
+/* ── Playbook sub-tabs + reorg additions ──────────────────────────────────── */
+.pb-shell { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.pb-tabs {
+  display: flex;
+  gap: 2px;
+  padding: 14px 28px 0;
+  max-width: 1080px;
+  margin: 0 auto;
+  width: 100%;
+  box-sizing: border-box;
+  border-bottom: 1px solid var(--color-dried-grass);
+}
+.pb-tab {
+  appearance: none;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  padding: 9px 16px;
+  font-family: var(--font-body);
+  font-size: 0.9rem;
+  font-weight: 500;
+  color: var(--color-storm);
+  cursor: pointer;
+  transition: color 120ms ease, border-color 120ms ease;
+}
+.pb-tab:hover { color: var(--color-umber); }
+.pb-tab.active { color: var(--color-sage); border-bottom-color: var(--color-sage); font-weight: 600; }
+.pb-tabbody { flex: 1; min-height: 0; overflow: hidden; display: flex; }
+.pb-tabbody > .pb-page { flex: 1; min-height: 0; }
+
+/* Single-column variant (Triage / Knowledge / Account — no section rail) */
+.pb-page-single { grid-template-columns: minmax(0, 1fr); grid-template-areas: "content" "savebar"; }
+.pb-page-single .pb-content { max-width: 820px; }
+
+/* Referral list rows */
+.pb-referral-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.4fr auto;
+  gap: 8px;
+  margin-bottom: 8px;
+  align-items: center;
+}
+.pb-referral-row input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 7px 9px;
+  border: 1px solid var(--color-dried-grass);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 0.84rem;
+  background: var(--color-parchment);
+  color: var(--color-umber);
+}
+.pb-referral-row input:focus { outline: none; border-color: var(--color-sage); box-shadow: 0 0 0 2px rgba(107, 127, 94, 0.12); }
+.pb-ref-remove { color: var(--color-storm); }
+
+/* Skip-mode referral picker */
+.kb-skip-detail { display: flex; flex-direction: column; gap: 6px; }
+.kb-species-referral {
+  padding: 6px 8px;
+  border: 1px solid var(--color-dried-grass);
+  border-radius: var(--radius-sm);
+  font-family: var(--font-body);
+  font-size: 0.82rem;
+  background: var(--color-field-white);
+  color: var(--color-umber);
+  max-width: 280px;
+}
+
+@media (max-width: 900px) {
+  .pb-tabs { padding: 12px 16px 0; }
+  .pb-referral-row { grid-template-columns: 1fr auto; }
+  .pb-referral-row .pb-ref-covers { grid-column: 1 / -1; }
+}

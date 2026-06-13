@@ -125,7 +125,11 @@ jobs:
   deploy-test:
     name: Deploy → test env (workers.dev)
     needs: [lint, build, test, audit, verify-stub]
-    if: github.event_name == 'pull_request'
+    # Skip on dependabot PRs — they don't have access to the `test` environment
+    # secrets (ORG_SLUG, ACCOUNT_ID, etc.), so gen-wrangler.js fails before
+    # wrangler is even invoked. The actual test-env deploy fires when the bump
+    # lands on main.
+    if: github.event_name == 'pull_request' && github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     environment: test
     # Job-level concurrency: serialize test deploys across PRs so two open PRs

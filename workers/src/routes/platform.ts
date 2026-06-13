@@ -172,9 +172,8 @@ platform.post('/platform/signup', async (c) => {
 
   const slug = typeof body.slug === 'string' ? body.slug.toLowerCase().trim() : ''
   const name = typeof body.name === 'string' ? body.name.trim() : ''
-  const password = typeof body.password === 'string' ? body.password : ''
   const phone = clamp(body.phone as string, 32)
-  const email = clamp(body.email as string, 256)
+  const email = (typeof body.email === 'string' ? body.email.trim().toLowerCase() : '')
   const url = clamp(body.url as string, 512)
   const locationCounty = clamp(body.location_county as string, 128)
   const locationState = clamp(body.location_state as string, 64)
@@ -188,12 +187,16 @@ platform.post('/platform/signup', async (c) => {
   if (!validSlug(slug)) {
     return c.json({ error: 'Invalid slug. Use 3-50 lowercase letters, numbers, and hyphens.' }, 400)
   }
-  if (!password || password.length < 6) {
-    return c.json({ error: 'Password must be at least 6 characters' }, 400)
+  // Magic-link onboarding: the contact email is the sign-in identity, not a
+  // password to read out. No operator-chosen password — we set a random one
+  // just to satisfy the NOT NULL column; nobody uses legacy password login.
+  if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    return c.json({ error: 'A valid contact email is required' }, 400)
   }
 
   const id = crypto.randomUUID()
-  const passwordHash = await hashPassword(password)
+  const randomPassword = [...crypto.getRandomValues(new Uint8Array(16))].map(b => b.toString(36).slice(-1)).join('')
+  const passwordHash = await hashPassword(randomPassword)
 
   try {
     await c.env.DB.prepare(
@@ -207,8 +210,46 @@ platform.post('/platform/signup', async (c) => {
       colorPrimary, colorSecondary, colorAccent, passwordHash,
     ).run()
 
-    const adminToken = await generateToken(id, true, c.env)
-    return c.json({ success: true, tenant: { id, slug, name }, admin_token: adminToken }, 201)
+    // The contact becomes the tenant's first admin user, so they can request a
+    // magic link. Mirror of the approval flow.
+    await c.env.DB.prepare(
+      'INSERT OR IGNORE INTO tenant_users (id, tenant_id, email, role) VALUES (?, ?, ?, ?)',
+    ).bind(crypto.randomUUID(), id, email, 'admin').run()
+
+    const adminToken = await generateToken(id, true, c.env, email)
+
+    // Email the contact a one-click sign-in link to their portal. Awaited so
+    // we can report whether it sent and surface a dev link when there's no
+    // EMAIL binding.
+    const reqHost = c.req.header('Host') ?? 'localhost:8787'
+    const platformName = getPlatformName(c.env)
+    const portalUrl = tenantPortalUrl(reqHost, slug)
+    const loginUrl = await issueMagicLink(c.env, { email, tenantId: id, tenantSlug: slug, host: tenantHostFor(reqHost, slug) })
+    const emailResult = await sendEmail(c.env, {
+      from: { name: platformName, email: getAuthFromEmail(c.env) },
+      to: email,
+      subject: `Your ${name} rescue bot is ready on ${platformName}`,
+      html: `
+        <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+          <h2 style="color: #333; margin-bottom: 8px;">You're set up 🎉</h2>
+          <p style="color: #666; margin-bottom: 24px;">${escapeHtml(name)}'s rescue assistant is ready on ${platformName}. Click below to sign in to your admin console — this link expires in 15 minutes.</p>
+          <a href="${loginUrl}" style="display: inline-block; background: #6B7F5E; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open your console</a>
+          <p style="color: #999; font-size: 13px; margin-top: 32px;">If the link expires, visit <a href="${portalUrl}" style="color:#6B7F5E">your portal</a> and request a new sign-in link with this email (${escapeHtml(email)}).</p>
+        </div>`,
+    })
+    if (emailResult.sent === false && emailResult.reason !== 'no_binding') {
+      console.error('[platform/signup] welcome email failed:', emailResult)
+    }
+
+    return c.json({
+      success: true,
+      tenant: { id, slug, name },
+      admin_token: adminToken,
+      contact_email: email,
+      portal_url: portalUrl,
+      email_sent: emailResult.sent === true,
+      ...(emailResult.sent === false && emailResult.reason === 'no_binding' ? { dev_login_url: loginUrl } : {}),
+    }, 201)
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e)
     if (errMsg.includes('UNIQUE constraint failed') || errMsg.includes('tenants.slug')) {
@@ -600,9 +641,9 @@ platform.post('/platform/applications/:id/approve', async (c) => {
     return c.json({
       success: true,
       tenant: { id: tenantId, slug, name: application.org_name },
-      password,
       admin_token: adminToken,
       contact_email: application.contact_email,
+      portal_url: portalUrl,
       email_sent: emailResult?.sent === true,
       // Surface the one-click link in the response when there's no EMAIL
       // binding (local dev / unconfigured) so onboarding can be demoed

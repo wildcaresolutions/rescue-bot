@@ -389,3 +389,36 @@ describe('POST /platform/applications/:id/approve', () => {
     expect(db.sqls.some(s => s.includes('INSERT INTO tenants'))).toBe(false)
   })
 })
+
+describe('POST /platform/signup', () => {
+  async function signup(env: Env, body: Record<string, unknown>): Promise<Response> {
+    return platform.request('/platform/signup', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }, env)
+  }
+
+  it('requires a valid contact email (no password-based onboarding)', async () => {
+    const res = await signup(fakeEnv(), { name: 'Marin Wildlife', slug: 'marin-wildlife' })
+    expect(res.status).toBe(400)
+    expect((await res.json() as Record<string, unknown>).error).toMatch(/email/i)
+  })
+
+  it('provisions tenant + tenant_users + magic link, returns a dev link (no password)', async () => {
+    const db = new ApproveD1(null)
+    const res = await signup(fakeEnv({ __db: db as unknown as FakeD1 }), {
+      name: 'Marin Wildlife', slug: 'marin-wildlife', email: 'jane@example.org',
+    })
+    expect(res.status).toBe(201)
+    const json = await res.json() as Record<string, unknown>
+    expect(json.success).toBe(true)
+    expect(db.sqls.some(s => s.includes('INSERT INTO tenants'))).toBe(true)
+    expect(db.sqls.some(s => s.includes('INSERT OR IGNORE INTO tenant_users'))).toBe(true)
+    expect(db.sqls.some(s => s.includes('INSERT INTO magic_tokens'))).toBe(true)
+    // Magic-link onboarding: no raw password handed back to the operator.
+    expect(json.password).toBeUndefined()
+    expect(json.email_sent).toBe(false)
+    expect(typeof json.dev_login_url).toBe('string')
+    expect(typeof json.portal_url).toBe('string')
+  })
+})

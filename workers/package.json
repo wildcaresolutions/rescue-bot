@@ -13,16 +13,20 @@
     "@ai-sdk/anthropic": "3.0.79",
     "@ai-sdk/openai": "3.0.58",
     "ai": "6.0.168",
-    "hono": "4.12.18",
+    "hono": "4.12.25",
     "zod": "^4.4.1"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "0.16.9",
-    "@cloudflare/workers-types": "4.20260525.1",
+    "@cloudflare/vitest-pool-workers": "^0.16.15",
+    "@cloudflare/workers-types": "4.20260613.1",
     "@types/node": "25.9.1",
     "pg": "^8.20.0",
     "typescript": "6.0.3",
     "vitest": "4.1.7",
-    "wrangler": "4.83.0"
+    "wrangler": "4.100.0"
+  },
+  "overrides": {
+    "esbuild": "^0.28.1",
+    "ws": "^8.20.1"
   }
 }

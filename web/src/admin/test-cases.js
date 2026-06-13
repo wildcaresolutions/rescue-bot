@@ -227,7 +227,22 @@ export async function loadEvalScenarios() {
     el.querySelectorAll('.eval-delete-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
         if (!confirm('Delete this test case?')) return
-        await apiFetch(`/admin/evals/${btn.dataset.id}`, { method: 'DELETE' })
+        // Only reload on a confirmed delete. Previously this reloaded
+        // regardless of the response, so a 500 left the row in the DB and it
+        // silently reappeared — looking un-deletable. Surface the failure
+        // instead of pretending it worked.
+        try {
+          const res = await apiFetch(`/admin/evals/${btn.dataset.id}`, { method: 'DELETE' })
+          if (!res.ok) {
+            const msg = await res.json().then(d => d?.error).catch(() => null)
+            window.alert(`Couldn't delete this test case${msg ? `: ${msg}` : '. Please try again.'}`)
+            return
+          }
+        } catch (e) {
+          console.error('[test-cases] delete failed:', e)
+          window.alert("Couldn't delete this test case. Please check your connection and try again.")
+          return
+        }
         loadEvalScenarios()
       })
     })

@@ -316,3 +316,76 @@ describe('POST /platform/apply', () => {
     })
   })
 })
+
+// ── Stateful D1 that can return a pending application ───────────────────────────
+// The shared FakeD1 always returns null from first(), so it can't exercise the
+// approval path (which reads the application first). This records every
+// prepared SQL string so we can assert the tenant_users provisioning + magic
+// link issuance the welcome-email fix added.
+
+class ApproveD1 {
+  sqls: string[] = []
+  constructor(private application: Record<string, unknown> | null) {}
+  prepare(sql: string) {
+    this.sqls.push(sql)
+    const application = this.application
+    return {
+      bind() { return this },
+      async run() { return { success: true, meta: { changes: 1 } } },
+      async first() {
+        // applications lookup returns the row; the magic_tokens "existing
+        // token?" probe and everything else returns null.
+        return sql.includes('FROM applications') ? application : null
+      },
+      async all() { return { results: [] } },
+    }
+  }
+  async batch(stmts: unknown[]) { return stmts.map(() => ({ success: true })) }
+}
+
+describe('POST /platform/applications/:id/approve', () => {
+  const realFetchLocal = globalThis.fetch
+  afterEach(() => { globalThis.fetch = realFetchLocal })
+
+  function pendingApp(): Record<string, unknown> {
+    return {
+      id: 'app-1', status: 'pending', org_name: 'Marin Wildlife',
+      contact_name: 'Jane', contact_email: 'jane@example.org',
+      contact_phone: '415-555-0100', website: 'https://example.org',
+      location_county: 'Marin', location_state: 'CA', service_area: 'Marin County',
+      hosting_domain: '',
+    }
+  }
+
+  async function approve(env: Env): Promise<Response> {
+    return platform.request('/platform/applications/app-1/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    }, env)
+  }
+
+  it('provisions a tenant_users row and surfaces a dev login link (no EMAIL binding)', async () => {
+    const db = new ApproveD1(pendingApp())
+    const res = await approve(fakeEnv({ __db: db as unknown as FakeD1 }))
+    expect(res.status).toBe(200)
+    const json = await res.json() as Record<string, unknown>
+    expect(json.success).toBe(true)
+    // The approved contact becomes the tenant's first admin user — without
+    // this they could never request a magic link (the locked-out bug).
+    expect(db.sqls.some(s => s.includes('INSERT OR IGNORE INTO tenant_users'))).toBe(true)
+    // A magic link was minted so the welcome email is one-click.
+    expect(db.sqls.some(s => s.includes('INSERT INTO magic_tokens'))).toBe(true)
+    // With no EMAIL binding, onboarding can still be demoed via the link.
+    expect(json.email_sent).toBe(false)
+    expect(typeof json.dev_login_url).toBe('string')
+  })
+
+  it('does not re-process an already-approved application', async () => {
+    const app = pendingApp(); app.status = 'approved'
+    const db = new ApproveD1(app)
+    const res = await approve(fakeEnv({ __db: db as unknown as FakeD1 }))
+    expect(res.status).toBe(400)
+    expect(db.sqls.some(s => s.includes('INSERT INTO tenants'))).toBe(false)
+  })
+})

@@ -8,6 +8,10 @@ import { verifyTurnstile } from '../lib/turnstile'
 import { sanitizeCustomCss } from '../lib/css-sanitize'
 import { parseOrgConfig, loadTenantBySlug, loadTenantById } from '../lib/tenant-loader'
 import { dbError } from '../lib/errors'
+import { sendEmail } from '../lib/email'
+import { getPlatformName, getAuthFromEmail } from '../lib/platform'
+import { tenantHostFor, tenantPortalUrl } from '../lib/routing'
+import { issueMagicLink } from './auth'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -33,6 +37,13 @@ const ALLOWED_IMAGE_EXTS = new Set(['jpg', 'jpeg', 'png', 'webp'])
 /** Sanitize a filename to prevent path traversal. */
 function sanitizeFilename(name: string): string {
   return name.replace(/[^a-zA-Z0-9._-]/g, '_').slice(0, 128)
+}
+
+/** Escape user-supplied text for safe interpolation into transactional
+ *  email HTML (org/contact names come straight off the public apply form). */
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;')
 }
 
 /** Derive safe content type from file extension. SVG intentionally absent
@@ -123,6 +134,28 @@ platform.post('/platform/apply', async (c) => {
       clamp(body.source as string, 128),
       clamp(body.ref as string, 128),
     ).run()
+
+    // Confirmation to the applicant — best effort. Before this, a public
+    // submit returned 200 and then went silent: the applicant had no signal
+    // it worked and would re-submit or assume the form was broken. A mail
+    // failure must NOT fail the application, so this rides waitUntil.
+    // Confirm to the applicant. sendEmail never throws (it catches its own
+    // errors and reports via the result), so a mail problem can't fail the
+    // submit — we just don't block the 201 on a perfect send. With no EMAIL
+    // binding (local/dev) it logs the would-be message and no-ops.
+    const platformName = getPlatformName(c.env)
+    await sendEmail(c.env, {
+      from: { name: platformName, email: getAuthFromEmail(c.env) },
+      to: contactEmail,
+      subject: `We received your ${platformName} application`,
+      html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+            <h2 style="color: #333; margin-bottom: 8px;">Thanks, ${escapeHtml(contactName)}!</h2>
+            <p style="color: #666; margin-bottom: 16px;">We've received ${escapeHtml(orgName)}'s application to join ${platformName}. Our team will review it and follow up by email — usually within a couple of business days.</p>
+            <p style="color: #999; font-size: 13px; margin-top: 24px;">You don't need to do anything else right now. If you have questions, just reply to this email.</p>
+          </div>
+        `,
+    })
 
     return c.json({ success: true, id }, 201)
   } catch (e) {
@@ -508,10 +541,60 @@ platform.post('/platform/applications/:id/approve', async (c) => {
       "UPDATE applications SET status = 'approved', tenant_id = ?, reviewed_at = datetime('now'), updated_at = datetime('now') WHERE id = ?",
     ).bind(tenantId, appId).run()
 
+    // The approved contact becomes the tenant's first admin user. Without
+    // this row they can't request a magic link (the auth flow only issues
+    // links to known tenant_users), so before this fix a freshly-approved
+    // operator was provisioned but locked out. INSERT OR IGNORE so a re-run
+    // (or a slug collision retry) doesn't 500 on the UNIQUE(tenant,email).
+    const contactEmail = (application.contact_email || '').trim().toLowerCase()
+    if (contactEmail) {
+      await c.env.DB.prepare(
+        'INSERT OR IGNORE INTO tenant_users (id, tenant_id, email, role) VALUES (?, ?, ?, ?)',
+      ).bind(crypto.randomUUID(), tenantId, contactEmail, 'admin').run()
+    }
+
     // Audit ralph-2 H6: bake the contact email into the v2 token so the
     // first sign-in already has email identity, not a v1 fallback that
     // would require re-auth.
     const adminToken = await generateToken(tenantId, true, c.env, application.contact_email)
+
+    // Welcome the operator with a one-click sign-in link to THEIR portal
+    // (the approval runs on the platform-admin host, so the link must point
+    // at the tenant's own host/slug). Mirrors the invite flow in auth.ts —
+    // links expire in 15 min, so the email also tells them how to request a
+    // fresh one. Awaited (not waitUntil) so the platform admin sees whether
+    // the mail actually went out, and so dev (no EMAIL binding) can surface
+    // the link inline.
+    const reqHost = c.req.header('Host') ?? 'localhost:8787'
+    const platformName = getPlatformName(c.env)
+    const portalUrl = tenantPortalUrl(reqHost, slug)
+    let emailResult: Awaited<ReturnType<typeof sendEmail>> | null = null
+    let devLoginUrl: string | undefined
+    if (contactEmail) {
+      const loginUrl = await issueMagicLink(c.env, {
+        email: contactEmail,
+        tenantId,
+        tenantSlug: slug,
+        host: tenantHostFor(reqHost, slug),
+      })
+      devLoginUrl = loginUrl
+      emailResult = await sendEmail(c.env, {
+        from: { name: platformName, email: getAuthFromEmail(c.env) },
+        to: contactEmail,
+        subject: `Your ${application.org_name} rescue bot is ready on ${platformName}`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 480px; margin: 0 auto; padding: 40px 20px;">
+            <h2 style="color: #333; margin-bottom: 8px;">You're approved 🎉</h2>
+            <p style="color: #666; margin-bottom: 24px;">${escapeHtml(application.org_name)}'s rescue assistant is set up on ${platformName}. Click below to sign in to your admin console and finish onboarding — this link expires in 15 minutes.</p>
+            <a href="${loginUrl}" style="display: inline-block; background: #6B7F5E; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Open your console</a>
+            <p style="color: #999; font-size: 13px; margin-top: 32px;">If the link expires, visit <a href="${portalUrl}" style="color:#6B7F5E">your portal</a> and request a new sign-in link with this email address (${escapeHtml(contactEmail)}).</p>
+          </div>
+        `,
+      })
+      if (emailResult.sent === false && emailResult.reason !== 'no_binding') {
+        console.error('[platform/approve] welcome email failed:', emailResult)
+      }
+    }
 
     return c.json({
       success: true,
@@ -519,6 +602,13 @@ platform.post('/platform/applications/:id/approve', async (c) => {
       password,
       admin_token: adminToken,
       contact_email: application.contact_email,
+      email_sent: emailResult?.sent === true,
+      // Surface the one-click link in the response when there's no EMAIL
+      // binding (local dev / unconfigured) so onboarding can be demoed
+      // without a working mail pipe.
+      ...(emailResult && emailResult.sent === false && emailResult.reason === 'no_binding'
+        ? { dev_login_url: devLoginUrl }
+        : {}),
     })
   } catch (e: unknown) {
     const errMsg = e instanceof Error ? e.message : String(e)

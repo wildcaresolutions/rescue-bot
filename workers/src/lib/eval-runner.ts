@@ -189,6 +189,24 @@ export async function runEvalScenario(
     let passed: number | null = null
     let judgeReasoning = ''
 
+    // When the LLM judge can't give us a verdict, fall back to a keyword
+    // heuristic — but DON'T let the heuristic emit a confident red FAIL.
+    // The deterministic check is brittle (it false-negatives good
+    // paraphrases), so a heuristic PASS is trustworthy enough to report,
+    // while a heuristic FAIL is recorded as NOT SCORED (passed=null) with a
+    // transparent note. Otherwise a perfectly good answer shows up as a hard
+    // failure the operator can't explain — the exact bug being fixed here.
+    const useFallback = (prefix: string) => {
+      const fb = deterministicJudge(tenant, scenario, botResponse)
+      if (fb.passed === 1) {
+        passed = 1
+        judgeReasoning = `${prefix} ${fb.reasoning}`
+      } else {
+        passed = null
+        judgeReasoning = `${prefix} This answer couldn't be graded automatically — re-run to score it. (Heuristic check: ${fb.reasoning})`
+      }
+    }
+
     // Judge prompt — JSON-only output enforced by (a) explicit instruction
     // at top and bottom, (b) an exact example to anchor the format, (c)
     // capped output tokens. Wide latitude for the judge to look past
@@ -211,32 +229,34 @@ Critical: respond with ONLY a single JSON object on one line, no prose before or
 {"passed": true, "reasoning": "one sentence why this passes or fails, from the operator's perspective"}`
 
     try {
-      const judgeResult = await runGatewayChatText({
-        env,
-        model: getEvalJudgeModelName(env),
-        messages: [{ role: 'user', content: judgePrompt }],
-        maxOutputTokens: 300,
-      })
-      const text = judgeResult.text ?? ''
-      // More forgiving JSON extraction: tolerate ```json fences, leading
-      // prose, multiple JSON-like fragments. Find the LAST balanced
-      // {...} containing "passed" — that's the judge's verdict even if
-      // it preceded it with thinking-out-loud.
-      const parsed = extractJudgeJson(text)
+      // Ask the judge for a verdict, retrying once if the first reply doesn't
+      // parse. Unparseable output is usually transient (the model wandered
+      // into prose) — a second attempt clears most of it, and every parse we
+      // recover here is a verdict we DON'T have to hand to the brittle
+      // keyword fallback. Evals run via waitUntil, so the extra round-trip
+      // costs nothing the operator waits on.
+      let parsed: ReturnType<typeof extractJudgeJson> = null
+      let lastText = ''
+      for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
+        const judgeResult = await runGatewayChatText({
+          env,
+          model: getEvalJudgeModelName(env),
+          messages: [{ role: 'user', content: judgePrompt }],
+          maxOutputTokens: 300,
+        })
+        lastText = judgeResult.text ?? ''
+        parsed = extractJudgeJson(lastText)
+      }
       if (parsed) {
         passed = parsed.passed ? 1 : 0
         judgeReasoning = parsed.reasoning || ''
       } else {
-        console.warn('[eval/judge] LLM emitted no parseable verdict; falling back to deterministic', { textPreview: text.slice(0, 200) })
-        const fallback = deterministicJudge(tenant, scenario, botResponse)
-        passed = fallback.passed
-        judgeReasoning = fallback.reasoning
+        console.warn('[eval/judge] LLM emitted no parseable verdict after retry; falling back to heuristic', { textPreview: lastText.slice(0, 200) })
+        useFallback('The AI grader didn\'t return a clear verdict.')
       }
     } catch (e) {
       console.error('[eval/judge] AI Gateway error:', e)
-      const fallback = deterministicJudge(tenant, scenario, botResponse)
-      passed = fallback.passed
-      judgeReasoning = `Scoring service unavailable (${String(e)}). ${fallback.reasoning}`
+      useFallback('The scoring service was unavailable.')
     }
 
     // Step 3: Store result

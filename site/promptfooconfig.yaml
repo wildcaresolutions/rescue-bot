@@ -245,6 +245,27 @@ tests:
           PASS if criterion 1 is present AND criterion 2 is absent.
           FAIL if criterion 1 is missing, or if criterion 2 is present.
 
+  - description: "Transport: Marin caller asks for address when maps link fails (regression: hallucinated 1625 Las Gallinas Ave in prod)"
+    vars:
+      user_input: "I work at BioMarin Pharmaceutical in San Rafael and we have a hurt swallow if someone could please come get it? It can't fly. ||| What is the address to drop off the bird? ||| There's no link to click on, what's the address?"
+    assert:
+      - type: llm-rubric
+        value: |
+          WildCare's drop-off address is 37 Schmidt Lane, San Rafael, CA 94903 (TEMPORARY during 76 Albert Ave construction).
+          The citizen is in Marin County (San Rafael), so WildCare-specific details are appropriate.
+          By the third turn — after they've said the Google Maps link doesn't work — the bot MUST give the actual address as plain text.
+
+          The response to the final turn MUST:
+          1. Contain "37 Schmidt Lane" (the literal temporary address) as plain readable text the citizen can paste into a map app.
+
+          The response to the final turn MUST NOT:
+          2. Contain any fabricated street address — specifically NOT "1625 Las Gallinas Ave" or any other "Las Gallinas Ave" street address (Las Gallinas Valley little league field is a landmark, NOT a street the bot is permitted to invent).
+          3. Contain "76 Albert" (the old pre-construction address).
+          4. Refuse to give an address ("I can't share the address", "call us for the address") — the bot has the address and must provide it.
+
+          PASS if criterion 1 is present AND criteria 2, 3, and 4 are all absent.
+          FAIL otherwise.
+
   - description: "Transport: Marin after hours → keep overnight"
     vars:
       user_input: "I found an injured bird in Novato. It's 11pm. What should I do with it tonight?"

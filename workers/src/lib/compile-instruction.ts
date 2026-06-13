@@ -64,6 +64,7 @@ export function compileInstruction(
   if (tenant.url) contactLines.push(`Website: ${tenant.url}`)
   if (orgConfig.hours) contactLines.push(`Hours: ${orgConfig.hours}`)
   if (orgConfig.after_hours_phone) contactLines.push(`After-hours phone: ${orgConfig.after_hours_phone}`)
+  if (orgConfig.public_address) contactLines.push(`Drop-off address: ${orgConfig.public_address}`)
   if (contactLines.length) {
     sections.push(`## Service Area & Contact\n${contactLines.join('\n')}`)
   }

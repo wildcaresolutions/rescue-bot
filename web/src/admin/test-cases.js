@@ -251,9 +251,13 @@ export async function loadEvalScenarios() {
 }
 
 export function openGeneralRescueRules() {
-  if (_deps.setKbTab) _deps.setKbTab('your-content')
+  // Cross-cutting rules now live in the Setup tab's single "House rules" box.
+  if (_deps.setKbTab) _deps.setKbTab('setup')
   if (_deps.showKbView) _deps.showKbView()
-  setTimeout(() => highlightElement(document.getElementById('kbIntakeProcedures')), 100)
+  setTimeout(() => {
+    document.getElementById('pb-rules')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+    highlightElement(document.getElementById('pbHouseRules'))
+  }, 120)
 }
 
 async function saveOrgConfigPatch(patch) {

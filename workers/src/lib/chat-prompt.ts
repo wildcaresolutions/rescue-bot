@@ -68,6 +68,9 @@ function buildTenantIdentityBlock(tenant: Tenant): string {
   if (typeof orgConfig.hours === 'string' && orgConfig.hours) {
     lines.push(`- Hours: ${orgConfig.hours}`)
   }
+  if (typeof orgConfig.public_address === 'string' && orgConfig.public_address) {
+    lines.push(`- Drop-off address: ${orgConfig.public_address}`)
+  }
   if (tenant.email) lines.push(`- Email: ${tenant.email}`)
   if (tenant.url) lines.push(`- Website: ${tenant.url}`)
   if (tenant.location_service_area) lines.push(`- Service area: ${tenant.location_service_area}`)

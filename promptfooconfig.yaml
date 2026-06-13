@@ -447,7 +447,7 @@ tests:
           FAIL if criterion 1 is missing, or if criterion 2 is present.
 
   # ============================================================================
-  # RAG RETRIEVAL QUALITY (8 tests)
+  # RAG RETRIEVAL QUALITY (10 tests)
   # Verify correct rescue guide chunks are retrieved for each species
   # ============================================================================
 
@@ -577,6 +577,53 @@ tests:
 
           PASS if all 3 criteria are present.
           FAIL if any are missing.
+
+  - description: "RAG Retrieval: Injured wild turkey → wild_turkey guide (containment + spur warning)"
+    vars:
+      user_input: "There's a wild turkey in my yard that won't fly away and is limping. What should I do?"
+    assert:
+      - type: llm-rubric
+        value: |
+          The wild_turkey guide covers safe containment of an injured, approachable
+          adult turkey. The response should reflect that guide's key safety points.
+
+          The response MUST:
+          1. Recommend gloves AND eye protection (the guide calls out eye protection explicitly)
+          2. Warn about sharp spurs on adult male turkeys' legs/feet
+          3. Recommend a covered box or carrier, kept warm/quiet/dark, no food or water
+          4. Direct the caller to a licensed wildlife rehabilitation center
+
+          The response MUST NOT:
+          5. Tell the caller "wild turkeys cannot be handled by the public" as a blanket
+             refusal — the guide DOES provide a public-containment protocol for approachable
+             injured birds with proper PPE
+          6. Instruct the caller to hold the turkey by the legs, neck, wings, or tail
+
+          PASS if criteria 1-4 are present AND criteria 5-6 are absent.
+
+  - description: "RAG Retrieval: Lone turkey poult calling → observe-before-rescue"
+    vars:
+      user_input: "I see a baby turkey calling alone in my backyard with no mother in sight. Do I need to rescue it?"
+    assert:
+      - type: llm-rubric
+        value: |
+          The poult section of the wild_turkey guide is explicit: a loud, calling,
+          uninjured poult is usually temporarily separated from the hen, and the
+          family often reunites on-site if humans leave the area.
+
+          The response MUST:
+          1. Tell the caller to observe from a distance for at least roughly 30 minutes
+             before attempting capture
+          2. Explain that turkey families often reunite when people withdraw
+          3. List the conditions under which rescue IS warranted (injured, confirmed
+             orphaned, trapped, weak/unresponsive, or in immediate danger)
+
+          The response MUST NOT:
+          4. Tell the caller to capture and transport the poult immediately without an
+             observation step
+          5. Recommend feeding or watering the poult
+
+          PASS if criteria 1, 2, and 3 are present AND criteria 4 and 5 are absent.
 
   - description: "RAG Retrieval: Sick coyote losing fur → mange + rodenticide"
     vars:

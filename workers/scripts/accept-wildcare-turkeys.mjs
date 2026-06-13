@@ -130,7 +130,7 @@ const NEW_EVAL_002 = {
 }
 
 const evalRow = await d1(
-  'SELECT id FROM eval_scenarios WHERE tenant_id = ? AND id = ?',
+  "SELECT id FROM eval_scenarios WHERE tenant_id = ? AND id = ?",
   [t.id, 'wildcare-eval-002'],
 )
 if (evalRow.length) {
@@ -140,7 +140,7 @@ if (evalRow.length) {
      WHERE tenant_id = ? AND id = ?`,
     [NEW_EVAL_002.description, NEW_EVAL_002.test_message, NEW_EVAL_002.expected_behavior, t.id, 'wildcare-eval-002'],
   )
-  console.log('  eval wildcare-eval-002: UPDATED')
+  console.log(`  eval wildcare-eval-002: UPDATED`)
 } else {
-  console.log('  eval wildcare-eval-002: not present — will land via seed-wildcare-evals.js --apply')
+  console.log(`  eval wildcare-eval-002: not present — will land via seed-wildcare-evals.js --apply`)
 }

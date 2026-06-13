@@ -54,20 +54,14 @@ export function compileInstruction(
 ): string {
   const sections: string[] = []
 
-  // Service area and contact
-  const contactLines: string[] = []
-  if (tenant.location_service_area) contactLines.push(`Service area: ${tenant.location_service_area}`)
-  if (tenant.location_county) contactLines.push(`County: ${tenant.location_county}`)
-  if (tenant.location_state) contactLines.push(`State: ${tenant.location_state}`)
-  if (tenant.phone) contactLines.push(`Phone: ${tenant.phone}`)
-  if (tenant.email) contactLines.push(`Email: ${tenant.email}`)
-  if (tenant.url) contactLines.push(`Website: ${tenant.url}`)
-  if (orgConfig.hours) contactLines.push(`Hours: ${orgConfig.hours}`)
-  if (orgConfig.after_hours_phone) contactLines.push(`After-hours phone: ${orgConfig.after_hours_phone}`)
-  if (orgConfig.public_address) contactLines.push(`Drop-off address: ${orgConfig.public_address}`)
-  if (contactLines.length) {
-    sections.push(`## Service Area & Contact\n${contactLines.join('\n')}`)
-  }
+  // NOTE: contact facts (phone, email, url, location, hours, after-hours
+  // phone, drop-off address) are intentionally NOT emitted here. They are
+  // surfaced exactly once, at the top of the system prompt, by
+  // buildTenantIdentityBlock() in chat-prompt.ts. Emitting them here too —
+  // as this used to with a "## Service Area & Contact" section — duplicated
+  // every fact into the compiled custom_instruction, so the LLM saw phone /
+  // hours / address two-to-three times and the operator could never tell
+  // which copy to fix. Keep this compiled artifact about PROTOCOLS only.
 
   // Per-species configuration
   const sc = orgConfig.species_config || {}
@@ -172,12 +166,13 @@ export async function recompileAndMaybeWrite(
   botOverrides: BotOverrides,
   rawProtocols?: string,
 ): Promise<{ compiled: string; wrote: boolean }> {
-  const baseCompiled = compileInstruction(tenant, orgConfig, botOverrides, rawProtocols)
-  // House rules go LAST — operator's pin-this-here hard rules.
-  const housePart = tenant.house_rules?.trim()
-    ? `\n\n## House Rules (operator-defined)\n${tenant.house_rules.trim()}`
-    : ''
-  const compiled = (baseCompiled + housePart).trim()
+  // House rules are NOT baked into custom_instruction. chat-prompt.ts emits
+  // tenant.house_rules once, as its own binding top-of-prompt block
+  // (buildHouseRulesBlock). Appending them here too put house rules in the
+  // prompt twice — once at the top, once buried inside the compiled
+  // "Organization-Specific Protocols" wrapper — which is exactly the kind of
+  // duplicate/contradictory text this consolidation removes.
+  const compiled = compileInstruction(tenant, orgConfig, botOverrides, rawProtocols).trim()
   const locked = tenant.custom_instruction_locked === 1
   if (!locked) {
     await db.prepare("UPDATE tenants SET custom_instruction = ?, updated_at = datetime('now') WHERE id = ?")

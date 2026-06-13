@@ -80,6 +80,11 @@ initErrorReporting()
 // ── State ────────────────────────────────────────────────────────────────────
 
 let activeView = 'feed'     // feed | reports
+// Set by dispatchToolResult when the copilot mutates tenant config during an
+// exchange. checkSetupCompletion uses it to re-render the Playbook with fresh
+// server state ONLY when something actually changed — so a pure Q&A turn never
+// clobbers the operator's unsaved edits on the page.
+let _kbDirty = false
 // agentMessages / agentStreaming / onboardingPending live in
 // web/src/admin/state.js so the deterministic onboarding module and the
 // copilot dispatch path can read/write them without parameter threading.
@@ -1176,6 +1181,14 @@ async function checkSetupCompletion() {
     } else {
       setTenantConfig(newConfig)
     }
+    // Copilot is the primary way to fill in the Playbook, so if the operator
+    // is looking at it while the assistant edits config, re-render with the
+    // fresh server state so the change shows up in the form live — but only
+    // when this exchange actually changed config (see _kbDirty).
+    if (_kbDirty) {
+      _kbDirty = false
+      if (activeView === 'kb') renderKbView()
+    }
   } catch { /* ignore */ }
 }
 
@@ -2068,6 +2081,7 @@ function dispatchToolResult(toolResult) {
   else if (toolName === 'save_protocols') {
     showCopilotToast('Protocols saved!')
     appendChangeChip('Saved custom protocols.')
+    _kbDirty = true
   }
   else if (toolName === 'create_test_scenario') {
     // Show what the scenario actually IS — description + the visitor message
@@ -2100,9 +2114,11 @@ function dispatchToolResult(toolResult) {
     // "Configuration updated" with no detail is unhelpful — show fields actually saved.
     const summary = summarizeConfigUpdate(result)
     appendChangeChip(summary && summary !== 'Saved' ? summary : 'Config saved (no fields)')
+    _kbDirty = true
   }
   else if (toolName === 'update_org_info') {
     appendChangeChip(summarizeConfigUpdate(result) || 'Org info updated.')
+    _kbDirty = true
   }
   else if (toolName === 'update_colors') {
     const c = result?.applied || {}
@@ -2114,17 +2130,17 @@ function dispatchToolResult(toolResult) {
   }
   else if (toolName === 'add_custom_species') {
     appendChangeChip(`Added custom species: ${result?.species || result?.message || ''}`.trim())
-    if (activeView === 'kb') renderKbView()
+    _kbDirty = true
   }
   else if (toolName === 'update_species_config') {
     appendChangeChip(`${result?.species || 'Species'} → ${result?.mode || ''}${result?.message?.includes('redirect') ? ' (with redirect)' : ''}`.trim())
-    if (activeView === 'kb') renderKbView()
+    _kbDirty = true
   }
   else if (toolName === 'bulk_skip_other_species') {
     const kept = (result?.kept || []).join(', ') || '(none)'
     const n = result?.skipped_count ?? (result?.skipped?.length || 0)
     appendChangeChip(`Bulk: kept ${kept}, set ${n} others to skip → ${result?.redirect || ''}`.trim())
-    if (activeView === 'kb') renderKbView()
+    _kbDirty = true
   }
   else if (toolName === 'get_species_config') { /* read-only: no chip */ }
   else if (toolName === 'extract_brand_colors') {

@@ -408,9 +408,10 @@ platform.post('/platform/setup/:slug', async (c) => {
       if (!lockedNow) {
         const oc = body.org_config || (parseOrgConfig(fresh.org_config))
         const bo = body.bot_overrides || (parseOrgConfig<Record<string, unknown>>(fresh.bot_overrides))
-        const houseRules = (typeof body.house_rules === 'string' ? body.house_rules : fresh.house_rules) || ''
-        const baseCompiled = compileInstruction(fresh, oc, bo)
-        const compiled = (baseCompiled + (houseRules.trim() ? `\n\n## House Rules (operator-defined)\n${houseRules.trim()}` : '')).trim()
+        // house_rules is NOT appended into custom_instruction — chat-prompt.ts
+        // renders it once as its own top-of-prompt block. (Matches
+        // recompileAndMaybeWrite in compile-instruction.ts.)
+        const compiled = compileInstruction(fresh, oc, bo).trim()
         if (compiled) {
           updates.push('custom_instruction = ?')
           values.push(compiled.slice(0, 10_000))

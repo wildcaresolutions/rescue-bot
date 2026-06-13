@@ -60,11 +60,11 @@ export interface PromptStateResult {
 export function buildPromptState(tenant: Tenant): PromptStateResult {
   const oc = parseOrgConfig(tenant.org_config)
   const bo = parseOrgConfig<Record<string, unknown>>(tenant.bot_overrides)
-  const baseCompiled = compileInstruction(tenant, oc, bo)
-  const housePart = tenant.house_rules?.trim()
-    ? `\n\n## House Rules (operator-defined)\n${tenant.house_rules.trim()}`
-    : ''
-  const compiledPreview = (baseCompiled + housePart).trim()
+  // House rules are no longer baked into custom_instruction (they render once
+  // as their own top-of-prompt block at chat time), so the preview of "what
+  // custom_instruction would be" must not include them either — otherwise the
+  // drift check below would always show drift for tenants with house rules.
+  const compiledPreview = compileInstruction(tenant, oc, bo).trim()
   const promptForSections = (tenant.custom_instruction || compiledPreview || '').trim()
   const sections = parsePromptSections(promptForSections)
 

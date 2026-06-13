@@ -1590,6 +1590,7 @@ const ONBOARDING_SPECIES_TERMS = [
   ['Snake', ['snake']],
   ['Songbird', ['songbird', 'bird']],
   ['Squirrel', ['squirrel']],
+  ['Wild Turkey', ['wild turkey', 'turkey', 'poult']],
   ['Entangled Animal', ['entangled']],
 ]
 

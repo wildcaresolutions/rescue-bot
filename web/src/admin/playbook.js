@@ -32,7 +32,7 @@ const BUILTIN_SPECIES = [
   'Heron & Egret', 'Bat', 'Bobcat', 'Coyote', 'Deer & Fawn',
   'Duck & Goose', 'Fox', 'Gull', 'Hummingbird', 'Opossum',
   'Raccoon', 'Raptor', 'Raven', 'Rodent', 'Skunk',
-  'Snake', 'Songbird', 'Squirrel', 'Entangled Animal',
+  'Snake', 'Songbird', 'Squirrel', 'Wild Turkey', 'Entangled Animal',
 ]
 
 const DEFAULT_TRIAGE_RULES = [

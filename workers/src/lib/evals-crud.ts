@@ -41,9 +41,17 @@ export async function createEvalScenario(
 }
 
 export async function deleteEvalScenario(env: Env, tenantId: string, id: string): Promise<void> {
-  await env.DB.prepare(
-    'DELETE FROM eval_scenarios WHERE id = ? AND tenant_id = ?',
-  ).bind(id, tenantId).run()
+  // Delete the scenario's results FIRST. eval_results.scenario_id references
+  // eval_scenarios(id) with no ON DELETE CASCADE (migration 0005), and D1
+  // enforces foreign keys — so once a scenario has been run (which inserts
+  // eval_results rows), deleting just the scenario throws a constraint
+  // violation. That surfaced to the operator as "I can't delete the test
+  // case": the row stubbornly reappeared because every delete 500'd. Batch
+  // both deletes so they apply atomically.
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM eval_results WHERE scenario_id = ? AND tenant_id = ?').bind(id, tenantId),
+    env.DB.prepare('DELETE FROM eval_scenarios WHERE id = ? AND tenant_id = ?').bind(id, tenantId),
+  ])
 }
 
 export async function loadEvalScenarioById(

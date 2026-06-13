@@ -60,7 +60,7 @@ function generic200(): Response {
  *
  * tenantId=null marks a platform-admin login (only used at admin.<root>).
  */
-async function issueMagicLink(
+export async function issueMagicLink(
   env: Env,
   opts: { email: string; tenantId: string | null; tenantSlug: string; host: string },
 ): Promise<string> {

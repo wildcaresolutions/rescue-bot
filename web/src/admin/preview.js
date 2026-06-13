@@ -641,13 +641,12 @@ export function renderPreviewView() {
   wirePos('edPaneBottom', 'paneBottom'); wirePos('edPaneTop', 'paneTop')
   wirePos('edPaneLeft', 'paneLeft');     wirePos('edPaneRight', 'paneRight')
 
-  // Experimental: photo upload toggle. Goes through the same draft/publish/
-  // discard flow as widget theme — checking the box doesn't save until the
-  // operator clicks Publish. Pre-2026-05-18 this saved immediately on every
-  // toggle, which (a) didn't show the Publish bar so it felt like nothing
-  // happened, and (b) couldn't be discarded mid-thought. The publish handler
-  // below detects the editorState/savedState diff and POSTs to
-  // /admin/feature-flags as part of the same Publish action.
+  // Experimental: photo upload toggle. Persists immediately on toggle (see
+  // the change handler below for why it can't be a deferred draft like the
+  // theme edits — the preview paperclip needs a server-minted session token).
+  // The Publish handler still carries a defensive feature-flag POST for the
+  // case where editorState/savedState diverge, but in normal operation the
+  // toggle has already synced both.
   ;(async () => {
     const cb = document.getElementById('edPhotoUploads')
     if (!cb) return
@@ -668,8 +667,35 @@ export function renderPreviewView() {
     } catch (e) {
       console.warn('[preview] feature-flags fetch failed:', e)
     }
-    cb.addEventListener('change', () => {
+    // Persist + reflect on toggle. Unlike the visual theme toggles (which the
+    // widget applies client-side via sendPreviewUpdate), the photo paperclip
+    // only appears once the server mints a session token — and the server
+    // only mints one when the flag is persisted (chat.ts POST /api/sessions →
+    // photoUploadsEnabled). So a draft-only toggle could never preview: the
+    // operator saw nothing change and assumed it was broken. We persist
+    // immediately, nudge the iframe to refetch its token, and sync savedState
+    // so this doesn't also count as an unpublished diff in the Publish bar.
+    cb.addEventListener('change', async () => {
       editorState.photoUploadsEnabled = cb.checked
+      try {
+        const r = await fetch('/admin/feature-flags', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json', 'X-Tenant-Slug': getTenantSlug() ?? '' },
+          body: JSON.stringify({ photo_uploads_enabled: cb.checked }),
+        })
+        if (!r.ok) throw new Error(`feature-flags ${r.status}`)
+        savedState.photoUploadsEnabled = cb.checked
+        const iframe = document.getElementById('previewFrame')
+        iframe?.contentWindow?.postMessage(
+          { type: 'wildcare-preview-config', refetchPhotoFlag: true },
+          '*',
+        )
+      } catch (e) {
+        console.error('[preview] photo-flag toggle failed:', e)
+        // Roll the checkbox back so it reflects the real (unchanged) state.
+        cb.checked = !cb.checked
+        editorState.photoUploadsEnabled = cb.checked
+      }
       renderPublishBar()
     })
   })()

@@ -11,7 +11,7 @@
     "types": "wrangler types"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "4.20260524.1",
+    "@cloudflare/workers-types": "4.20260613.1",
     "@types/node": "25.9.3",
     "typescript": "6.0.3",
     "vitest": "4.1.7",

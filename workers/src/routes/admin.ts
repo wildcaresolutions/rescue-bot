@@ -27,6 +27,7 @@ import {
 } from '../lib/evals-crud'
 import { buildPromptState } from '../lib/prompt-state'
 import { loadSetupState } from '../lib/setup-state'
+import { publishDraft, discardDraft } from '../lib/publish'
 import {
   addDomain,
   buildKnowledgeBaseSummary,
@@ -344,6 +345,29 @@ admin.get('/admin/setup-state', async (c) => {
   const tenant = c.get('tenant')
   if (!tenant) return c.json({ error: 'Tenant required' }, 400)
   return c.json(await loadSetupState(c.env, tenant))
+})
+
+// ── Draft publish / discard ─────────────────────────────────────────────────
+// Promote the staged draft_config to the live columns (recompiling the bot
+// instruction), or throw it away. The live bot only changes here.
+admin.post('/admin/publish', async (c) => {
+  const tenant = c.get('tenant')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  try {
+    return c.json(await publishDraft(c.env, tenant))
+  } catch (e) {
+    return dbError(c, 'admin/publish', 'Could not publish your changes', e)
+  }
+})
+
+admin.post('/admin/discard', async (c) => {
+  const tenant = c.get('tenant')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  try {
+    return c.json(await discardDraft(c.env, tenant))
+  } catch (e) {
+    return dbError(c, 'admin/discard', 'Could not discard your changes', e)
+  }
 })
 
 // ── Eval CRUD + run ─────────────────────────────────────────────────────────

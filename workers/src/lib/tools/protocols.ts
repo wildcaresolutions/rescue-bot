@@ -15,21 +15,20 @@ import { z } from 'zod'
 import type { ToolContext } from './types'
 import { formatTestResultExplanation } from '../judge-parse'
 import { runEvalScenario } from '../eval-runner'
+import { stageConfigChange, overlayTenant } from '../draft'
 
 export function protocolsTools(ctx: ToolContext) {
-  const { env, db, tenantId, freshTenant, invalidateCache } = ctx
+  const { env, db, tenantId, freshTenant } = ctx
+  const target = { id: tenantId, slug: freshTenant.slug }
 
   const save_protocols = tool({
-    description: 'Saves custom rescue instructions/protocols for the organization',
+    description: 'Saves custom rescue instructions/protocols for the organization. Staged as a draft until the operator publishes (a raw-prompt edit wins over auto-compile at publish).',
     inputSchema: z.object({
       custom_instruction: z.string().describe('The full custom instruction text for the rescue bot'),
     }),
     execute: async (input) => {
-      await db.prepare(
-        "UPDATE tenants SET custom_instruction = ?, updated_at = datetime('now') WHERE id = ?",
-      ).bind(input.custom_instruction.slice(0, 10_000), tenantId).run()
-      invalidateCache()
-      return { success: true, message: 'Protocols saved' }
+      await stageConfigChange(db, target, { custom_instruction: input.custom_instruction.slice(0, 10_000) })
+      return { success: true, message: 'Protocols saved (staged)' }
     },
   })
 
@@ -80,7 +79,8 @@ export function protocolsTools(ctx: ToolContext) {
           'SELECT id, description, expected_behavior, test_message FROM eval_scenarios WHERE id = ? AND tenant_id = ?',
         ).bind(scenario_id, tenantId).first<{ id: string; description: string; expected_behavior: string; test_message: string }>()
         if (!scenario) return { success: false, error: 'Scenario not found' }
-        await runEvalScenario(env, freshTenant, scenario)
+        // Run against the draft overlay so the operator tests pending changes.
+        await runEvalScenario(env, overlayTenant(freshTenant), scenario)
         const latest = await db.prepare(
           'SELECT response, passed, judge_reasoning, created_at FROM eval_results WHERE scenario_id = ? AND tenant_id = ? ORDER BY created_at DESC LIMIT 1',
         ).bind(scenario_id, tenantId).first<{ response: string; passed: number | null; judge_reasoning: string }>()

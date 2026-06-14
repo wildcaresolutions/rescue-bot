@@ -15,11 +15,17 @@
 
 import { apiFetch, getTenantSlug } from './api.js'
 import { escapeHtml, esc, tip, safeMarkdown, showSetupMsg } from './helpers.js'
-import { getTenantConfig, setTenantConfig } from './state.js'
+import { getTenantConfig } from './state.js'
 import speciesCatalog from '../../../shared/species-catalog.json'
 
 let _deps = { expandAgent: null, sendAgentMessage: null, showCopilotToast: null }
 export function bindPlaybook(deps) { _deps = { ..._deps, ...deps } }
+
+// Set by renderSetup/renderTriage to the active tab's debounced stage fn so
+// button-driven structural edits (add/remove a referral or species rule) can
+// trigger a stage too — text/select edits stage via delegated listeners.
+let _pbStageSetup = null
+let _pbStageTriage = null
 
 // Active sub-tab. Legacy callers pass the old 'your-content' id → 'setup'.
 let kbTab = 'setup'
@@ -105,7 +111,7 @@ function renderSetup(body) {
         ${sections.map(([id, label], i) => `<a href="#${id}" class="pb-rail-link ${i === 0 ? 'active' : ''}" data-target="${id}">${label}</a>`).join('')}
       </nav>
       <div class="pb-content" id="pbContent">
-        <p class="pb-lead">Teach your bot here. Edit a field, or tell the <a href="#" id="pbAskAgent">assistant</a> what to change. One <strong>Save</strong> at the bottom saves this whole tab.</p>
+        <p class="pb-lead">Teach your bot here. Edit a field, or tell the <a href="#" id="pbAskAgent">assistant</a> what to change. Your edits are saved to a <strong>draft</strong> automatically — hit <strong>Publish</strong> in the top bar when you're ready to take them live.</p>
 
         <section class="pb-section" id="pb-org">
           <h2 class="pb-section-title">Organization</h2>
@@ -170,11 +176,7 @@ function renderSetup(body) {
             </div>
           </details>
         </section>
-        <div style="height:80px"></div>
-      </div>
-      <div class="pb-savebar">
-        <span class="pb-save-msg" id="kbSaveMsg"></span>
-        <button class="btn btn-primary" id="kbSaveAll">Save changes</button>
+        <div style="height:40px"></div>
       </div>
     </div>`
 
@@ -182,7 +184,7 @@ function renderSetup(body) {
   wireSpecies()
   wireReferrals()
   document.getElementById('pbAskAgent')?.addEventListener('click', (e) => { e.preventDefault(); _deps.expandAgent?.() })
-  wireSetupSave(oc)
+  wireSetupAutosave(oc)
 }
 
 function renderSpeciesRow(species, cfg, referralNames, isExtra = false) {
@@ -232,9 +234,9 @@ function wireReferrals() {
   document.getElementById('pbAddReferral')?.addEventListener('click', () => {
     const i = list.querySelectorAll('.pb-referral-row').length
     list.insertAdjacentHTML('beforeend', renderReferralRow({}, i))
-    list.lastElementChild.querySelector('.pb-ref-remove').addEventListener('click', (e) => e.target.closest('.pb-referral-row').remove())
+    list.lastElementChild.querySelector('.pb-ref-remove').addEventListener('click', (e) => { e.target.closest('.pb-referral-row').remove(); _pbStageSetup?.() })
   })
-  list?.querySelectorAll('.pb-ref-remove').forEach(btn => btn.addEventListener('click', () => btn.closest('.pb-referral-row').remove()))
+  list?.querySelectorAll('.pb-ref-remove').forEach(btn => btn.addEventListener('click', () => { btn.closest('.pb-referral-row').remove(); _pbStageSetup?.() }))
 }
 
 function collectReferrals() {
@@ -269,8 +271,8 @@ function wireSpecies() {
     const input = document.getElementById('agentInput')
     if (input) { input.value = 'I need to add a custom species that is not in the built-in list. Help me write the rescue protocol.'; setTimeout(() => _deps.sendAgentMessage?.(), 100) }
   })
-  document.querySelectorAll('.kb-custom-sp-remove').forEach(btn => btn.addEventListener('click', () => btn.closest('.kb-custom-species-row')?.remove()))
-  document.querySelectorAll('.kb-species-extra-remove').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); btn.closest('.kb-species-row')?.remove() }))
+  document.querySelectorAll('.kb-custom-sp-remove').forEach(btn => btn.addEventListener('click', () => { btn.closest('.kb-custom-species-row')?.remove(); _pbStageSetup?.() }))
+  document.querySelectorAll('.kb-species-extra-remove').forEach(btn => btn.addEventListener('click', (e) => { e.stopPropagation(); btn.closest('.kb-species-row')?.remove(); _pbStageSetup?.() }))
 }
 
 // The skip-mode "Use a referral…" dropdown fills the free-text redirect with
@@ -307,78 +309,81 @@ function wireRail() {
   })
 }
 
-function wireSetupSave(prevOc) {
-  document.getElementById('kbSaveAll')?.addEventListener('click', async () => {
-    const slug = getTenantSlug()
-    const btn = document.getElementById('kbSaveAll')
-    const msg = document.getElementById('kbSaveMsg')
-    if (!slug) { msg.textContent = 'No tenant context'; msg.className = 'pb-save-msg kb-save-error'; return }
-    btn.disabled = true; btn.textContent = 'Saving...'
-
-    const speciesConfig = {}
-    document.querySelectorAll('#kbSpeciesTable .kb-species-row').forEach(row => {
-      const species = row.dataset.species
-      const mode = row.querySelector('.kb-species-mode')?.value || 'builtin'
-      if (!species || mode === 'builtin') return
-      const detail = row.querySelector('.kb-species-detail')
-      speciesConfig[species] = {
-        mode,
-        notes: detail?.querySelector('.kb-species-notes')?.value?.trim() || '',
-        redirect: detail?.querySelector('.kb-species-redirect')?.value?.trim() || '',
-      }
-    })
-    const customSpecies = []
-    document.querySelectorAll('.kb-custom-species-row').forEach(row => {
-      const name = row.dataset.species
-      const protocol = row.querySelector('.kb-custom-sp-protocol')?.value?.trim()
-      if (name) customSpecies.push({ name, protocol: protocol || '' })
-    })
-    const referrals = collectReferrals()
-
-    // Merge: preserve other tabs' data (triage_config etc.) via the spread.
-    const orgConfig = {
-      ...(getTenantConfig()?.org_config || {}),
-      hours: val('pbHours'),
-      after_hours_phone: val('pbAfterHours'),
-      public_address: val('pbAddress'),
-      species_config: speciesConfig,
-      custom_species: customSpecies,
-      referrals,
-      redirect_info: val('pbRedirectInfo'),
+// Assemble the whole Setup tab into a /platform/setup payload. `prevOc` is the
+// org_config captured at render time (used for legacy-field fallbacks).
+function collectSetupPayload(prevOc) {
+  const speciesConfig = {}
+  document.querySelectorAll('#kbSpeciesTable .kb-species-row').forEach(row => {
+    const species = row.dataset.species
+    const mode = row.querySelector('.kb-species-mode')?.value || 'builtin'
+    if (!species || mode === 'builtin') return
+    const detail = row.querySelector('.kb-species-detail')
+    speciesConfig[species] = {
+      mode,
+      notes: detail?.querySelector('.kb-species-notes')?.value?.trim() || '',
+      redirect: detail?.querySelector('.kb-species-redirect')?.value?.trim() || '',
     }
-    // House rules absorbed the legacy general-rescue-rules box; clear the old
-    // field once at least one of them had content, so it isn't double-rendered.
-    orgConfig.intake_procedures = ''
-    // Only retire the legacy emergency_contacts free-text once it's been
-    // captured as a structured referral; otherwise keep it as the fallback.
-    if (referrals.length) orgConfig.emergency_contacts = ''
-    else orgConfig.emergency_contacts = prevOc.emergency_contacts || ''
-
-    // greeting intentionally dropped — the widget opens silently by design and
-    // greeting/opening copy belongs to the Preview tab, not the bot prompt.
-    const botOverrides = { tone: val('kbTone'), always_say: val('kbAlwaysSay'), never_say: val('kbNeverSay') }
-    const payload = {
-      phone: val('pbPhone'), email: val('pbEmail'), url: val('pbUrl'),
-      location_service_area: val('pbServiceArea'), location_county: val('pbCounty'), location_state: val('pbState'),
-      org_config: orgConfig, bot_overrides: botOverrides, house_rules: val('pbHouseRules'),
-    }
-    try {
-      const res = await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) })
-      if (res.ok) {
-        const cfg = getTenantConfig() || {}
-        cfg.org_config = orgConfig; cfg.bot_overrides = botOverrides; cfg.house_rules = payload.house_rules
-        cfg.phone = payload.phone; cfg.email = payload.email; cfg.url = payload.url
-        cfg.location_service_area = payload.location_service_area; cfg.location_county = payload.location_county; cfg.location_state = payload.location_state
-        setTenantConfig(cfg)
-        msg.textContent = 'Saved!'; msg.className = 'pb-save-msg kb-save-ok'
-      } else {
-        const d = await res.json().catch(() => ({}))
-        msg.textContent = d.error || 'Save failed'; msg.className = 'pb-save-msg kb-save-error'
-      }
-    } catch { msg.textContent = 'Network error'; msg.className = 'pb-save-msg kb-save-error' }
-    btn.disabled = false; btn.textContent = 'Save changes'
-    setTimeout(() => { msg.textContent = '' }, 3000)
   })
+  const customSpecies = []
+  document.querySelectorAll('.kb-custom-species-row').forEach(row => {
+    const name = row.dataset.species
+    const protocol = row.querySelector('.kb-custom-sp-protocol')?.value?.trim()
+    if (name) customSpecies.push({ name, protocol: protocol || '' })
+  })
+  const referrals = collectReferrals()
+
+  // Merge: preserve other tabs' data (triage_config etc.) via the spread.
+  const orgConfig = {
+    ...(getTenantConfig()?.org_config || {}),
+    hours: val('pbHours'),
+    after_hours_phone: val('pbAfterHours'),
+    public_address: val('pbAddress'),
+    species_config: speciesConfig,
+    custom_species: customSpecies,
+    referrals,
+    redirect_info: val('pbRedirectInfo'),
+  }
+  // House rules absorbed the legacy general-rescue-rules box; clear the old
+  // field once at least one of them had content, so it isn't double-rendered.
+  orgConfig.intake_procedures = ''
+  // Only retire the legacy emergency_contacts free-text once it's been
+  // captured as a structured referral; otherwise keep it as the fallback.
+  if (referrals.length) orgConfig.emergency_contacts = ''
+  else orgConfig.emergency_contacts = prevOc.emergency_contacts || ''
+
+  // greeting intentionally dropped — the widget opens silently by design and
+  // greeting/opening copy belongs to the Preview tab, not the bot prompt.
+  const botOverrides = { tone: val('kbTone'), always_say: val('kbAlwaysSay'), never_say: val('kbNeverSay') }
+  const payload = {
+    phone: val('pbPhone'), email: val('pbEmail'), url: val('pbUrl'),
+    location_service_area: val('pbServiceArea'), location_county: val('pbCounty'), location_state: val('pbState'),
+    org_config: orgConfig, bot_overrides: botOverrides, house_rules: val('pbHouseRules'),
+  }
+  return payload
+}
+
+// Auto-stage: every edit on the Setup tab debounce-POSTs the whole tab into the
+// server-side draft. There's no Save button anymore — the global Publish bar
+// (admin shell) is the single commit. A successful /platform/setup POST
+// dispatches `tenant-config-changed`, which lights up the bar.
+function wireSetupAutosave(prevOc) {
+  let timer = null
+  const stageNow = async () => {
+    const slug = getTenantSlug()
+    if (!slug) return
+    try {
+      await apiFetch(`/platform/setup/${slug}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(collectSetupPayload(prevOc)),
+      })
+    } catch (e) { console.error('[playbook] stage failed', e) }
+  }
+  _pbStageSetup = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { timer = null; stageNow() }, 700) }
+  // Delegated: any text/textarea/select edit anywhere in the tab stages.
+  const content = document.getElementById('pbContent')
+  content?.addEventListener('input', () => _pbStageSetup())
+  content?.addEventListener('change', () => _pbStageSetup())
 }
 
 // ── TRIAGE ──────────────────────────────────────────────────────────────────
@@ -387,10 +392,10 @@ function renderTriage(body) {
   const oc = getTenantConfig()?.org_config || {}
   body.innerHTML = `
     <div class="pb-page pb-page-single">
-      <div class="pb-content">
+      <div class="pb-content" id="pbTriageContent">
         <section class="pb-section">
           <h2 class="pb-section-title">Dashboard triage <span class="pb-staff-tag">staff only</span></h2>
-          <p class="pb-section-sub">These rules decide which conversations show up on your <strong>staff dashboard</strong> for review, and at what urgency. They do <strong>not</strong> change what the bot says to visitors.</p>
+          <p class="pb-section-sub">These rules decide which conversations show up on your <strong>staff dashboard</strong> for review, and at what urgency. They do <strong>not</strong> change what the bot says to visitors. Edits save to your <strong>draft</strong> automatically — Publish from the top bar to take them live.</p>
           <div class="kb-triage-tester">
             <label class="kb-triage-tester-label">Test a sample message</label>
             <div class="kb-triage-tester-row"><input type="text" id="kbTriageTestInput" placeholder="e.g., A bat is in my bedroom" autocomplete="off" data-1p-ignore><button class="btn btn-sm" id="kbTriageTestRun">Test</button></div>
@@ -399,12 +404,10 @@ function renderTriage(body) {
           <div id="kbTriageRules">${renderTriageRules(oc.triage_config || [])}</div>
           <button class="btn btn-sm" id="kbAddTriageRule" style="margin-top:6px">+ Add custom rule</button>
         </section>
-        <div style="height:80px"></div>
+        <div style="height:40px"></div>
       </div>
-      <div class="pb-savebar"><span class="pb-save-msg" id="kbTriageMsg"></span><button class="btn btn-primary" id="kbTriageSave">Save triage rules</button></div>
     </div>`
   wireTriage()
-  document.getElementById('kbTriageSave')?.addEventListener('click', saveTriage)
 }
 
 function renderTriageRules(tenantRules) {
@@ -479,10 +482,18 @@ function wireTriage() {
       <input type="text" class="kb-triage-patterns" placeholder="Keywords (comma-separated)" style="margin-top:4px;width:100%">
       <input type="text" class="kb-triage-hint" placeholder="Front desk hint" style="margin-top:4px;width:100%">`
     container.appendChild(row)
-    row.querySelector('.kb-triage-remove')?.addEventListener('click', () => row.remove())
+    row.querySelector('.kb-triage-remove')?.addEventListener('click', () => { row.remove(); _pbStageTriage?.() })
   })
-  document.querySelectorAll('.kb-triage-remove').forEach(btn => btn.addEventListener('click', () => triageRemove(btn)))
-  document.querySelectorAll('.kb-triage-restore').forEach(btn => btn.addEventListener('click', () => triageRestore(btn.closest('.kb-triage-rule'))))
+  document.querySelectorAll('.kb-triage-remove').forEach(btn => btn.addEventListener('click', () => { triageRemove(btn); _pbStageTriage?.() }))
+  document.querySelectorAll('.kb-triage-restore').forEach(btn => btn.addEventListener('click', () => { triageRestore(btn.closest('.kb-triage-rule')); _pbStageTriage?.() }))
+
+  // Auto-stage triage edits into the draft. Scoped to the rules container so
+  // typing in the sample-message tester doesn't trigger a save.
+  let timer = null
+  _pbStageTriage = () => { if (timer) clearTimeout(timer); timer = setTimeout(() => { timer = null; stageTriage() }, 700) }
+  const rules = document.getElementById('kbTriageRules')
+  rules?.addEventListener('input', () => _pbStageTriage())
+  rules?.addEventListener('change', () => _pbStageTriage())
 }
 
 function triageRemove(btn) {
@@ -503,10 +514,10 @@ function triageRestore(rule) {
   if (btn) { btn.outerHTML = '<button class="btn btn-sm kb-triage-remove" title="Disable">&times;</button>'; rule.querySelector('.kb-triage-remove')?.addEventListener('click', (e) => triageRemove(e.target)) }
 }
 
-async function saveTriage() {
+// Stage triage rules into the draft (no Save button — global Publish commits).
+async function stageTriage() {
   const slug = getTenantSlug()
-  const msg = document.getElementById('kbTriageMsg')
-  if (!slug) { showSetupMsg(msg, 'No tenant context', false); return }
+  if (!slug) return
   const triageConfig = []
   document.querySelectorAll('.kb-triage-rule').forEach(row => {
     const id = row.dataset.id || undefined
@@ -519,10 +530,8 @@ async function saveTriage() {
   })
   const orgConfig = { ...(getTenantConfig()?.org_config || {}), triage_config: triageConfig }
   try {
-    const res = await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ org_config: orgConfig }) })
-    if (res.ok) { const cfg = getTenantConfig() || {}; cfg.org_config = orgConfig; setTenantConfig(cfg); showSetupMsg(msg, 'Saved!', true) }
-    else showSetupMsg(msg, 'Save failed', false)
-  } catch { showSetupMsg(msg, 'Network error', false) }
+    await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ org_config: orgConfig }) })
+  } catch (e) { console.error('[playbook] triage stage failed', e) }
 }
 
 // ── KNOWLEDGE (read-only) ─────────────────────────────────────────────────────
@@ -621,7 +630,7 @@ function renderAccount(body) {
           <form id="pbReportForm" data-1p-ignore>
             <label class="pb-checkbox"><input type="checkbox" id="pbReportEnabled" ${config.daily_reports_enabled ? 'checked' : ''}><span>Send daily report email</span></label>
             <div class="pb-field" style="margin-top:8px"><label>Recipients</label><input type="text" id="pbReportRecipients" value="${esc(config.report_recipients || '')}" placeholder="ai@example.org, frontdesk@example.org" autocomplete="off" data-1p-ignore></div>
-            <button type="submit" class="btn btn-sm btn-primary" style="margin-top:8px">Save report settings</button><span class="setup-msg" id="pbReportMsg"></span>
+            <span class="pb-section-sub" style="display:block;margin-top:6px">Saved to your draft as you edit — Publish from the top bar to take it live.</span><span class="setup-msg" id="pbReportMsg"></span>
           </form>
         </section>
         <section class="pb-section">
@@ -643,15 +652,21 @@ function renderAccount(body) {
 
 function wireAccount() {
   const slug = getTenantSlug()
-  document.getElementById('pbReportForm')?.addEventListener('submit', async (e) => {
-    e.preventDefault()
-    const msg = document.getElementById('pbReportMsg')
-    if (!slug) { showSetupMsg(msg, 'No tenant context', false); return }
-    try {
-      const res = await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ report_recipients: document.getElementById('pbReportRecipients').value, daily_reports_enabled: document.getElementById('pbReportEnabled').checked }) })
-      showSetupMsg(msg, res.ok ? 'Saved!' : 'Save failed', res.ok)
-    } catch { showSetupMsg(msg, 'Network error', false) }
-  })
+  // Daily report settings auto-stage into the draft (no Save button).
+  document.getElementById('pbReportForm')?.addEventListener('submit', (e) => e.preventDefault())
+  let reportTimer = null
+  const stageReport = () => {
+    if (reportTimer) clearTimeout(reportTimer)
+    reportTimer = setTimeout(async () => {
+      reportTimer = null
+      if (!slug) return
+      try {
+        await apiFetch(`/platform/setup/${slug}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ report_recipients: document.getElementById('pbReportRecipients').value, daily_reports_enabled: document.getElementById('pbReportEnabled').checked }) })
+      } catch (e) { console.error('[playbook] report stage failed', e) }
+    }, 700)
+  }
+  document.getElementById('pbReportRecipients')?.addEventListener('input', stageReport)
+  document.getElementById('pbReportEnabled')?.addEventListener('change', stageReport)
   document.getElementById('pbDomainForm')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const msg = document.getElementById('pbDomainMsg'); const inp = document.getElementById('pbDomainInput')

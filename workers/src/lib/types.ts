@@ -94,6 +94,12 @@ export interface Tenant {
    * previously routed through `tenant as unknown as { feature_flags?: string }`
    * casts at three call sites; declared here so the casts can be removed. */
   feature_flags: string | null
+  /** JSON partial patch of publishable columns the operator has edited but not
+   * yet published (global draft/publish). NULL = no unpublished changes. The
+   * bot NEVER reads this — only the admin editing overlay (lib/draft.ts) does.
+   * Publish applies it to the live columns and recompiles; Discard nulls it. */
+  draft_config: string | null
+  draft_updated_at: string | null
   created_at: string
   updated_at: string
 }

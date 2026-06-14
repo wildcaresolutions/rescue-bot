@@ -305,6 +305,7 @@ The `/admin/agent` endpoint uses a line-delimited streaming protocol (not SSE):
 The copilot has these tools:
 - `update_config` — Update org info (phone, email, hours, etc.)
 - `update_colors` — Update brand colors
+- `manage_referrals` — Add/update/remove a referral in `org_config.referrals[]` (action + name + optional contact/covers/area). Routes out-of-area callers automatically when `area` is set.
 - `save_protocols` — Write raw protocol text
 - `get_config` — Read current tenant config
 - `create_test_scenario` — Create a test scenario

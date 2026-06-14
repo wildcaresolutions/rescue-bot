@@ -14,50 +14,18 @@ const __dirname = dirname(fileURLToPath(import.meta.url))
 const root = join(__dirname, '../..')
 const resourcesDir = join(root, 'resources')
 
-const DISPLAY_NAMES = {
-  'adult_heron_and_egret_rescue_and_care_-_google_docs.txt': 'Heron & Egret Rescue and Care',
-  'animal_entangled___caught_in_fishing_line___fishing_hooks___fishing_tackle.txt': 'Entangled Animal Rescue',
-  'bat_rescue_and_care.txt': 'Bat Rescue and Care',
-  'bobcat_rescue_and_care.txt': 'Bobcat Rescue and Care',
-  'coyote_rescue_and_care.txt': 'Coyote Rescue and Care',
-  'deer_and_fawn_rescue_and_care.txt': 'Deer & Fawn Rescue and Care',
-  'duck_and_goose_rescue_and_care.txt': 'Duck & Goose Rescue and Care',
-  'fox_rescue_and_care.txt': 'Fox Rescue and Care',
-  'gull_rescue_and_care.txt': 'Gull Rescue and Care',
-  'hummingbird_rescue_and_care.txt': 'Hummingbird Rescue and Care',
-  'opossum_rescue_and_care.txt': 'Opossum Rescue and Care',
-  'raccoon_rescue_and_care.txt': 'Raccoon Rescue and Care',
-  'raptor_rescue_and_care.txt': 'Raptor Rescue and Care',
-  'raven_rescue_and_care.txt': 'Raven Rescue and Care',
-  'rodent_rescue_and_care.txt': 'Rodent Rescue and Care',
-  'skunk_rescue_and_care.txt': 'Skunk Rescue and Care',
-  'snake_identification_and_rescue.txt': 'Snake Identification and Rescue',
-  'songbird_rescue_and_care_guide.txt': 'Songbird Rescue and Care',
-  'squirrel_rescue_and_care.txt': 'Squirrel Rescue and Care',
-  'wild_turkey_rescue_and_care.txt': 'Wild Turkey Rescue and Care',
-}
-
-const CATEGORIES = {
-  'bat_rescue_and_care.txt': 'mammal',
-  'bobcat_rescue_and_care.txt': 'mammal',
-  'coyote_rescue_and_care.txt': 'mammal',
-  'deer_and_fawn_rescue_and_care.txt': 'mammal',
-  'fox_rescue_and_care.txt': 'mammal',
-  'opossum_rescue_and_care.txt': 'mammal',
-  'raccoon_rescue_and_care.txt': 'mammal',
-  'rodent_rescue_and_care.txt': 'mammal',
-  'skunk_rescue_and_care.txt': 'mammal',
-  'squirrel_rescue_and_care.txt': 'mammal',
-  'adult_heron_and_egret_rescue_and_care_-_google_docs.txt': 'waterbird',
-  'duck_and_goose_rescue_and_care.txt': 'waterbird',
-  'gull_rescue_and_care.txt': 'waterbird',
-  'raptor_rescue_and_care.txt': 'raptor',
-  'raven_rescue_and_care.txt': 'songbird',
-  'songbird_rescue_and_care_guide.txt': 'songbird',
-  'hummingbird_rescue_and_care.txt': 'songbird',
-  'snake_identification_and_rescue.txt': 'reptile',
-  'wild_turkey_rescue_and_care.txt': 'gamebird',
-  'animal_entangled___caught_in_fishing_line___fishing_hooks___fishing_tackle.txt': 'general',
+// Derive display-name and category lookups from the shared catalog. Catalog
+// entries with filename: null (e.g. "Pigeon") aren't bundled here — they're
+// catalog-only species without a dedicated guide. A guide_display_name
+// override lets us preserve odd casings ("Snake Identification and Rescue")
+// instead of formula-deriving everything as "{Name} Rescue and Care".
+const catalog = JSON.parse(readFileSync(join(root, 'shared/species-catalog.json'), 'utf8'))
+const DISPLAY_NAMES = {}
+const CATEGORIES = {}
+for (const sp of catalog.species) {
+  if (!sp.filename) continue
+  DISPLAY_NAMES[sp.filename] = sp.guide_display_name || `${sp.name} Rescue and Care`
+  CATEGORIES[sp.filename] = sp.category
 }
 
 const files = readdirSync(resourcesDir).filter(f => f.endsWith('.txt')).sort()

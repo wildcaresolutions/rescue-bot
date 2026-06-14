@@ -63,8 +63,8 @@ export async function renderTestView() {
         <h4 style="font-family: var(--font-display); font-weight: 400; font-size: 1rem; color: var(--color-umber); margin-bottom: 12px;">Add a question to check</h4>
         <form id="addScenarioForm" data-1p-ignore>
           <div class="setup-field">
-            <label>What a caller might ask</label>
-            <input type="text" name="test_message" placeholder="I found a baby raccoon in my backyard" data-1p-ignore autocomplete="off" required>
+            <label>What the caller says <span class="field-hint-inline">(add turns for a back-and-forth — the bot's final answer is graded)</span></label>
+            ${turnsEditorHtml([''], 'addTurns', 'I found a baby raccoon in my backyard')}
           </div>
           <div class="setup-field">
             <label>A short label for this check</label>
@@ -121,19 +121,25 @@ export async function renderTestView() {
   })
 
   // Add question form
-  document.getElementById('addScenarioForm')?.addEventListener('submit', async (e) => {
+  const addForm = document.getElementById('addScenarioForm')
+  if (addForm) wireTurnsEditor(addForm)
+  addForm?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const msg = document.getElementById('addScenarioMsg')
     const form = e.target
+    const turns = collectTurns('addTurns')
+    if (!turns.length) { showSetupMsg(msg, 'Add at least one caller message.', false); return }
+    // Single turn → test_message; a scripted sequence → test_messages.
+    const payload = {
+      description: form.description.value,
+      expected_behavior: form.expected_behavior.value,
+      ...(turns.length > 1 ? { test_messages: turns } : { test_message: turns[0] }),
+    }
     try {
       const res = await apiFetch('/admin/evals', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          description: form.description.value,
-          expected_behavior: form.expected_behavior.value,
-          test_message: form.test_message.value,
-        }),
+        body: JSON.stringify(payload),
       })
       if (res.ok) {
         showSetupMsg(msg, 'Added!', true)
@@ -155,6 +161,62 @@ const VERDICT = {
   approved: { cls: 'verdict-approved', label: '👍 Looks good' },
   rejected: { cls: 'verdict-rejected', label: '👎 Needs work' },
   unreviewed: { cls: 'verdict-none', label: 'Not checked yet' },
+}
+
+// A check is one caller message or a SCRIPTED SEQUENCE of caller turns played
+// in order (bot's final answer graded). Server stores the sequence as a JSON
+// array in `test_messages`; `test_message` is always the first turn.
+function scenarioTurns(s) {
+  const raw = s?.test_messages
+  let turns = []
+  if (Array.isArray(raw)) turns = raw
+  else if (typeof raw === 'string' && raw.trim()) {
+    try { const p = JSON.parse(raw); if (Array.isArray(p)) turns = p } catch { /* ignore */ }
+  }
+  turns = turns.filter(t => typeof t === 'string' && t.trim())
+  return turns.length ? turns : [s.test_message]
+}
+
+function turnRowHtml(value, i, placeholder) {
+  const ph = i === 0 ? (placeholder || 'What the caller says…') : 'Caller’s follow-up…'
+  return `<div class="turn-row">
+    <span class="turn-num">${i + 1}</span>
+    <input type="text" class="turn-input" value="${esc(value || '')}" placeholder="${esc(ph)}" data-1p-ignore autocomplete="off">
+    <button type="button" class="turn-remove" title="Remove this turn" aria-label="Remove turn">&times;</button>
+  </div>`
+}
+
+// Editor for the ordered caller turns. `turns` are the current values (use ['']
+// for an empty add form). `placeholder` seeds the first row's placeholder.
+function turnsEditorHtml(turns, id, placeholder) {
+  const rows = (turns.length ? turns : ['']).map((t, i) => turnRowHtml(t, i, placeholder)).join('')
+  return `<div class="turns-editor" id="${esc(id)}">${rows}</div>
+    <button type="button" class="btn btn-sm turn-add" data-target="${esc(id)}">+ Add a follow-up turn</button>`
+}
+
+// Wire add/remove + renumber within a scope element that contains a
+// .turns-editor and its .turn-add button (a form, or the inline edit region).
+function wireTurnsEditor(scope) {
+  const editor = scope.querySelector('.turns-editor')
+  if (!editor) return
+  const renumber = () => editor.querySelectorAll('.turn-row .turn-num').forEach((el, i) => { el.textContent = String(i + 1) })
+  scope.querySelector('.turn-add')?.addEventListener('click', () => {
+    editor.insertAdjacentHTML('beforeend', turnRowHtml('', editor.querySelectorAll('.turn-row').length))
+    renumber()
+  })
+  editor.addEventListener('click', (e) => {
+    const rm = e.target.closest('.turn-remove')
+    if (!rm) return
+    if (editor.querySelectorAll('.turn-row').length <= 1) return // keep at least one
+    rm.closest('.turn-row').remove()
+    renumber()
+  })
+}
+
+function collectTurns(editorId) {
+  const editor = document.getElementById(editorId)
+  if (!editor) return []
+  return [...editor.querySelectorAll('.turn-input')].map(i => i.value.trim()).filter(Boolean)
 }
 
 export async function loadEvalScenarios() {
@@ -179,12 +241,16 @@ export async function loadEvalScenarios() {
 
 function renderScenarioCard(s) {
   const verdict = VERDICT[s.review_status] || VERDICT.unreviewed
+  const turns = scenarioTurns(s)
+  const callerBlock = turns.length > 1
+    ? `<code class="eval-test-msg eval-test-msg-multi"><span class="eval-field-label">Caller says <span class="eval-turn-count">${turns.length}-turn conversation</span></span>${turns.map((t, i) => `<span class="eval-turn-line"><span class="eval-turn-n">${i + 1}</span>${escapeHtml(t)}</span>`).join('')}</code>`
+    : `<code class="eval-test-msg"><span class="eval-field-label">Caller asks</span>${escapeHtml(turns[0] || '')}</code>`
   return `
     <div class="eval-card ${verdict.cls}" data-id="${esc(String(s.id))}">
       <div class="eval-card-header">
         <div class="eval-card-info">
           <span class="eval-verdict-badge ${verdict.cls}">${verdict.label}</span>
-          <code class="eval-test-msg"><span class="eval-field-label">Caller asks</span>${escapeHtml(s.test_message)}</code>
+          ${callerBlock}
           <strong>${escapeHtml(s.description)}</strong>
           <span class="eval-expected"><span class="eval-field-label">A good answer includes</span>${escapeHtml(s.expected_behavior)}</span>
         </div>
@@ -267,11 +333,12 @@ function toggleEditForm(scenarioId) {
   const s = evalScenarios.find(x => String(x.id) === String(scenarioId))
   if (!s) return
   region.style.display = ''
+  const editId = `editTurns-${scenarioId}`
   region.innerHTML = `
     <form class="eval-edit-form" data-1p-ignore>
       <div class="setup-field">
-        <label>What a caller might ask</label>
-        <input type="text" name="test_message" value="${esc(s.test_message)}" data-1p-ignore autocomplete="off" required>
+        <label>What the caller says <span class="field-hint-inline">(add turns for a back-and-forth)</span></label>
+        ${turnsEditorHtml(scenarioTurns(s), editId)}
       </div>
       <div class="setup-field">
         <label>Label</label>
@@ -288,17 +355,20 @@ function toggleEditForm(scenarioId) {
       </div>
     </form>
   `
+  wireTurnsEditor(region)
   region.querySelector('.eval-edit-cancel')?.addEventListener('click', () => { region.style.display = 'none'; region.innerHTML = '' })
   region.querySelector('.eval-edit-form')?.addEventListener('submit', async (e) => {
     e.preventDefault()
     const form = e.target
     const msg = region.querySelector('.eval-edit-msg')
+    const turns = collectTurns(editId)
+    if (!turns.length) { if (msg) showSetupMsg(msg, 'Add at least one caller message.', false); return }
     try {
       const res = await apiFetch(`/admin/evals/${scenarioId}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          test_message: form.test_message.value,
+          ...(turns.length > 1 ? { test_messages: turns } : { test_message: turns[0] }),
           description: form.description.value,
           expected_behavior: form.expected_behavior.value,
         }),

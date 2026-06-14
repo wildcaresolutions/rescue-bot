@@ -3007,6 +3007,32 @@ body {
 .check-summary-detail { color: var(--color-storm); font-size: 0.82rem; display: flex; align-items: center; gap: 6px; }
 .check-summary-note { color: var(--color-storm); font-size: 0.78rem; font-style: italic; margin-left: auto; }
 
+/* Scripted multi-turn: caller-turns editor (add/edit forms). */
+.turns-editor { display: flex; flex-direction: column; gap: 6px; }
+.turn-row { display: flex; align-items: center; gap: 8px; }
+.turn-row .turn-num {
+  flex: 0 0 auto; width: 20px; height: 20px; border-radius: 50%;
+  background: var(--color-sage); color: #fff; font-size: 0.7rem; font-weight: 600;
+  display: flex; align-items: center; justify-content: center;
+}
+.turn-row .turn-input { flex: 1; min-width: 0; }
+.turn-row .turn-remove {
+  flex: 0 0 auto; background: none; border: 1px solid var(--color-dried-grass);
+  border-radius: var(--radius-sm); color: var(--color-storm); cursor: pointer;
+  font-size: 0.95rem; line-height: 1; padding: 4px 8px;
+}
+.turn-row .turn-remove:hover { color: var(--color-urgent-red); border-color: var(--color-urgent-red); }
+.turn-add { margin-top: 6px; color: var(--color-sage); }
+
+/* Multi-turn caller block on a card. */
+.eval-test-msg-multi { display: block; }
+.eval-turn-count {
+  font-weight: 600; color: var(--color-sage); text-transform: none; letter-spacing: 0;
+  margin-left: 6px;
+}
+.eval-turn-line { display: flex; gap: 6px; align-items: baseline; margin-top: 3px; }
+.eval-turn-line .eval-turn-n { color: var(--color-storm); font-weight: 600; font-size: 0.72rem; }
+
 /* ── Bot Preview (in-app iframe) ─────────────────────────────────────────── */
 
 .preview-section {

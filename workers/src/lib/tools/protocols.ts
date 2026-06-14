@@ -16,7 +16,7 @@ import type { ToolContext } from './types'
 import { formatTestResultExplanation } from '../judge-parse'
 import { runEvalScenario } from '../eval-runner'
 import { stageConfigChange, overlayTenant } from '../draft'
-import { updateEvalScenario, reviewEvalScenario, deleteEvalScenario } from '../evals-crud'
+import { updateEvalScenario, reviewEvalScenario, deleteEvalScenario, normalizeTurns } from '../evals-crud'
 
 export function protocolsTools(ctx: ToolContext) {
   const { env, db, tenantId, freshTenant } = ctx
@@ -34,27 +34,28 @@ export function protocolsTools(ctx: ToolContext) {
   })
 
   const create_test_scenario = tool({
-    description: 'Creates a test case to verify how the rescue bot handles a specific situation',
+    description: 'Creates a test case to verify how the rescue bot handles a specific situation. For a back-and-forth, pass test_messages as the ordered list of caller turns (the bot\'s final answer is graded); otherwise pass a single test_message.',
     inputSchema: z.object({
       description: z.string().describe('Plain English description of the scenario'),
       expected_behavior: z.string().describe('What the bot should do'),
-      test_message: z.string().describe('The actual message a user would type to the bot'),
+      test_message: z.string().optional().describe('A single visitor message (use this OR test_messages)'),
+      test_messages: z.array(z.string()).optional().describe('Ordered caller turns for a multi-step conversation'),
     }),
     execute: async (input) => {
+      const { testMessage, turnsJson } = normalizeTurns(input)
+      if (!testMessage) return { success: false, error: 'Provide test_message or a non-empty test_messages list' }
       const id = crypto.randomUUID()
       await db.prepare(
-        `INSERT INTO eval_scenarios (id, tenant_id, description, expected_behavior, test_message, auto_generated)
-         VALUES (?, ?, ?, ?, ?, 1)`,
-      ).bind(id, tenantId, input.description, input.expected_behavior, input.test_message).run()
-      // Spread input fields top-level so the frontend's breadcrumb chip can
-      // render "Added test case: <description> · "<test_message>"" without
-      // having to dig into result.scenario.* or parse the message string.
+        `INSERT INTO eval_scenarios (id, tenant_id, description, expected_behavior, test_message, test_messages, auto_generated)
+         VALUES (?, ?, ?, ?, ?, ?, 1)`,
+      ).bind(id, tenantId, input.description, input.expected_behavior, testMessage, turnsJson).run()
       return {
         success: true,
         id,
         description: input.description,
-        test_message: input.test_message,
+        test_message: testMessage,
         expected_behavior: input.expected_behavior,
+        turns: turnsJson ? JSON.parse(turnsJson).length : 1,
         message: `Test case created: "${input.description}"`,
       }
     },
@@ -78,6 +79,7 @@ export function protocolsTools(ctx: ToolContext) {
       description: z.string().optional(),
       expected_behavior: z.string().optional(),
       test_message: z.string().optional(),
+      test_messages: z.array(z.string()).optional().describe('Replace the caller turns with this ordered list (multi-step conversation)'),
     }),
     execute: async ({ scenario_id, ...fields }) => {
       const res = await updateEvalScenario(env, tenantId, scenario_id, fields)
@@ -114,13 +116,13 @@ export function protocolsTools(ctx: ToolContext) {
   })
 
   const run_test_scenario = tool({
-    description: 'Run a test case by ID and return the auto-grader\'s ADVISORY hint. The auto-grade (passed/scoring_status) is only a suggestion — the operator\'s 👍/👎 verdict is what counts and it NEVER blocks publishing. If the operator disagrees with the auto-grade, take their side and offer to mark_test_reviewed or update_test_scenario. Never treat a fail/not_scored as a blocker.',
+    description: 'Run a test case by ID and return the auto-grader\'s ADVISORY hint. The auto-grade (passed/scoring_status) is only a suggestion — the operator\'s 👍/👎 verdict is what counts and it NEVER blocks publishing. If the operator disagrees with the auto-grade, take their side and offer to mark_test_reviewed or update_test_scenario. Never treat a fail/not_scored as a blocker. Multi-turn checks play all their caller turns in order; the final answer is graded.',
     inputSchema: z.object({ scenario_id: z.string() }),
     execute: async ({ scenario_id }) => {
       try {
         const scenario = await db.prepare(
-          'SELECT id, description, expected_behavior, test_message FROM eval_scenarios WHERE id = ? AND tenant_id = ?',
-        ).bind(scenario_id, tenantId).first<{ id: string; description: string; expected_behavior: string; test_message: string }>()
+          'SELECT id, description, expected_behavior, test_message, test_messages FROM eval_scenarios WHERE id = ? AND tenant_id = ?',
+        ).bind(scenario_id, tenantId).first<{ id: string; description: string; expected_behavior: string; test_message: string; test_messages: string | null }>()
         if (!scenario) return { success: false, error: 'Scenario not found' }
         // Run against the draft overlay so the operator tests pending changes.
         await runEvalScenario(env, overlayTenant(freshTenant), scenario)

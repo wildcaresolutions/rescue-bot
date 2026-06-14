@@ -159,10 +159,23 @@ function deterministicJudge(
   }
 }
 
+/** Parse a scenario's caller turns: the multi-turn `test_messages` JSON array
+ *  when present, else the single `test_message`. Always ≥1 entry. */
+function scenarioTurns(scenario: { test_message: string; test_messages?: string | string[] | null }): string[] {
+  const raw = scenario.test_messages
+  let turns: string[] = []
+  if (Array.isArray(raw)) turns = raw
+  else if (typeof raw === 'string' && raw.trim()) {
+    try { const p = JSON.parse(raw); if (Array.isArray(p)) turns = p } catch { /* fall through */ }
+  }
+  turns = turns.map(t => (typeof t === 'string' ? t : '')).filter(Boolean)
+  return turns.length ? turns : [scenario.test_message]
+}
+
 export async function runEvalScenario(
   env: Env,
   tenant: Tenant,
-  scenario: { id: string; description: string; expected_behavior: string; test_message: string },
+  scenario: { id: string; description: string; expected_behavior: string; test_message: string; test_messages?: string | string[] | null },
 ): Promise<void> {
   try {
     // Use the SAME prompt-construction logic as the real chat handler so
@@ -172,18 +185,34 @@ export async function runEvalScenario(
     // bot gave care steps even though the real chat bot would correctly
     // redirect. The two paths must agree or onboarding tests are useless.
     const { buildChatPrompt } = await import('./chat-prompt')
-    const { systemPrompt } = await buildChatPrompt(env, tenant, scenario.test_message)
-
     const modelName = getMainChatModelName(env)
 
-    const botResult = await runGatewayChatText({
-      env,
-      model: modelName,
-      system: systemPrompt,
-      messages: [{ role: 'user', content: scenario.test_message }],
-    })
+    // Play the caller turns in order, just like a real conversation: each turn
+    // re-runs RAG + prompt construction (so species detection tracks the latest
+    // message) and the model sees the full history. The FINAL bot answer is what
+    // we grade; the whole transcript is kept for display + the judge's context.
+    const turns = scenarioTurns(scenario)
+    const convo: { role: 'user' | 'assistant'; content: string }[] = []
+    let botResponse = '(no response)'
+    for (const turn of turns) {
+      const { systemPrompt } = await buildChatPrompt(env, tenant, turn)
+      convo.push({ role: 'user', content: turn })
+      const botResult = await runGatewayChatText({
+        env,
+        model: modelName,
+        system: systemPrompt,
+        messages: convo,
+      })
+      botResponse = botResult.text || '(no response)'
+      convo.push({ role: 'assistant', content: botResponse })
+    }
 
-    const botResponse = botResult.text || '(no response)'
+    const isMultiTurn = turns.length > 1
+    // What gets stored/displayed: a labeled transcript for multi-turn, or just
+    // the single answer otherwise.
+    const transcript = isMultiTurn
+      ? convo.map(m => `${m.role === 'user' ? '**Caller**' : '**Bot**'}: ${m.content}`).join('\n\n')
+      : botResponse
 
     // Step 2: Judge the response through AI Gateway.
     let passed: number | null = null
@@ -217,13 +246,12 @@ export async function runEvalScenario(
 The chatbot represents ${tenant.name} and speaks in first person ("we", "us", "our") when referring to itself.
 
 Test scenario: ${scenario.description}
-Visitor said: ${scenario.test_message}
+${isMultiTurn
+  ? `This is a MULTI-TURN conversation. Full transcript:\n${transcript}`
+  : `Visitor said: ${scenario.test_message}\n\nThe bot's actual response:\n${botResponse}`}
 Expected behavior of the bot: ${scenario.expected_behavior}
 
-The bot's actual response:
-${botResponse}
-
-Judge whether the bot's actual response ACCOMPLISHES the expected behavior. Don't require specific phrasing — paraphrases and synonyms are fine. Don't penalize the bot for asking reasonable follow-up questions in addition to satisfying the expected behavior. If the bot satisfies the spirit of what the operator wanted, that's a pass.
+Judge whether the bot ACCOMPLISHES the expected behavior${isMultiTurn ? ' over the course of the conversation (focus on the bot\'s FINAL answer, but credit information it gathered earlier)' : ''}. Don't require specific phrasing — paraphrases and synonyms are fine. Don't penalize the bot for asking reasonable follow-up questions in addition to satisfying the expected behavior. If the bot satisfies the spirit of what the operator wanted, that's a pass.
 
 Critical: respond with ONLY a single JSON object on one line, no prose before or after, no markdown fences. Use this exact shape:
 {"passed": true, "reasoning": "one sentence why this passes or fails, from the operator's perspective"}`
@@ -259,11 +287,12 @@ Critical: respond with ONLY a single JSON object on one line, no prose before or
       useFallback('The scoring service was unavailable.')
     }
 
-    // Step 3: Store result
+    // Step 3: Store result — the full transcript for multi-turn so the operator
+    // sees the whole exchange, just the answer otherwise.
     await env.DB.prepare(
       `INSERT INTO eval_results (scenario_id, tenant_id, response, passed, judge_reasoning)
        VALUES (?, ?, ?, ?, ?)`,
-    ).bind(scenario.id, tenant.id, botResponse.slice(0, 32_000), passed, judgeReasoning.slice(0, 4000)).run()
+    ).bind(scenario.id, tenant.id, transcript.slice(0, 32_000), passed, judgeReasoning.slice(0, 4000)).run()
 
   } catch (e) {
     console.error('[eval/run] Error:', e)

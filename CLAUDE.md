@@ -267,10 +267,14 @@ EMAIL                            # CF send_email binding for magic link auth (re
 | `DELETE` | `/admin/domains/:id` | Admin | Remove allowed domain |
 | `GET` | `/admin/evals` | Admin | List test scenarios |
 | `POST` | `/admin/evals` | Admin | Create test scenario |
+| `PUT` | `/admin/evals/:id` | Admin | Edit a test scenario (resets review verdict) |
 | `DELETE` | `/admin/evals/:id` | Admin | Delete test scenario |
+| `POST` | `/admin/evals/:id/review` | Admin | Set the human verdict (👍/👎) on a scenario |
 | `POST` | `/admin/evals/auto-generate` | Admin | Auto-generate test scenarios |
-| `POST` | `/admin/evals/:id/run` | Admin | Run a test scenario |
+| `POST` | `/admin/evals/:id/run` | Admin | Run a test scenario (advisory auto-grade) |
 | `GET` | `/admin/evals/:id/results` | Admin | Get test results |
+| `POST` | `/admin/publish` | Admin | Global Publish — promote staged draft (config + widget) to live |
+| `POST` | `/admin/discard` | Admin | Discard the staged draft (live unchanged) |
 | `POST` | `/admin/agent` | Admin | Copilot agent (streaming) |
 | `GET` | `/admin/agent/history` | Admin | Get copilot conversation history |
 | `DELETE` | `/admin/agent/history` | Admin | Clear copilot conversation history |
@@ -279,13 +283,15 @@ EMAIL                            # CF send_email binding for magic link auth (re
 
 URL: `/admin` (e.g., `http://localhost:8787/admin`)
 
-Nav order: Home (Dashboard) -> Preview -> Playbook -> Test -> Reports (Help is icon button)
+Nav order: Home (Dashboard) -> Preview -> Playbook -> Check your bot -> Reports (Help is icon button)
+
+A single global Publish/Discard bar in the shell takes ALL staged edits (config + widget) live at once; individual tabs no longer have their own publish buttons (Preview debounce-stages every control change into the draft).
 
 Features:
 - Dashboard with action items, triage urgency, session analysis
-- Preview: live widget preview with theme/CSS editing
+- Preview: live widget preview with theme/CSS editing (stages into the draft; global Publish goes live)
 - Playbook: structured org config (species_config, custom_species, triage rules, bot overrides) — internal tab id is still `kb`
-- Test: eval scenarios with auto-generation and per-scenario results
+- Check your bot (internal tab id `test`): ask the bot caller questions, read the answer, give it 👍/👎. The human verdict (`review_status`) is authoritative; the LLM auto-grade is an advisory hint and NEVER blocks publishing. Operators can edit/delete scenarios freely.
 - Reports: daily report with stats overview and timeseries
 - Copilot: AI admin assistant (Claude Sonnet) with tool use, accessible from any tab
 - All sessions with message counts, timestamps, feedback ratings
@@ -325,6 +331,9 @@ The copilot has these tools:
 - `update_species_config` — Change how a built-in species is handled (builtin/augment/override/skip)
 - `fetch_url` — Fetch any URL (for color extraction, contact info scraping)
 - `run_analytics_query` — Plain-English question + read-only SELECT against this tenant's data. The validator in `workers/src/lib/safe-sql.ts` rejects mutations, multi-statement, comments, hard-coded tenant ids, and unscoped queries; `:tenant_id` is bound server-side; results are capped at 100 rows.
+- `update_test_scenario` — Reword an existing "Check your bot" scenario (resets its human verdict to unreviewed)
+- `delete_test_scenario` — Delete a scenario (operator is always allowed; never route to support)
+- `mark_test_reviewed` — Record the operator's authoritative 👍/👎 verdict (overrides the advisory auto-grader)
 
 ## Database Migrations
 
@@ -338,7 +347,17 @@ Apply to production:
 make cf-migrate
 ```
 
-Migrations are currently up to `0021_user_profile.sql`.
+Migrations are currently up to `0035_eval_review.sql`.
+
+### Global draft / publish (staging)
+
+Operator edits (Playbook, Settings, Preview, copilot tools) are STAGED into the `tenants.draft_config` JSON column (a partial patch keyed by column name; JSON columns held as objects) — they do NOT touch live columns. The public chatbot keeps serving the last PUBLISHED config (live columns), so the bot read path is unchanged. See `workers/src/lib/draft.ts`:
+- `stageConfigChange(db, {id,slug}, patch)` — merge a patch into `draft_config`; busts the slug cache; NEVER writes a live column or recompiles.
+- `overlayTenant(tenant)` — pure live+draft overlay for the EDITING view (admin reads). NEVER call on the bot read path.
+- `publishDraft(env, tenant)` (`workers/src/lib/publish.ts`) — the global Publish: promote the patch to live columns, recompile `custom_instruction` (raw-edit/lock precedence), set onboarded/widget_published_at, clear the draft, bust cache — one atomic UPDATE.
+- `discardDraft(env, tenant)` — null the draft (live untouched), bust cache.
+
+`/api/config` splits on auth: authed admin gets `overlayTenant(tenant)` (the draft) plus `has_unpublished_changes`; the unauthed public widget gets the live row. The admin shell renders a single global Publish/Discard bar driven by `has_unpublished_changes`. The exception kept live-immediate: the experimental photo-upload feature flag (the preview paperclip needs a server-minted session token).
 
 To add a migration: create `workers/migrations/NNN_description.sql`, then apply.
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { deleteEvalScenario, updateEvalScenario, reviewEvalScenario } from '../src/lib/evals-crud'
+import { deleteEvalScenario, updateEvalScenario, reviewEvalScenario, normalizeTurns, createEvalScenario } from '../src/lib/evals-crud'
 import type { Env } from '../src/lib/types'
 
 // Minimal D1 fake that records prepared SQL + the statements passed to batch().
@@ -66,13 +66,52 @@ describe('updateEvalScenario', () => {
     // editing a scenario invalidates the old human verdict
     expect(w.sql).toMatch(/review_status = 'unreviewed'/)
     expect(w.sql).toMatch(/reviewed_at = NULL/)
-    expect(w.binds).toEqual(['new desc', 'old eb', 'old msg', 's1', 't1'])
+    // test_messages bind (null here — single-turn, unchanged) sits before id/tenant.
+    expect(w.binds).toEqual(['new desc', 'old eb', 'old msg', null, 's1', 't1'])
   })
 
   it('rejects blanking a field', async () => {
     const db = new FakeQueryDb(existing)
     const res = await updateEvalScenario({ DB: db } as unknown as Env, 't1', 's1', { test_message: '   ' })
-    expect(res).toEqual({ error: 'description, expected_behavior, and test_message cannot be blank', status: 400 })
+    expect(res).toEqual({ error: 'description, expected_behavior, and at least one caller message cannot be blank', status: 400 })
+  })
+})
+
+describe('normalizeTurns (scripted multi-turn)', () => {
+  it('single test_message → one turn, no turnsJson', () => {
+    expect(normalizeTurns({ test_message: 'hi' })).toEqual({ testMessage: 'hi', turnsJson: null })
+  })
+  it('test_messages array → first is testMessage, full sequence in turnsJson', () => {
+    const r = normalizeTurns({ test_messages: ['I found a pigeon', "I'm in Walnut Creek", "it can't fly"] })
+    expect(r.testMessage).toBe('I found a pigeon')
+    expect(JSON.parse(r.turnsJson!)).toEqual(['I found a pigeon', "I'm in Walnut Creek", "it can't fly"])
+  })
+  it('a single-element array stays single-turn (no turnsJson)', () => {
+    expect(normalizeTurns({ test_messages: ['only one'] })).toEqual({ testMessage: 'only one', turnsJson: null })
+  })
+  it('trims, drops blanks, caps at 20 turns', () => {
+    const r = normalizeTurns({ test_messages: ['  a  ', '', '   ', 'b'] })
+    expect(JSON.parse(r.turnsJson!)).toEqual(['a', 'b'])
+    const many = normalizeTurns({ test_messages: Array.from({ length: 30 }, (_, i) => `t${i}`) })
+    expect(JSON.parse(many.turnsJson!).length).toBe(20)
+  })
+  it('array wins over test_message when both present', () => {
+    expect(normalizeTurns({ test_message: 'ignored', test_messages: ['x', 'y'] }).testMessage).toBe('x')
+  })
+})
+
+describe('createEvalScenario persists the turn sequence', () => {
+  it('stores test_messages JSON for a multi-turn check', async () => {
+    const db = new FakeQueryDb(null)
+    const res = await createEvalScenario({ DB: db } as unknown as Env, 't1', {
+      description: 'pigeon walk', expected_behavior: 'route to WildCare',
+      test_messages: ['I found a pigeon', "I'm in Walnut Creek"],
+    })
+    expect('id' in res).toBe(true)
+    const w = db.writes.find(x => /INSERT INTO eval_scenarios/.test(x.sql))!
+    // binds: id, tenant, description, expected, test_message, test_messages, ...
+    expect(w.binds[4]).toBe('I found a pigeon')                  // first turn
+    expect(JSON.parse(w.binds[5] as string)).toEqual(['I found a pigeon', "I'm in Walnut Creek"])
   })
 })
 

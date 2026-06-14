@@ -3106,7 +3106,12 @@ body {
 
 /* ── Publish/Discard bar ─────────────────────────────────────────────── */
 
-.ed-publish-bar {
+/* ── Global Publish bar ──────────────────────────────────────────────────
+   One bar (admin shell) to take ALL staged edits live. Sits between the
+   header and the body; visible only when there are unpublished changes or the
+   tenant hasn't published yet. */
+
+.global-publish-bar {
   display: flex;
   align-items: center;
   gap: 10px;
@@ -3114,6 +3119,24 @@ body {
   background: var(--color-field-white);
   border-bottom: 1px solid var(--color-dried-grass);
   flex-shrink: 0;
+}
+
+.global-publish-bar .gpb-label {
+  color: var(--color-ochre);
+  font-weight: 600;
+  font-size: 0.85rem;
+}
+
+.global-publish-bar .gpb-status {
+  margin: 0;
+  flex: 1;
+}
+
+.global-publish-bar #gpbPublish {
+  background: var(--color-sage);
+  color: #fff;
+  border: none;
+  padding: 6px 18px;
 }
 
 /* ── Editor tab bar ──────────────────────────────────────────────────── */

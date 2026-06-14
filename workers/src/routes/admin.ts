@@ -21,6 +21,8 @@ import { autoGenerateEvalScenarios } from '../lib/eval-autogen'
 import {
   createEvalScenario,
   deleteEvalScenario,
+  updateEvalScenario,
+  reviewEvalScenario,
   listEvalResults,
   listEvalScenarios,
   loadEvalScenarioById,
@@ -403,6 +405,38 @@ admin.delete('/admin/evals/:id', async (c) => {
     return c.json({ success: true })
   } catch {
     return c.json({ error: 'Database error' }, 500)
+  }
+})
+
+// Edit a scenario's text (operators were trapped when a test was worded badly
+// and could only be deleted). Resets the verdict to unreviewed.
+admin.put('/admin/evals/:id', async (c) => {
+  const tenant = c.get('tenant')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  let body: { description?: string; expected_behavior?: string; test_message?: string }
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try {
+    const result = await updateEvalScenario(c.env, tenant.id, c.req.param('id'), body)
+    if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404)
+    return c.json(result)
+  } catch (e) {
+    return dbError(c, 'admin/evals/update', 'DB error', e)
+  }
+})
+
+// The HUMAN's authoritative verdict (👍 approved / 👎 rejected / unreviewed).
+// Overrides the LLM judge; never gated, never auto-overwritten.
+admin.post('/admin/evals/:id/review', async (c) => {
+  const tenant = c.get('tenant')
+  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  let body: { review_status?: string }
+  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try {
+    const result = await reviewEvalScenario(c.env, tenant.id, c.req.param('id'), body.review_status ?? '')
+    if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404)
+    return c.json(result)
+  } catch (e) {
+    return dbError(c, 'admin/evals/review', 'DB error', e)
   }
 })
 

@@ -23,6 +23,7 @@ import {
   notifyTenantConfigChanged,
 } from './admin/api.js'
 import { renderLoginPage } from './admin/login.js'
+import speciesCatalog from '../../shared/species-catalog.json'
 import {
   expandAgent,
   collapseAgent,
@@ -1571,28 +1572,10 @@ function promptForSpeciesHandling(notes, savedSummary = '') {
   setAgentInputPlaceholder('Example: We handle native wildlife, but redirect deer to 311.')
 }
 
-const ONBOARDING_SPECIES_TERMS = [
-  ['Heron & Egret', ['heron', 'egret']],
-  ['Bat', ['bat']],
-  ['Bobcat', ['bobcat']],
-  ['Coyote', ['coyote']],
-  ['Deer & Fawn', ['deer', 'fawn']],
-  ['Duck & Goose', ['duck', 'goose', 'waterfowl']],
-  ['Fox', ['fox']],
-  ['Gull', ['gull']],
-  ['Hummingbird', ['hummingbird']],
-  ['Opossum', ['opossum', 'possum']],
-  ['Raccoon', ['raccoon']],
-  ['Raptor', ['raptor', 'hawk', 'owl', 'eagle']],
-  ['Raven', ['raven', 'crow']],
-  ['Rodent', ['rodent', 'mouse', 'rat']],
-  ['Skunk', ['skunk']],
-  ['Snake', ['snake']],
-  ['Songbird', ['songbird', 'bird']],
-  ['Squirrel', ['squirrel']],
-  ['Wild Turkey', ['wild turkey', 'turkey', 'poult']],
-  ['Entangled Animal', ['entangled']],
-]
+// Derived from shared/species-catalog.json. The free-text matching here is
+// looser than rag.ts SPECIES_PATTERNS (which uses regex); operator-typed
+// onboarding answers ("we handle hawks and owls") map to canonical labels.
+const ONBOARDING_SPECIES_TERMS = speciesCatalog.species.map(s => [s.name, s.onboarding_terms])
 
 function extractRedirectDestination(text) {
   const cleaned = text.replace(/\s+/g, ' ').trim()

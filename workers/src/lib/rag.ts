@@ -1,4 +1,5 @@
 import type { Env } from './types'
+import { SPECIES_CATALOG } from './species-catalog'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -8,34 +9,15 @@ const RAG_MIN_RESULTS = 2
 
 // ── Species detection ─────────────────────────────────────────────────────────
 
-const SPECIES_PATTERNS: Array<[RegExp, string]> = [
-  [/\b(raccoon|coon)\b/i, 'raccoon'],
-  [/\b(bat|bats)\b/i, 'bat'],
-  [/\b(hummingbird|humming bird|hummer)\b/i, 'hummingbird'],
-  [/\b(snake|rattlesnake|garter|gopher snake|king snake)\b/i, 'snake'],
-  [/\b(heron|egret|wading bird)\b/i, 'heron_egret'],
-  [/\b(hawk|owl|falcon|eagle|vulture|raptor|kestrel|osprey)\b/i, 'raptor'],
-  [/\b(squirrel)\b/i, 'squirrel'],
-  [/\b(opossum|possum)\b/i, 'opossum'],
-  [/\b(deer|fawn)\b/i, 'deer'],
-  [/\b(duck|goose|geese|duckling|gosling|mallard)\b/i, 'duck_goose'],
-  [/\b(fox)\b/i, 'fox'],
-  [/\b(skunk)\b/i, 'skunk'],
-  [/\b(coyote)\b/i, 'coyote'],
-  [/\b(bobcat)\b/i, 'bobcat'],
-  [/\b(gull|seagull)\b/i, 'gull'],
-  [/\b(raven)\b/i, 'raven'],
-  [/\b(wild turkey|turkey|poult)\b/i, 'turkey'],
-  [/\b(mouse|mice|rat|rodent|gopher|chipmunk)\b/i, 'rodent'],
-  // Pigeon and dove are split out from songbird because most rehabs
-  // explicitly DO NOT handle them (they're feral / non-native), but they
-  // share enough vocabulary with songbirds that the previous lumped pattern
-  // made it impossible to skip pigeons without skipping all songbirds. Order
-  // matters: this must run before the songbird pattern so "rock pigeon"
-  // matches here, not as a songbird.
-  [/\b(pigeon|rock dove|mourning dove|dove|columbid)\b/i, 'pigeon'],
-  [/\b(songbird|robin|sparrow|finch|jay|crow|starling|swallow|wren|warbler|blackbird|chickadee|junco|mockingbird|woodpecker|flicker|nuthatch|phoebe|thrush|towhee|goldfinch|waxwing|bushtit|creeper|kinglet|lark|titmouse|swift|poorwill)\b/i, 'songbird'],
-]
+// Detection patterns derived from the catalog. Catalog order is display order
+// (Heron, Bat, Bobcat, ...) — and that ordering already satisfies the one
+// behavioral constraint: Pigeon (index 10) must come before Songbird (index
+// 17), so "I see a pigeon and a sparrow" resolves to pigeon, not songbird.
+// Entries with detect: null (e.g. Entangled Animal) are filename-only and
+// excluded from free-text detection.
+const SPECIES_PATTERNS: Array<[RegExp, string]> = SPECIES_CATALOG
+  .filter((s): s is typeof s & { detect: string } => s.detect !== null)
+  .map(s => [new RegExp(`\\b(${s.detect})\\b`, 'i'), s.token] as [RegExp, string])
 
 export function detectSpecies(message: string): string | null {
   for (const [pattern, species] of SPECIES_PATTERNS) {
@@ -43,6 +25,22 @@ export function detectSpecies(message: string): string | null {
   }
   return null
 }
+
+// Alias map derived from the catalog: every normalize_aliases entry plus the
+// species's own display name (whitespace-normalized) routes to its token. This
+// lets operator-typed variants ("Pigeon/Dove", "Pigeon-Dove", "Wild Turkey")
+// all resolve to the same token detection emits.
+const NORMALIZE_MAP: Record<string, string> = (() => {
+  const m: Record<string, string> = {}
+  for (const sp of SPECIES_CATALOG) {
+    const normalizedName = sp.name.toLowerCase().replace(/[\s/_&-]+/g, ' ').trim()
+    m[normalizedName] = sp.token
+    for (const alias of sp.normalize_aliases) {
+      m[alias.toLowerCase().replace(/[\s/_&-]+/g, ' ').trim()] = sp.token
+    }
+  }
+  return m
+})()
 
 /**
  * Normalize a user-facing species name (e.g. "Pigeon", "Heron & Egret") to
@@ -56,17 +54,7 @@ export function normalizeSpeciesKey(displayName: string): string {
   // spaces. Catches "Pigeon & Dove", "Pigeon/Dove", "pigeon-dove",
   // "Pigeon  Dove" all the same.
   const s = displayName.trim().toLowerCase().replace(/[\s/_&-]+/g, ' ').trim()
-  // Catalog → canonical token. Mirrors the detection patterns above plus the
-  // operator-facing label set used by the admin Playbook UI.
-  const map: Record<string, string> = {
-    'heron egret': 'heron_egret', 'heron': 'heron_egret', 'egret': 'heron_egret',
-    'duck goose': 'duck_goose', 'duck': 'duck_goose', 'goose': 'duck_goose',
-    'deer fawn': 'deer', 'deer': 'deer', 'fawn': 'deer',
-    'pigeon dove': 'pigeon', 'pigeon': 'pigeon', 'dove': 'pigeon',
-    'wild turkey': 'turkey', 'turkey': 'turkey',
-    'entangled animal': 'entangled', 'entangled': 'entangled',
-  }
-  if (map[s]) return map[s]
+  if (NORMALIZE_MAP[s]) return NORMALIZE_MAP[s]
   // Anything else — collapse whitespace to underscores so multi-word custom
   // species ("Snowy Plover") become a deterministic token ("snowy_plover").
   return s.replace(/\s+/g, '_')

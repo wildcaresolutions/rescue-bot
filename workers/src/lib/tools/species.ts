@@ -23,6 +23,7 @@ import { BUILTIN_GUIDES } from '../../guides'
 import type { ToolContext } from './types'
 import { parseOrgConfig } from '../tenant-loader'
 import { recompileAndMaybeWrite } from '../compile-instruction'
+import { BUILTIN_SPECIES_NAMES } from '../species-catalog'
 
 export function speciesTools(ctx: ToolContext) {
   const { db, tenantId, freshTenant, invalidateCache } = ctx
@@ -35,12 +36,11 @@ export function speciesTools(ctx: ToolContext) {
       return {
         species_config: oc.species_config || {},
         custom_species: (oc.custom_species || []).map((s: { name: string }) => s.name),
-        // "Pigeon" included even though we don't have a dedicated builtin
-        // guide — most rehabs explicitly DON'T handle pigeons/doves and
-        // need to be able to set species_config["Pigeon"] = skip with a
-        // redirect destination. Detection in lib/rag.ts knows about this
-        // bucket separately from the songbird group.
-        builtin_species: ['Heron & Egret', 'Bat', 'Bobcat', 'Coyote', 'Deer & Fawn', 'Duck & Goose', 'Fox', 'Gull', 'Hummingbird', 'Opossum', 'Pigeon', 'Raccoon', 'Raptor', 'Raven', 'Rodent', 'Skunk', 'Snake', 'Songbird', 'Squirrel', 'Wild Turkey', 'Entangled Animal'],
+        // Catalog includes "Pigeon" even though there's no dedicated builtin
+        // guide — most rehabs explicitly DON'T handle pigeons/doves and need
+        // to be able to set species_config["Pigeon"] = skip with a redirect
+        // destination. Catalog entry has filename: null for that case.
+        builtin_species: [...BUILTIN_SPECIES_NAMES],
         triage_config: oc.triage_config || [],
       }
     },

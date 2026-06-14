@@ -12,18 +12,13 @@
 // evalResultsCache is exported so the agent-chat fallback can peek at the
 // latest answer when the LLM returns an empty assistant message.
 
-import { apiFetch, getTenantSlug } from './api.js'
+import { apiFetch } from './api.js'
 import { esc, escapeHtml, safeMarkdown, showSetupMsg, highlightElement } from './helpers.js'
-import { getTenantConfig, setTenantConfig } from './state.js'
-import { refreshSiteConfig } from '../shared/site-config.js'
-import { openSettings } from './settings.js'
 
 let evalScenarios = []
 
 // Track latest result per scenario for summary
 export const evalResultsCache = new Map()
-
-export const CONTACT_RULE_TEXT = 'For in-area injured wildlife calls, include the public rescue phone number and current hours after immediate safety and containment guidance.'
 
 // Cross-module callbacks: the advisory "open the rule" button switches the
 // Playbook tab and highlights the intake textarea, and the contact-rule save
@@ -282,13 +277,6 @@ function bindCardActions(el) {
 
     const verdictBtn = e.target.closest('.eval-verdict-btn')
     if (verdictBtn) { await setVerdict(verdictBtn.dataset.id, verdictBtn.dataset.verdict); return }
-
-    // Advisory "what to check" action buttons (secondary diagnostics).
-    if (e.target.closest('.eval-rerun-action')) { runEvalScenario(e.target.closest('.eval-rerun-action').dataset.id); return }
-    if (e.target.closest('.eval-open-settings')) { openSettings(); return }
-    if (e.target.closest('.eval-open-playbook-rules')) { openGeneralRescueRules(); return }
-    const contactBtn = e.target.closest('.eval-add-contact-rule')
-    if (contactBtn) { await addContactRuleFromEval(contactBtn.dataset.id, contactBtn) }
   })
   el.dataset.checkActionsBound = 'true'
 }
@@ -409,45 +397,6 @@ export function openGeneralRescueRules() {
   }, 120)
 }
 
-async function saveOrgConfigPatch(patch) {
-  const slug = getTenantSlug()
-  if (!slug) throw new Error('No tenant context')
-  const existing = getTenantConfig()?.org_config || {}
-  const orgConfig = { ...existing, ...patch }
-  const res = await apiFetch('/platform/setup/' + slug, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ org_config: orgConfig }),
-  })
-  if (!res.ok) throw new Error('Save failed')
-  setTenantConfig(await refreshSiteConfig({}))
-  return getTenantConfig()?.org_config || orgConfig
-}
-
-async function addContactRuleFromEval(_scenarioId, btn) {
-  const existing = getTenantConfig()?.org_config?.intake_procedures || ''
-  const alreadySaved = existing.toLowerCase().includes(CONTACT_RULE_TEXT.toLowerCase())
-  if (alreadySaved) {
-    btn.textContent = 'Rule already added'
-    openGeneralRescueRules()
-    return
-  }
-  btn.disabled = true
-  const originalText = btn.textContent
-  btn.textContent = 'Adding rule…'
-  try {
-    const nextText = [existing.trim(), CONTACT_RULE_TEXT].filter(Boolean).join('\n')
-    await saveOrgConfigPatch({ intake_procedures: nextText })
-    _deps.appendChangeChip?.('Added rescue rule: include phone and hours')
-    btn.textContent = 'Rule added (staged)'
-    openGeneralRescueRules()
-    _deps.appendAssistantMessage?.('I staged a rescue rule in your Playbook to include the public phone number and hours after the safety steps. Ask the bot this question again to see the new answer, then publish when you’re happy.')
-  } catch {
-    btn.textContent = 'Couldn’t add'
-    setTimeout(() => { btn.textContent = originalText; btn.disabled = false }, 1800)
-  }
-}
-
 async function runEvalScenario(scenarioId) {
   const resultsEl = document.getElementById(`evalResults-${scenarioId}`)
   if (!resultsEl) return false
@@ -512,97 +461,6 @@ async function loadEvalResults(scenarioId) {
   } catch { /* ignore */ }
 }
 
-// Look for any 10-digit phone-shaped string in the bot response that ISN'T
-// the tenant's own phone — cross-tenant phone bleed. When that happens, the
-// advisory hint is different (the bot isn't missing a rule, it's surfacing a
-// different org's number).
-function responseHasWrongOrgPhone(response, tenantPhone) {
-  const tenantDigits = (tenantPhone || '').replace(/\D/g, '')
-  const matches = response.match(/\b(\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}|\d{3}[\s.-]?\d{3}[\s.-]?\d{4})\b/g) || []
-  for (const m of matches) {
-    const digits = m.replace(/\D/g, '')
-    if (digits.length === 10 && (!tenantDigits || !tenantDigits.includes(digits) && !digits.includes(tenantDigits))) {
-      return digits
-    }
-  }
-  return null
-}
-
-// Advisory auto-hint. Reframed from the old "PASS/FAIL + what to fix" into a
-// suggestion the coordinator can take or ignore — the auto-checker's read of
-// the answer, plus optional shortcut buttons. NEVER a verdict, never a gate.
-function inferEvalHint(result) {
-  const reasoning = (result?.judge_reasoning || '').toLowerCase()
-  const response = (result?.response || '')
-  const responseLower = response.toLowerCase()
-  if (result?.passed === 1) {
-    return { cls: 'pass', text: 'Auto-check: this answer looks good. If you agree, give it 👍.' }
-  }
-  if (result?.passed === null || /judge call failed|eval run failed|gateway|timeout|network|error:/.test(reasoning + ' ' + responseLower)) {
-    return { cls: 'unknown', text: 'Auto-check couldn’t score this one — that’s a checker hiccup, not a bot problem. You can still judge the answer yourself, or ask again.', actions: [{ kind: 'rerun', label: 'Ask again' }] }
-  }
-  const wrongPhone = responseHasWrongOrgPhone(response, getTenantConfig()?.phone)
-  if (wrongPhone && /\bmissing (the saved )?phone|saved phone\/contact path\b/.test(reasoning)) {
-    return {
-      cls: 'fail',
-      text: `Heads up: the bot gave a phone number (${wrongPhone.slice(0,3)}-${wrongPhone.slice(3,6)}-${wrongPhone.slice(6,10)}) that isn't yours — usually another org's number from a default protocol. Check your phone in Settings; if it keeps happening, add a rescue rule making your number explicit.`,
-      actions: [{ kind: 'settings', label: 'Open Settings' }, { kind: 'playbook_rules', label: 'Open rescue rules' }, { kind: 'rerun', label: 'Ask again' }],
-    }
-  }
-  if (/phone|hours|address|service area|county|email|location|open|closed/.test(reasoning)) {
-    return {
-      cls: 'fail',
-      text: 'Auto-check thinks a contact detail may be off. Check your phone, hours, and service area in Settings. If those are right, you can add a rescue rule to always include phone and hours for in-area calls.',
-      actions: [{ kind: 'add_contact_rule', label: 'Add that rule' }, { kind: 'settings', label: 'Open Settings' }, { kind: 'playbook_rules', label: 'Open rescue rules' }],
-    }
-  }
-  if (/species|skip|redirect|does not handle|cannot accept|out of area|wrong organization/.test(reasoning)) {
-    return {
-      cls: 'fail',
-      text: 'Auto-check thinks this is about which species you handle or where you redirect callers. Check your species handling and redirects in the Playbook.',
-      actions: [{ kind: 'playbook_rules', label: 'Open Playbook' }],
-    }
-  }
-  if (/expected|rubric|scenario|test/.test(reasoning)) {
-    return { cls: 'fail', text: 'Auto-check flagged this, but if the bot’s answer is fine, the check’s wording is probably too strict. Give it 👍 anyway, or Edit the check.' }
-  }
-  return {
-    cls: 'fail',
-    text: 'Auto-check flagged this. Compare the answer with what a good answer should include — if the answer is fine, give it 👍; if not, check Settings or the Playbook.',
-    actions: [{ kind: 'playbook_rules', label: 'Open Playbook' }],
-  }
-}
-
-function renderHintActions(actions = [], scenarioId) {
-  if (!actions.length) return ''
-  const classByKind = {
-    add_contact_rule: 'btn-primary eval-add-contact-rule',
-    settings: 'btn-secondary eval-open-settings',
-    playbook_rules: 'btn-secondary eval-open-playbook-rules',
-    rerun: 'btn-secondary eval-rerun-action',
-  }
-  return `
-    <div class="eval-action-row">
-      ${actions.map(action => `
-        <button class="btn btn-sm ${classByKind[action.kind] || 'btn-secondary'}" data-id="${esc(String(scenarioId))}" type="button">
-          ${escapeHtml(action.label)}
-        </button>
-      `).join('')}
-    </div>
-  `
-}
-
-function formatEvalReason(reason) {
-  return String(reason || '')
-    .replace(/^Basic scoring check:\s*/i, '')
-    .replace(/^Deterministic fallback:\s*/i, '')
-    .replace(/^Judge call failed:.*$/i, 'The answer couldn’t be auto-scored.')
-    .replace(/^Eval run failed\.?$/i, 'The bot couldn’t be reached.')
-    .replace(/^(AI judge|Scoring service) unavailable\s*\((.*?)\)\.\s*/i, 'The answer couldn’t be auto-scored. ')
-    .replace(/\bjudge\b/gi, 'auto-check')
-    .trim()
-}
-
 function renderEvalResults(scenarioId, results) {
   const el = document.getElementById(`evalResults-${scenarioId}`)
   if (!el) return
@@ -610,8 +468,8 @@ function renderEvalResults(scenarioId, results) {
   evalResultsCache.set(scenarioId, latest)
   const s = evalScenarios.find(x => String(x.id) === String(scenarioId))
   const currentVerdict = s?.review_status || 'unreviewed'
-  const hint = inferEvalHint(latest)
 
+  // No auto-grade shown — the operator's 👍/👎 is the whole verdict.
   el.innerHTML = `
     <div class="eval-result">
       <div class="eval-section-label">The bot answered <span class="eval-result-date">${latest.created_at ? new Date(latest.created_at).toLocaleString() : ''}</span></div>
@@ -622,13 +480,6 @@ function renderEvalResults(scenarioId, results) {
         <button class="btn btn-sm eval-verdict-btn ${currentVerdict === 'approved' ? 'active' : ''}" data-id="${esc(String(scenarioId))}" data-verdict="approved" type="button">👍 Looks good</button>
         <button class="btn btn-sm eval-verdict-btn ${currentVerdict === 'rejected' ? 'active' : ''}" data-id="${esc(String(scenarioId))}" data-verdict="rejected" type="button">👎 Needs work</button>
       </div>
-
-      <details class="eval-hint ${hint.cls}">
-        <summary>Auto-check hint (optional)</summary>
-        <span>${escapeHtml(hint.text)}</span>
-        ${renderHintActions(hint.actions, scenarioId)}
-        ${latest.judge_reasoning ? `<div class="eval-judge">${escapeHtml(formatEvalReason(latest.judge_reasoning))}</div>` : ''}
-      </details>
     </div>
   `
   updateEvalSummary()

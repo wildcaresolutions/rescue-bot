@@ -48,6 +48,7 @@ export interface DraftConfig {
   custom_instruction?: string | null
   custom_instruction_locked?: number
   custom_instruction_locked_at?: string | null
+  house_rules?: string | null
   widget_custom_css?: string | null
   report_recipients?: string | null
   daily_reports_enabled?: number

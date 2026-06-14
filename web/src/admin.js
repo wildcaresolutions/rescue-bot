@@ -138,7 +138,7 @@ async function renderAdminPortal() {
             <button class="header-nav-link active" id="dashboardBtn">Home</button>
             <button class="header-nav-link" id="previewBotBtn">Preview</button>
             <button class="header-nav-link" id="kbBtn">Playbook</button>
-            <button class="header-nav-link" id="testBotBtn">Test Cases</button>
+            <button class="header-nav-link" id="testBotBtn">Check your bot</button>
             <button class="header-nav-link" id="reportsBtn">Reports</button>
           </nav>
           <button class="header-icon-btn" id="helpIconBtn" title="Help & Documentation">

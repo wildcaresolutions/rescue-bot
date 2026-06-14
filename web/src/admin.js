@@ -623,6 +623,7 @@ function showFeed() {
   document.getElementById('feedView').style.display = ''
   document.getElementById('dashboardBtn')?.classList.add('active')
   updateAgentContext()
+  updateGlobalPublishBar()
 }
 
 function showReports() {
@@ -632,6 +633,7 @@ function showReports() {
   document.getElementById('reportsBtn')?.classList.add('active')
   renderReportsView()
   updateAgentContext()
+  updateGlobalPublishBar()
 }
 
 function showTestView() {
@@ -641,6 +643,7 @@ function showTestView() {
   document.getElementById('testBotBtn')?.classList.add('active')
   renderTestView()
   updateAgentContext()
+  updateGlobalPublishBar()
 }
 
 function showPreviewView() {
@@ -652,6 +655,8 @@ function showPreviewView() {
   // Preview needs full height — disable main-content scroll
   document.getElementById('mainContent').style.overflow = 'hidden'
   renderPreviewView()
+  // Refresh the bar so it notes the preview is running the draft.
+  updateGlobalPublishBar()
 }
 
 // ── Global Publish bar ───────────────────────────────────────────────────────
@@ -684,11 +689,14 @@ function updateGlobalPublishBar() {
   bar.style.display = visible ? 'flex' : 'none'
   const label = document.getElementById('gpbLabel')
   if (label) {
-    label.innerHTML = notPublished && !hasDraft
+    let text = notPublished && !hasDraft
       ? '&#9679; Ready to publish your bot'
       : notPublished && hasDraft
         ? '&#9679; Ready to publish — with your latest edits'
         : '&#9679; Unpublished changes'
+    // On Preview, make clear the widget below is running the draft you're editing.
+    if (hasDraft && activeView === 'preview') text += ' — the preview is running them'
+    label.innerHTML = text
   }
   // Discard only makes sense when there's actually a draft to throw away.
   const discardBtn = document.getElementById('gpbDiscard')
@@ -2443,6 +2451,7 @@ function showKbView() {
   document.getElementById('kbBtn')?.classList.add('active')
   renderKbView()
   updateAgentContext()
+  updateGlobalPublishBar()
 }
 
 function showHelpView() {
@@ -2453,6 +2462,7 @@ function showHelpView() {
   document.getElementById('helpIconBtn')?.classList.add('active')
   renderHelpView()
   updateAgentContext()
+  updateGlobalPublishBar()
 }
 
 

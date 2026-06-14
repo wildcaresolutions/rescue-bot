@@ -3033,15 +3033,6 @@ body {
 .eval-turn-line { display: flex; gap: 6px; align-items: baseline; margin-top: 3px; }
 .eval-turn-line .eval-turn-n { color: var(--color-storm); font-weight: 600; font-size: 0.72rem; }
 
-/* ── Preview → the widget chats your DRAFT (badge over the live preview) ──── */
-.editor-preview { position: relative; }
-.preview-draft-badge {
-  position: absolute; top: 10px; left: 50%; transform: translateX(-50%); z-index: 5;
-  background: var(--color-ochre); color: #fff; font-size: 0.74rem; font-weight: 600;
-  padding: 4px 12px; border-radius: var(--radius-full, 9999px); box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-  pointer-events: none; white-space: nowrap;
-}
-
 /* ── Bot Preview (in-app iframe) ─────────────────────────────────────────── */
 
 .preview-section {

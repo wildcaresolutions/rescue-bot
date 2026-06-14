@@ -120,10 +120,10 @@ function renderProductDocs() {
       <p class="setup-help">Your main work view. Conversations that need attention appear at the top, flagged by urgency level. <strong>Critical</strong> means potential rabies exposure or dangerous animal contact. <strong>Urgent</strong> means the animal is actively injured (cat attack, window strike, bleeding). You can resolve items once you've followed up.</p>
 
       <h3 class="help-sub-heading">Preview &amp; Branding</h3>
-      <p class="setup-help">The Preview tab is where you customize how the chat widget looks on your website. Change colors, corner radius, and button text. The CSS tab lets you write custom styles if you need pixel-perfect control. Hit Publish when you're happy, and the changes go live immediately.</p>
+      <p class="setup-help">The Preview tab is where you customize how the chat widget looks on your website. Change colors, corner radius, and button text. The CSS tab lets you write custom styles if you need pixel-perfect control. Your edits are saved as a draft — the live bot keeps its current look until you hit <strong>Publish</strong> in the bar at the top, which takes all your staged changes live at once.</p>
 
-      <h3 class="help-sub-heading">Test Cases</h3>
-      <p class="setup-help">Test Cases are example wildlife situations. You control the visitor message and the passing behavior. The bot answers using your current Settings and Playbook, then the result checks whether the answer followed your saved facts, species rules, and redirects. If a case fails, fix Settings or Playbook first; edit the test case only when the passing behavior is wrong.</p>
+      <h3 class="help-sub-heading">Check your bot</h3>
+      <p class="setup-help">“Check your bot” lets you ask the bot the questions your callers ask, read its answer, and give it a thumbs up or down. Your verdict is the one that counts — an auto-checker offers a small optional hint, but it never decides anything and never blocks publishing. If an answer isn’t right, fix Settings or the Playbook and ask again, edit the question’s wording, or just delete it. Checking is optional polish before (or after) you publish.</p>
 
       <h3 class="help-sub-heading">Reports</h3>
       <p class="setup-help">See how your bot is performing: which species people ask about most, feedback trends, conversation volume, and more. Use this to identify gaps in your knowledge base or protocols that need updating.</p>

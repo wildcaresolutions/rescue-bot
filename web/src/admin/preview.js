@@ -416,7 +416,6 @@ export function renderPreviewView() {
         </div>
       </div>
       <div class="editor-preview">
-        <div class="preview-draft-badge" title="This widget chats with your unpublished draft. Visitors get the published version until you Publish.">● Chatting with your draft — talk to the bot here</div>
         <iframe id="previewFrame" src="/widget-preview.html?tenant=${slug}&editor=true" class="preview-iframe"></iframe>
       </div>
     </div>

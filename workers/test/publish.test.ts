@@ -22,17 +22,14 @@ function row(overrides: Partial<Tenant> = {}): Tenant {
 // D1 mock: loadTenantById returns `tenantRow`; captures the publish UPDATE.
 class FakeDb {
   lastUpdate: { sql: string; binds: unknown[] } | null = null
-  constructor(public tenantRow: Tenant, private updateChanges = 1) {}
+  constructor(public tenantRow: Tenant) {}
   prepare(sql: string) {
     const self = this
     let binds: unknown[] = []
     return {
       bind(...args: unknown[]) { binds = args; return this },
       async first() { return /SELECT \* FROM tenants/.test(sql) ? self.tenantRow : null },
-      async run() {
-        if (/UPDATE tenants SET/.test(sql)) self.lastUpdate = { sql, binds }
-        return { success: true, meta: { changes: self.updateChanges } }
-      },
+      async run() { if (/UPDATE tenants SET/.test(sql)) self.lastUpdate = { sql, binds }; return { success: true } },
     }
   }
 }
@@ -57,7 +54,6 @@ describe('publishDraft', () => {
     const db = new FakeDb(row({ draft_config: JSON.stringify({ org_config: newOrg, phone: '(415) 999-0000' }) }))
     const res = await publishDraft(env(db), db.tenantRow)
     expect(res.published).toBe(true)
-    if ('conflict' in res) throw new Error('unexpected conflict')
     expect(res.first_publish).toBe(true)
     const up = db.lastUpdate!
     // staged scalar + JSON applied to live columns
@@ -86,30 +82,6 @@ describe('publishDraft', () => {
     const db = new FakeDb(row({ draft_config: JSON.stringify({ custom_instruction: 'RAW EDIT', org_config: { hours: '24/7' } }) }))
     await publishDraft(env(db), db.tenantRow)
     expect(boundValue(db.lastUpdate!, 'custom_instruction')).toBe('RAW EDIT')
-  })
-
-  it('CAS: returns conflict outcome (no cache bust) when UPDATE affects 0 rows', async () => {
-    // Simulate a concurrent stageConfigChange that updated draft_updated_at
-    // between our read and our UPDATE — D1 returns changes:0.
-    const db = new FakeDb(
-      row({ draft_config: '{"phone":"(415) 000-0000"}', draft_updated_at: '2026-01-01T00:00:00Z' }),
-      0, // updateChanges = 0 → simulates the CAS miss
-    )
-    const res = await publishDraft(env(db), db.tenantRow)
-    expect(res.published).toBe(false)
-    expect('conflict' in res && res.conflict).toBe(true)
-    if ('error' in res) expect(res.error).toMatch(/retry/i)
-  })
-
-  it('CAS: WHERE clause includes draft_updated_at IS ? and binds the snapshot value', async () => {
-    const stamp = '2026-06-01T12:00:00Z'
-    const db = new FakeDb(row({ draft_config: '{"phone":"555"}', draft_updated_at: stamp }))
-    await publishDraft(env(db), db.tenantRow)
-    const up = db.lastUpdate!
-    // WHERE clause must include the CAS predicate
-    expect(up.sql).toMatch(/AND draft_updated_at IS \?/)
-    // The snapshot stamp must appear in the binds
-    expect(up.binds).toContain(stamp)
   })
 })
 

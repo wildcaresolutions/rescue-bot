@@ -58,6 +58,25 @@ export interface BotOverrides {
   closing?: string
 }
 
+/**
+ * Render one species' note as a list item that survives being concatenated
+ * into a markdown list. Operator notes routinely contain blank lines and their
+ * own sub-bullets ("Routing rules ->\n- if X\n- if Y"); dumped raw after
+ * "- Species: " those detach from the species and read as unrelated top-level
+ * rules, which confuses the model. So: single-line notes stay compact; a
+ * multi-line note keeps the species on its own bolded bullet and indents the
+ * whole body 2 spaces, so paragraphs and sub-bullets nest under that species.
+ */
+function renderSpeciesBullet(species: string, notes: string): string {
+  const body = notes.trim()
+  if (!body.includes('\n')) return `- **${species}**: ${body}`
+  const indented = body
+    .split('\n')
+    .map(line => (line.trim() ? `  ${line.trim()}` : ''))
+    .join('\n')
+  return `- **${species}**:\n${indented}`
+}
+
 export function compileInstruction(
   tenant: { name: string; phone: string | null; email: string | null; url: string | null; location_service_area: string | null; location_county: string | null; location_state: string | null },
   orgConfig: OrgConfig,
@@ -83,12 +102,12 @@ export function compileInstruction(
 
   for (const [species, cfg] of Object.entries(sc)) {
     if (cfg.mode === 'augment' && cfg.notes) {
-      augments.push(`- ${species}: ${cfg.notes}`)
+      augments.push(renderSpeciesBullet(species, cfg.notes))
     } else if (cfg.mode === 'override' && cfg.notes) {
       overrides.push(`### ${species}\nIGNORE the built-in guide for this species. Use ONLY the following protocol:\n${cfg.notes}`)
     } else if (cfg.mode === 'skip') {
       const redirect = cfg.redirect || orgConfig.redirect_info || 'Contact your local wildlife agency'
-      skips.push(`- ${species}: We do NOT handle this species. Redirect: ${redirect}`)
+      skips.push(renderSpeciesBullet(species, `We do NOT handle this species. Redirect: ${redirect}`))
     }
   }
 

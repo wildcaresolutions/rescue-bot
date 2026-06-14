@@ -57,6 +57,50 @@ describe('overlayTenant', () => {
   })
 })
 
+// Regression for the "Check your bot tested the published prompt, not the
+// draft" bug: the bot prompt is built from the COMPILED custom_instruction,
+// and staging defers recompile to publish — so overlayTenant must recompile
+// the instruction from the draft's org_config, or admin/test surfaces see a
+// stale prompt.
+describe('overlayTenant recompiles custom_instruction from the draft', () => {
+  const live = tenant({
+    custom_instruction: 'STALE PUBLISHED PROMPT — should not survive an org_config draft',
+    org_config: JSON.stringify({ species_config: { Pigeon: { mode: 'augment', notes: 'OLD pigeon note' } } }),
+    draft_config: JSON.stringify({ org_config: { species_config: { Pigeon: { mode: 'augment', notes: 'NEW pigeon note' } } } }),
+  })
+  it('overlay custom_instruction reflects the DRAFT org_config', () => {
+    const o = overlayTenant(live)
+    expect(o.custom_instruction).toContain('NEW pigeon note')
+    expect(o.custom_instruction).not.toContain('OLD pigeon note')
+    expect(o.custom_instruction).not.toContain('STALE PUBLISHED PROMPT')
+  })
+  it('the LIVE row (bot read path) keeps its published custom_instruction', () => {
+    expect(live.custom_instruction).toBe('STALE PUBLISHED PROMPT — should not survive an org_config draft')
+  })
+  it('a raw custom_instruction edit in the draft wins (no recompile)', () => {
+    const o = overlayTenant(tenant({
+      org_config: JSON.stringify({ species_config: { Pigeon: { mode: 'augment', notes: 'x' } } }),
+      draft_config: JSON.stringify({ custom_instruction: 'HAND EDITED', org_config: { species_config: {} } }),
+    }))
+    expect(o.custom_instruction).toBe('HAND EDITED')
+  })
+  it('a locked prompt is never recompiled', () => {
+    const o = overlayTenant(tenant({
+      custom_instruction: 'LOCKED PROMPT',
+      custom_instruction_locked: 1,
+      draft_config: JSON.stringify({ org_config: { species_config: { Pigeon: { mode: 'augment', notes: 'ignored' } } } }),
+    }))
+    expect(o.custom_instruction).toBe('LOCKED PROMPT')
+  })
+  it('a draft that does NOT touch the prompt (e.g. colors) leaves custom_instruction untouched', () => {
+    const o = overlayTenant(tenant({
+      custom_instruction: 'KEEP ME',
+      draft_config: JSON.stringify({ color_primary: '#abcdef' }),
+    }))
+    expect(o.custom_instruction).toBe('KEEP ME')
+  })
+})
+
 describe('draftPatchToColumns', () => {
   it('maps scalars + serializes JSON columns, skips unknown keys', () => {
     const { cols, vals } = draftPatchToColumns({

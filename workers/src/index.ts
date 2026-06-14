@@ -14,6 +14,7 @@ import agent from './routes/agent'
 import authRoutes from './routes/auth'
 import type { HealthResponse, HealthStatus, HealthCheckKey } from './types/health'
 import { parseOrgConfig } from './lib/tenant-loader'
+import { overlayTenant, hasDraft } from './lib/draft'
 
 // Sentinel tenantId for platform-admin sessions (admin.<root>).
 const PLATFORM_TENANT_ID = 'platform'
@@ -436,28 +437,33 @@ app.get('/api/config', async (c) => {
     })
   }
 
-  const logoUrl = tenant.logo_r2_key ? `/assets/${tenant.logo_r2_key}` : null
-
   // Authed payload includes editable config; check via Bearer or cookie.
   const verified = await resolveSession(c.req.raw, tenantCookiePrefix(tenant.slug), c.env)
   const isAuthed = !!verified && verified.tenantId === tenant.id
 
+  // The operator's admin (authed, same-origin cookie) sees their DRAFT; the
+  // public embedded widget (cross-origin, unauthed) sees LIVE/published. The
+  // split is automatic: unauthed → editing === the live row. Publish markers
+  // (onboarded) are never draftable, so they always read from the live row.
+  const editing = isAuthed ? overlayTenant(tenant) : tenant
+  const logoUrl = editing.logo_r2_key ? `/assets/${editing.logo_r2_key}` : null
+
   return c.json({
     platform: false,
     platform_name: getPlatformName(c.env),
-    name: tenant.name,
-    phone: tenant.phone,
-    url: tenant.url,
-    email: tenant.email,
+    name: editing.name,
+    phone: editing.phone,
+    url: editing.url,
+    email: editing.email,
     location: {
-      county: tenant.location_county,
-      state: tenant.location_state,
-      service_area: tenant.location_service_area,
+      county: editing.location_county,
+      state: editing.location_state,
+      service_area: editing.location_service_area,
     },
     branding: {
-      primary_color: tenant.color_primary,
-      secondary_color: tenant.color_secondary,
-      accent_color: tenant.color_accent,
+      primary_color: editing.color_primary,
+      secondary_color: editing.color_secondary,
+      accent_color: editing.color_accent,
     },
     logo_url: logoUrl,
     cookie_prefix: tenantCookiePrefix(tenant.slug),
@@ -466,14 +472,17 @@ app.get('/api/config', async (c) => {
     onboarded: !!tenant.onboarded,
     turnstile_site_key: turnstileSiteKey,
     dev_auth_bypass: devAuthBypass,
-    custom_instruction: isAuthed ? (tenant.custom_instruction ?? '') : undefined,
-    house_rules: isAuthed ? (tenant.house_rules ?? '') : undefined,
-    org_config: isAuthed ? parseOrgConfig(tenant.org_config) : undefined,
-    bot_overrides: isAuthed ? parseOrgConfig<Record<string, unknown>>(tenant.bot_overrides) : undefined,
-    report_recipients: isAuthed ? (tenant.report_recipients ?? '') : undefined,
-    daily_reports_enabled: isAuthed ? Boolean(tenant.daily_reports_enabled) : undefined,
-    widget_custom_css: tenant.widget_custom_css ?? null,
-    widget_theme: tenant.widget_theme ? parseOrgConfig<Record<string, unknown>>(tenant.widget_theme) : null,
+    custom_instruction: isAuthed ? (editing.custom_instruction ?? '') : undefined,
+    org_config: isAuthed ? parseOrgConfig(editing.org_config) : undefined,
+    bot_overrides: isAuthed ? parseOrgConfig<Record<string, unknown>>(editing.bot_overrides) : undefined,
+    house_rules: isAuthed ? (editing.house_rules ?? '') : undefined,
+    report_recipients: isAuthed ? (editing.report_recipients ?? '') : undefined,
+    daily_reports_enabled: isAuthed ? Boolean(editing.daily_reports_enabled) : undefined,
+    // Unpublished-changes signal for the global Discard/Publish bar.
+    has_unpublished_changes: isAuthed ? hasDraft(tenant) : undefined,
+    draft_updated_at: isAuthed ? tenant.draft_updated_at : undefined,
+    widget_custom_css: editing.widget_custom_css ?? null,
+    widget_theme: editing.widget_theme ? parseOrgConfig<Record<string, unknown>>(editing.widget_theme) : null,
     // CDN-cached embed host the operator points partners at, when configured
     // (PLATFORM_EMBED_HOST in org.env). Null = fork hasn't wired one; the
     // admin Publish UI falls back to the worker-origin `/widget.js`.

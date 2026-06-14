@@ -41,6 +41,7 @@ import {
 import {
   getTenantConfig,
   setTenantConfig,
+  onTenantConfigChange,
   getAgentMessages,
   setAgentMessages,
   isAgentStreaming,
@@ -180,6 +181,17 @@ async function renderAdminPortal() {
           </div>
         </div>
       </header>
+
+      <!-- Global Publish bar — one place to take ALL staged edits (config +
+           widget) live. Driven by has_unpublished_changes from /api/config and
+           the tenant's onboarded flag (first publish). Replaces the Preview
+           tab's old per-tab publish bar. -->
+      <div class="global-publish-bar" id="globalPublishBar" style="display:none">
+        <span class="gpb-label" id="gpbLabel">&#9679; Unpublished changes</span>
+        <span class="gpb-status setup-msg" id="gpbStatus"></span>
+        <button class="btn btn-secondary btn-sm" id="gpbDiscard">Discard</button>
+        <button class="btn btn-primary btn-sm" id="gpbPublish">Publish</button>
+      </div>
 
       <div class="admin-body">
         <!-- Settings drawer retired — its contents (org info, domains, team,
@@ -466,6 +478,30 @@ async function renderAdminPortal() {
     }
   })
 
+  // Global Publish bar — wire buttons + keep it in sync with config.
+  document.getElementById('gpbPublish').addEventListener('click', doGlobalPublish)
+  document.getElementById('gpbDiscard').addEventListener('click', doGlobalDiscard)
+  // Re-render the bar whenever tenantConfig is replaced (every save flow does
+  // `setTenantConfig(await refreshSiteConfig({}))` after staging).
+  onTenantConfigChange(updateGlobalPublishBar)
+  // Some staging paths (copilot tools, /platform/setup mutations) only dispatch
+  // the tenant-config-changed event without refreshing config themselves. Catch
+  // those, refresh, and the listener above updates the bar.
+  window.addEventListener('tenant-config-changed', async () => {
+    try {
+      const fresh = await refreshSiteConfig({})
+      if (fresh) setTenantConfig(fresh)
+    } catch (e) { console.error('[global-bar] config refresh failed', e) }
+  })
+  // Cmd/Ctrl+S publishes when there are staged changes.
+  document.addEventListener('keydown', (e) => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+      const bar = document.getElementById('globalPublishBar')
+      if (bar && bar.style.display !== 'none') { e.preventDefault(); doGlobalPublish() }
+    }
+  })
+  updateGlobalPublishBar()
+
   // Agent panel
   document.getElementById('agentCollapsedBar').addEventListener('click', expandAgent)
   document.getElementById('agentCollapseBtn').addEventListener('click', collapseAgent)
@@ -616,6 +652,130 @@ function showPreviewView() {
   // Preview needs full height — disable main-content scroll
   document.getElementById('mainContent').style.overflow = 'hidden'
   renderPreviewView()
+}
+
+// ── Global Publish bar ───────────────────────────────────────────────────────
+// One bar to take ALL staged edits (config + widget) live. Operator edits
+// anywhere — Playbook, Settings, Preview, or via the copilot — stage into the
+// server-side draft (lib/draft.ts). The live bot keeps serving the last
+// published config until the operator clicks Publish here. Discard reverts.
+
+let _gpbDiscardConfirming = false
+
+// Re-render the active view after a publish/discard so it reflects the new
+// live (publish) or reverted (discard) config. Preview rebuilds editorState
+// from the refreshed tenantConfig; Playbook/Reports reload their data.
+function rerenderActiveView() {
+  if (activeView === 'preview') renderPreviewView()
+  else if (activeView === 'kb') showKbView()
+  else if (activeView === 'reports') renderReportsView()
+  else if (activeView === 'feed') renderFeed()
+}
+
+function updateGlobalPublishBar() {
+  const bar = document.getElementById('globalPublishBar')
+  if (!bar) return
+  const cfg = getTenantConfig() || {}
+  const hasDraft = !!cfg.has_unpublished_changes
+  const notPublished = !cfg.onboarded
+  // Visible whenever there are staged edits OR the tenant has never published
+  // (first-publish CTA — operator needs to find Publish even with no edits).
+  const visible = hasDraft || notPublished
+  bar.style.display = visible ? 'flex' : 'none'
+  const label = document.getElementById('gpbLabel')
+  if (label) {
+    label.innerHTML = notPublished && !hasDraft
+      ? '&#9679; Ready to publish your bot'
+      : notPublished && hasDraft
+        ? '&#9679; Ready to publish — with your latest edits'
+        : '&#9679; Unpublished changes'
+  }
+  // Discard only makes sense when there's actually a draft to throw away.
+  const discardBtn = document.getElementById('gpbDiscard')
+  if (discardBtn) discardBtn.style.display = hasDraft ? '' : 'none'
+}
+
+async function doGlobalPublish() {
+  const btn = document.getElementById('gpbPublish')
+  const status = document.getElementById('gpbStatus')
+  if (!btn) return
+  btn.disabled = true
+  btn.textContent = 'Publishing…'
+  if (status) { status.textContent = ''; status.className = 'gpb-status setup-msg' }
+  try {
+    const res = await apiFetch('/admin/publish', { method: 'POST' })
+    if (!res.ok) {
+      let msg = 'Couldn’t publish right now. Try again in a moment.'
+      try { const b = await res.json(); if (b?.error) msg = b.error } catch { /* no body */ }
+      if (res.status === 401) msg = 'Your session expired. Refresh the page to sign in again.'
+      if (status) { status.textContent = msg; status.className = 'gpb-status setup-msg error' }
+      return
+    }
+    const result = await res.json().catch(() => ({}))
+    invalidateSetupStateCache()
+    // Refresh config (clears has_unpublished_changes, flips onboarded) — the
+    // setTenantConfig listener re-renders this bar.
+    const fresh = await refreshSiteConfig({})
+    if (fresh) setTenantConfig(fresh)
+    checkBotStatus(getTenantConfig())
+    rerenderActiveView()
+    if (status) {
+      status.textContent = result.first_publish ? 'Published — your bot is live!' : 'Published'
+      status.className = 'gpb-status setup-msg success'
+      setTimeout(() => { status.textContent = ''; status.className = 'gpb-status setup-msg' }, result.first_publish ? 5000 : 3000)
+    }
+    // First publish: surface the embed snippet so the operator knows how to
+    // get the widget onto their site.
+    if (result.first_publish) {
+      appendAssistantMessage('You’re live! Open the Preview tab → Embed Code to copy the `<script>` snippet, and paste it just before `</body>` on every page where you want the chat widget to appear.')
+    }
+  } catch (e) {
+    console.error('[global-publish] network error', e)
+    if (status) { status.textContent = 'Couldn’t reach the server. Check your connection and try again.'; status.className = 'gpb-status setup-msg error' }
+  } finally {
+    btn.disabled = false
+    btn.textContent = 'Publish'
+  }
+}
+
+async function doGlobalDiscard() {
+  const btn = document.getElementById('gpbDiscard')
+  const status = document.getElementById('gpbStatus')
+  if (!btn) return
+  // Two-click confirm — discarding throws away staged work.
+  if (!_gpbDiscardConfirming) {
+    _gpbDiscardConfirming = true
+    btn.textContent = 'Discard all changes?'
+    setTimeout(() => {
+      if (_gpbDiscardConfirming) { _gpbDiscardConfirming = false; const b = document.getElementById('gpbDiscard'); if (b) b.textContent = 'Discard' }
+    }, 4000)
+    return
+  }
+  _gpbDiscardConfirming = false
+  btn.textContent = 'Discard'
+  btn.disabled = true
+  if (status) { status.textContent = ''; status.className = 'gpb-status setup-msg' }
+  try {
+    const res = await apiFetch('/admin/discard', { method: 'POST' })
+    if (!res.ok) {
+      if (status) { status.textContent = 'Couldn’t discard right now. Try again.'; status.className = 'gpb-status setup-msg error' }
+      return
+    }
+    invalidateSetupStateCache()
+    const fresh = await refreshSiteConfig({})
+    if (fresh) setTenantConfig(fresh)
+    rerenderActiveView()
+    if (status) {
+      status.textContent = 'Changes discarded'
+      status.className = 'gpb-status setup-msg'
+      setTimeout(() => { status.textContent = '' }, 2500)
+    }
+  } catch (e) {
+    console.error('[global-discard] network error', e)
+    if (status) { status.textContent = 'Couldn’t reach the server. Try again.'; status.className = 'gpb-status setup-msg error' }
+  } finally {
+    btn.disabled = false
+  }
 }
 
 

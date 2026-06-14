@@ -17,6 +17,7 @@ import type { ToolContext } from './types'
 import { sanitizeCustomCss } from '../css-sanitize'
 import { parseOrgConfig, loadTenantById } from '../tenant-loader'
 import { recompileAndMaybeWrite } from '../compile-instruction'
+import type { OrgConfig, Referral } from '../compile-instruction'
 
 export function configTools(ctx: ToolContext) {
   const { db, tenantId, tenant, freshTenant, invalidateCache } = ctx
@@ -83,6 +84,71 @@ export function configTools(ctx: ToolContext) {
       await recompileAndMaybeWrite(db, freshTenant, oc, bo)
       invalidateCache()
       return { success: true, updated, message: `Saved: ${updated.join(', ')}` }
+    },
+  })
+
+  // Referrals live in org_config.referrals[] — the structured list of
+  // organizations the bot routes callers to, tagged by species (`covers`)
+  // and/or area (`area`). compile-instruction.ts renders them into the
+  // LLM prompt under "## Referrals & Emergency Contacts". Without a tool
+  // here, the copilot used to claim "I have no referrals concept" and
+  // bury routing rules in house_rules narrative — losing the by-area
+  // routing the structured field is designed for.
+  const manage_referrals = tool({
+    description: 'Add, update, or remove a referral organization in the structured referrals list. Referrals are how the bot routes callers it can\'t help — by SPECIES (the "covers" tag, e.g. "raptors") or by AREA (the "area" tag, e.g. "Contra Costa County" for out-of-service-area callers). Adding a referral with an area tag automatically routes callers from that area to that org. Name is used as the key for update/remove (case-insensitive). Recompiles the system prompt after each change.',
+    inputSchema: z.object({
+      action: z.enum(['add', 'update', 'remove']).describe('"add" creates a new referral. "update" modifies the named referral (only fields you pass are changed). "remove" deletes it.'),
+      name: z.string().describe('Referral organization name, e.g. "Lindsay Wildlife Experience". Used as the key for update/remove.'),
+      contact: z.string().optional().describe('Phone and/or URL, e.g. "(925) 935-1978 · lindsaywildlife.org"'),
+      covers: z.string().optional().describe('What they handle, e.g. "general wildlife", "raptors and bats", "wild turkeys, mange coyotes"'),
+      area: z.string().optional().describe('Geographic coverage, e.g. "Contra Costa County" — used to route out-of-area callers to them automatically'),
+    }),
+    execute: async ({ action, name, contact, covers, area }) => {
+      const oc = parseOrgConfig<OrgConfig & Record<string, unknown>>(freshTenant.org_config)
+      const referrals: Referral[] = Array.isArray(oc.referrals) ? [...oc.referrals] : []
+      const trimmedName = name.trim()
+      const nameKey = trimmedName.toLowerCase()
+      const idx = referrals.findIndex(r => r?.name?.trim().toLowerCase() === nameKey)
+
+      if (action === 'add') {
+        if (idx >= 0) {
+          return { success: false, error: 'duplicate', message: `Referral "${trimmedName}" already exists. Use action="update" to change it, or action="remove" first.` }
+        }
+        const entry: Referral = { name: trimmedName }
+        if (contact !== undefined) entry.contact = contact
+        if (covers !== undefined) entry.covers = covers
+        if (area !== undefined) entry.area = area
+        referrals.push(entry)
+      } else if (action === 'update') {
+        if (idx < 0) {
+          return { success: false, error: 'not_found', message: `Referral "${trimmedName}" not found. Use action="add" to create it.` }
+        }
+        const current = referrals[idx]
+        const updated: Referral = { ...current, name: trimmedName }
+        if (contact !== undefined) updated.contact = contact
+        if (covers !== undefined) updated.covers = covers
+        if (area !== undefined) updated.area = area
+        referrals[idx] = updated
+      } else {
+        if (idx < 0) {
+          return { success: false, error: 'not_found', message: `Referral "${trimmedName}" not found.` }
+        }
+        referrals.splice(idx, 1)
+      }
+
+      oc.referrals = referrals
+      await db.prepare("UPDATE tenants SET org_config = ?, updated_at = datetime('now') WHERE id = ?")
+        .bind(JSON.stringify(oc), tenantId).run()
+      const bo = parseOrgConfig<Record<string, unknown>>(freshTenant.bot_overrides)
+      await recompileAndMaybeWrite(db, freshTenant, oc, bo)
+      invalidateCache()
+      return {
+        success: true,
+        action,
+        name: trimmedName,
+        referrals_count: referrals.length,
+        message: `${action === 'add' ? 'Added' : action === 'update' ? 'Updated' : 'Removed'} referral: ${trimmedName}`,
+      }
     },
   })
 
@@ -242,6 +308,7 @@ export function configTools(ctx: ToolContext) {
   return {
     update_config,
     update_org_info,
+    manage_referrals,
     update_colors,
     get_config,
     update_widget_theme,

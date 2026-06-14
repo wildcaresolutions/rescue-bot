@@ -144,6 +144,7 @@ agentApp.post('/admin/agent', async (c) => {
       tools: {
         update_config: cfgTools.update_config,
         update_org_info: cfgTools.update_org_info,
+        manage_referrals: cfgTools.manage_referrals,
         update_colors: cfgTools.update_colors,
         save_protocols: protoTools.save_protocols,
         get_config: cfgTools.get_config,

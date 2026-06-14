@@ -192,6 +192,22 @@ make eval              # Run generic test scenarios
 make eval-site         # Run org-specific test scenarios
 ```
 
+## Embed CDN cache (widget updates)
+
+The embeddable widget is served from the `${ORG_SLUG}-embed` R2 bucket at stable
+URLs (`v1.js`, `widget.js`) behind a Cloudflare edge cache. `deploy-embed.js`
+(run by `make cf-deploy`) uploads the new bundle AND purges those rolling keys,
+so a widget fix reaches embedded sites immediately instead of being masked by
+the edge cache for hours.
+
+The purge requires two things on the production deploy (`deploy-prod` job):
+- the `CLOUDFLARE_API_TOKEN` must include **Zone → Cache Purge** on the org zone
+- a **`CF_ZONE_ID`** secret set to the zone id
+
+Missing either → `deploy-embed` logs a `skip cache purge` warning and continues
+(origin still updates; the edge self-heals on its TTL). Confirm a deploy purged
+by the `✓ Purged edge cache: …` line in the `Deploy production` job log.
+
 ## Environment Variables
 
 Required in `.env`:

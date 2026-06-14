@@ -3,10 +3,11 @@ import type { Env, Tenant, Variables } from '../lib/types'
 import { hashPassword, generateToken, verifyToken, isDevAuthBypass, resolveSession, tenantCookiePrefix } from '../lib/auth'
 import { invalidateTenantCache } from '../lib/cache'
 import { clamp } from '../lib/utils'
-import { compileInstruction } from '../lib/compile-instruction'
+import type { OrgConfig, BotOverrides } from '../lib/compile-instruction'
 import { verifyTurnstile } from '../lib/turnstile'
 import { sanitizeCustomCss } from '../lib/css-sanitize'
-import { parseOrgConfig, loadTenantBySlug, loadTenantById } from '../lib/tenant-loader'
+import { loadTenantBySlug } from '../lib/tenant-loader'
+import { stageConfigChange, type DraftConfig } from '../lib/draft'
 import { dbError } from '../lib/errors'
 import { sendEmail } from '../lib/email'
 import { getPlatformName, getAuthFromEmail } from '../lib/platform'
@@ -299,8 +300,11 @@ platform.post('/platform/setup/:slug', async (c) => {
       await c.env.R2.put(r2Key, logo.stream(), {
         httpMetadata: { contentType: safeContentType(ext) },
       })
-      await c.env.DB.prepare("UPDATE tenants SET logo_r2_key = ?, updated_at = datetime('now') WHERE id = ?")
-        .bind(r2Key, tenant.id).run()
+      // Blob is written to R2 immediately (binary can't sit in a JSON draft),
+      // but the logo_r2_key is STAGED — the live widget keeps the old logo
+      // until Publish. (Reference docs below index immediately — that's RAG,
+      // intentionally live, and labeled "applies immediately" in the UI.)
+      await stageConfigChange(c.env.DB, tenant, { logo_r2_key: r2Key })
       results.logo = { key: r2Key, url: `/assets/${r2Key}` }
     }
 
@@ -345,139 +349,51 @@ platform.post('/platform/setup/:slug', async (c) => {
     return c.json({ success: true, ...results })
   }
 
-  // JSON body: update tenant fields
+  // JSON body: STAGE config changes into the tenant's draft. Nothing here
+  // touches the live columns the bot serves — that only happens at Publish
+  // (POST /admin/publish → lib/publish.ts), which also re-runs the instruction
+  // compile. Each field maps to a DraftConfig patch key (same clamps/sanitize
+  // as before; JSON columns stay objects, serialized at publish).
   let body: Record<string, unknown>
   try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
 
-  const updates: string[] = []
-  const values: (string | number | null)[] = []
-
-  if (typeof body.custom_instruction === 'string') {
-    updates.push('custom_instruction = ?')
-    values.push(body.custom_instruction.slice(0, 10_000))
-  }
-  if (typeof body.phone === 'string') { updates.push('phone = ?'); values.push(clamp(body.phone, 32)) }
-  if (typeof body.email === 'string') { updates.push('email = ?'); values.push(clamp(body.email, 256)) }
-  if (typeof body.url === 'string') { updates.push('url = ?'); values.push(clamp(body.url, 512)) }
-  if (typeof body.location_county === 'string') { updates.push('location_county = ?'); values.push(clamp(body.location_county, 128)) }
-  if (typeof body.location_state === 'string') { updates.push('location_state = ?'); values.push(clamp(body.location_state, 64)) }
-  if (typeof body.location_service_area === 'string') { updates.push('location_service_area = ?'); values.push(clamp(body.location_service_area, 512)) }
-  if (typeof body.color_primary === 'string') { updates.push('color_primary = ?'); values.push(clamp(body.color_primary, 7)) }
-  if (typeof body.color_secondary === 'string') { updates.push('color_secondary = ?'); values.push(clamp(body.color_secondary, 7)) }
-  if (typeof body.color_accent === 'string') { updates.push('color_accent = ?'); values.push(clamp(body.color_accent, 7)) }
-  if (typeof body.widget_theme === 'object' && body.widget_theme !== null) {
-    updates.push('widget_theme = ?')
-    values.push(JSON.stringify(body.widget_theme))
-  }
+  const patch: DraftConfig = {}
+  if (typeof body.custom_instruction === 'string') patch.custom_instruction = body.custom_instruction.slice(0, 10_000)
+  if (typeof body.phone === 'string') patch.phone = clamp(body.phone, 32)
+  if (typeof body.email === 'string') patch.email = clamp(body.email, 256)
+  if (typeof body.url === 'string') patch.url = clamp(body.url, 512)
+  if (typeof body.location_county === 'string') patch.location_county = clamp(body.location_county, 128)
+  if (typeof body.location_state === 'string') patch.location_state = clamp(body.location_state, 64)
+  if (typeof body.location_service_area === 'string') patch.location_service_area = clamp(body.location_service_area, 512)
+  if (typeof body.color_primary === 'string') { const v = clamp(body.color_primary, 7); if (v) patch.color_primary = v }
+  if (typeof body.color_secondary === 'string') { const v = clamp(body.color_secondary, 7); if (v) patch.color_secondary = v }
+  if (typeof body.color_accent === 'string') { const v = clamp(body.color_accent, 7); if (v) patch.color_accent = v }
+  if (typeof body.widget_theme === 'object' && body.widget_theme !== null) patch.widget_theme = body.widget_theme as Record<string, unknown>
   if (typeof body.widget_custom_css === 'string' || body.widget_custom_css === null) {
-    updates.push('widget_custom_css = ?')
-    // Sanitize before storage (audit P1-21). This is the second write path
-    // for widget_custom_css — agent.ts:update_custom_css is the other.
-    // Both must call sanitizeCustomCss or operator-authored CSS could
-    // smuggle url() exfil, @import chains, expression(), or </style>
-    // angle-bracket HTML injection through. Null bypasses sanitization
-    // (used to clear the field).
+    // Sanitize before staging (audit P1-21) — null clears.
     const raw = body.widget_custom_css as string | null
-    values.push(raw === null ? null : sanitizeCustomCss(raw).css)
+    patch.widget_custom_css = raw === null ? null : sanitizeCustomCss(raw).css
   }
-  if (body.widget_published === true) {
-    // Both fields parameterized. The previous shape mixed a literal
-    // `onboarded = 1` fragment with a values.push(1), leaving the bind
-    // count one ahead of the ? count and causing D1 to reject the query
-    // with "Wrong number of parameter bindings" — silently breaking
-    // first-publish for every tenant.
-    updates.push('widget_published_at = ?')
-    values.push(new Date().toISOString())
-    updates.push('onboarded = ?')
-    values.push(1)
-  }
-  if (typeof body.org_config === 'object' && body.org_config !== null) {
-    updates.push('org_config = ?')
-    values.push(JSON.stringify(body.org_config))
-  }
-  if (typeof body.bot_overrides === 'object' && body.bot_overrides !== null) {
-    updates.push('bot_overrides = ?')
-    values.push(JSON.stringify(body.bot_overrides))
-  }
+  if (typeof body.org_config === 'object' && body.org_config !== null) patch.org_config = body.org_config as OrgConfig
+  if (typeof body.bot_overrides === 'object' && body.bot_overrides !== null) patch.bot_overrides = body.bot_overrides as BotOverrides
   if (typeof body.report_recipients === 'string' || body.report_recipients === null) {
-    const raw = (body.report_recipients ?? '') as string
-    const cleaned = raw
-      .split(',')
-      .map(s => s.trim())
-      .filter(s => s.length > 0)
-      .join(',')
-    updates.push('report_recipients = ?')
-    values.push(cleaned ? clamp(cleaned, 1024) : null)
+    const cleaned = ((body.report_recipients ?? '') as string).split(',').map(s => s.trim()).filter(Boolean).join(',')
+    patch.report_recipients = cleaned ? clamp(cleaned, 1024) : null
   }
-  if (typeof body.daily_reports_enabled === 'boolean') {
-    updates.push('daily_reports_enabled = ?')
-    values.push(body.daily_reports_enabled ? 1 : 0)
-  }
-
-  // House rules — append-only operator-pinned text. Always overwrites.
-  // 10000-char cap matches custom_instruction. Raised from 5000 alongside
-  // migration 0030 (Lock-1) so operators migrating off the lock flag don't
-  // lose hand-edited prompt content.
-  if (typeof body.house_rules === 'string' || body.house_rules === null) {
-    updates.push('house_rules = ?')
-    values.push((body.house_rules as string | null)?.slice(0, 10000) ?? null)
-  }
-
-  // Lock flag: when set true, custom_instruction edits are treated as raw
-  // operator-edited text — species_config / org_config changes will NOT
-  // recompile and overwrite. Setting back to false re-enables auto-compile
-  // on the next config change.
+  if (typeof body.daily_reports_enabled === 'boolean') patch.daily_reports_enabled = body.daily_reports_enabled ? 1 : 0
+  if (typeof body.house_rules === 'string' || body.house_rules === null) patch.house_rules = (body.house_rules as string | null)?.slice(0, 10000) ?? null
   if (typeof body.custom_instruction_locked === 'boolean') {
-    updates.push('custom_instruction_locked = ?')
-    values.push(body.custom_instruction_locked ? 1 : 0)
-    updates.push('custom_instruction_locked_at = ?')
-    values.push(body.custom_instruction_locked ? new Date().toISOString() : null)
+    patch.custom_instruction_locked = body.custom_instruction_locked ? 1 : 0
+    patch.custom_instruction_locked_at = body.custom_instruction_locked ? new Date().toISOString() : null
   }
+  // NOTE: `widget_published` is no longer handled here — publishing is the
+  // global POST /admin/publish action; the Preview button calls that.
 
-  // If structured KB fields OR house_rules changed, recompile —
-  // unless the operator has locked custom_instruction.
-  const fieldChangedThatTriggersRecompile = body.org_config || body.bot_overrides || body.house_rules !== undefined
-  const explicitlyEditingRawPrompt = typeof body.custom_instruction === 'string'
-  if (fieldChangedThatTriggersRecompile && !explicitlyEditingRawPrompt) {
-    const fresh = await loadTenantById(c.env.DB, tenant.id)
-    if (fresh) {
-      // If the operator is currently writing custom_instruction_locked=true
-      // in this same call, respect it (use the new value, not the stale row).
-      const lockedNow = typeof body.custom_instruction_locked === 'boolean'
-        ? body.custom_instruction_locked
-        : fresh.custom_instruction_locked === 1
-      if (!lockedNow) {
-        const oc = body.org_config || (parseOrgConfig(fresh.org_config))
-        const bo = body.bot_overrides || (parseOrgConfig<Record<string, unknown>>(fresh.bot_overrides))
-        // house_rules is NOT appended into custom_instruction — chat-prompt.ts
-        // renders it once as its own top-of-prompt block. (Matches
-        // recompileAndMaybeWrite in compile-instruction.ts.)
-        const compiled = compileInstruction(fresh, oc, bo).trim()
-        if (compiled) {
-          updates.push('custom_instruction = ?')
-          values.push(compiled.slice(0, 10_000))
-        }
-      }
-    }
-  }
-
-  if (updates.length) {
-    updates.push("updated_at = datetime('now')")
+  if (Object.keys(patch).length) {
     try {
-      await c.env.DB.prepare(`UPDATE tenants SET ${updates.join(', ')} WHERE id = ?`)
-        .bind(...values, tenant.id).run()
-      invalidateTenantCache(slug)
+      await stageConfigChange(c.env.DB, tenant, patch)
     } catch (e) {
-      // Log the technical detail to Workers observability — operators don't
-      // see it but on-call does. Client receives a generic "couldn't save"
-      // so internal SQL/binding errors never leak into the admin UI.
-      console.error('[platform/setup] D1 UPDATE failed:', e, {
-        slug,
-        update_count: updates.length,
-        // Don't log values verbatim (may contain prompt content); log shape only.
-        update_keys: updates.map(u => u.split(' = ')[0]),
-        published_flag: body.widget_published === true,
-      })
+      console.error('[platform/setup] stage failed:', e, { slug, keys: Object.keys(patch) })
       return c.json({ error: 'Couldn’t save your changes. Try again in a moment — if this keeps happening, contact support.' }, 500)
     }
   }

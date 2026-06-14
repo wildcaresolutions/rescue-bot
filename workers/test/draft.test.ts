@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   loadDraft, hasDraft, overlayTenant, draftPatchToColumns, stageConfigChange, clearDraft,
 } from '../src/lib/draft'
+import { buildTenantIdentityBlock } from '../src/lib/chat-prompt'
 import type { Tenant } from '../src/lib/types'
 
 function tenant(overrides: Partial<Tenant> = {}): Tenant {
@@ -116,5 +117,29 @@ describe('clearDraft', () => {
     await clearDraft(db as unknown as D1Database, 't1')
     const w = db.writes.find(x => /UPDATE tenants SET draft_config = NULL/.test(x.sql))
     expect(w).toBeTruthy()
+  })
+})
+
+// THE load-bearing invariant: a staged edit must be invisible to the bot. The
+// bot's prompt builder reads the RAW (live) tenant row; only the admin overlay
+// applies the draft. So the same builder shows LIVE facts for the live row and
+// DRAFT facts for the overlaid row.
+describe('INVARIANT: draft is invisible to the bot prompt, visible to the editor', () => {
+  const live = tenant({
+    phone: 'LIVE-PHONE',
+    org_config: JSON.stringify({ hours: 'LIVE-HOURS' }),
+    draft_config: JSON.stringify({ phone: 'DRAFT-PHONE', org_config: { hours: 'DRAFT-HOURS' } }),
+  })
+  it('bot read (raw live row) shows LIVE facts, never the draft', () => {
+    const block = buildTenantIdentityBlock(live)   // chat path passes the live row
+    expect(block).toContain('LIVE-PHONE')
+    expect(block).not.toContain('DRAFT-PHONE')
+    expect(block).toContain('LIVE-HOURS')
+    expect(block).not.toContain('DRAFT-HOURS')
+  })
+  it('editor read (overlaid row) shows the DRAFT facts', () => {
+    const block = buildTenantIdentityBlock(overlayTenant(live))
+    expect(block).toContain('DRAFT-PHONE')
+    expect(block).toContain('DRAFT-HOURS')
   })
 })

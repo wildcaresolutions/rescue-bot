@@ -17,10 +17,11 @@
 import { tool } from 'ai'
 import { z } from 'zod'
 import { computeSetupReadiness } from '../setup-readiness'
+import { publishDraft } from '../publish'
 import type { ToolContext } from './types'
 
 export function readinessTools(ctx: ToolContext) {
-  const { db, tenantId, freshTenant, invalidateCache } = ctx
+  const { env, db, tenantId, freshTenant } = ctx
 
   const computeReadiness = (opts: { requireWidgetPublished?: boolean } = {}) =>
     computeSetupReadiness(db, tenantId, freshTenant, opts)
@@ -36,22 +37,13 @@ export function readinessTools(ctx: ToolContext) {
   })
 
   const publish_widget = tool({
-    description: 'Publish current widget settings live and mark onboarding as complete. The server refuses to complete onboarding unless get_setup_readiness is ready.',
+    description: 'Publish the operator\'s staged changes live (config + widget) and mark onboarding complete. This is the global Publish. Never blocked by test results — the operator decides when to publish.',
     inputSchema: z.object({}),
     execute: async () => {
-      const readiness = await computeReadiness({ requireWidgetPublished: false })
-      if (!readiness.is_ready) {
-        return {
-          success: false,
-          error: 'Not ready to publish',
-          readiness,
-          message: 'Widget was not published. Fix the readiness blockers first.',
-        }
-      }
-      await db.prepare("UPDATE tenants SET onboarded = 1, widget_published_at = ?, updated_at = datetime('now') WHERE id = ?")
-        .bind(new Date().toISOString(), tenantId).run()
-      invalidateCache()
-      return { success: true, message: 'Widget published and tenant marked as onboarded' }
+      // Global publish: promote the draft to live (recompiling the bot
+      // instruction) and set the publish markers. Not gated on tests.
+      const res = await publishDraft(env, freshTenant)
+      return { success: true, ...res, message: 'Your changes are now live.' }
     },
   })
 

@@ -2211,10 +2211,26 @@ function dispatchToolResult(toolResult) {
     if (activeView === 'test') loadEvalScenarios()
     const status = result?.scoring_status || result?.pass_status
     if (status) {
-      const label = status === 'pass' ? 'PASS' : status === 'fail' ? 'FAIL' : 'NOT SCORED'
+      // Auto-grade is ADVISORY — label it as a hint, not a verdict, so the
+      // operator knows their 👍/👎 is what actually counts.
+      const label = status === 'pass' ? 'looks good' : status === 'fail' ? 'maybe off' : 'not scored'
       const desc = (result.description || '').slice(0, 60)
-      appendChangeChip(`Test case [${label}]: ${desc}`)
+      appendChangeChip(`Checked “${desc}” — auto-hint: ${label}`)
     }
+  }
+  else if (toolName === 'update_test_scenario') {
+    appendChangeChip(`Edited test case: ${(result?.description || '').slice(0, 60)}`)
+    if (activeView === 'test') loadEvalScenarios()
+  }
+  else if (toolName === 'delete_test_scenario') {
+    appendChangeChip('Deleted test case.')
+    if (activeView === 'test') loadEvalScenarios()
+  }
+  else if (toolName === 'mark_test_reviewed') {
+    const v = result?.review_status
+    const label = v === 'approved' ? '👍 approved' : v === 'rejected' ? '👎 needs work' : 'cleared'
+    appendChangeChip(`Test verdict: ${label}`)
+    if (activeView === 'test') loadEvalScenarios()
   }
   else if (toolName === 'resolve_action_item') {
     showCopilotToast(result?.resolved ? 'Action item resolved!' : 'Item not found')

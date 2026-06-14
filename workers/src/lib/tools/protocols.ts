@@ -16,6 +16,7 @@ import type { ToolContext } from './types'
 import { formatTestResultExplanation } from '../judge-parse'
 import { runEvalScenario } from '../eval-runner'
 import { stageConfigChange, overlayTenant } from '../draft'
+import { updateEvalScenario, reviewEvalScenario, deleteEvalScenario } from '../evals-crud'
 
 export function protocolsTools(ctx: ToolContext) {
   const { env, db, tenantId, freshTenant } = ctx
@@ -60,18 +61,60 @@ export function protocolsTools(ctx: ToolContext) {
   })
 
   const list_test_scenarios = tool({
-    description: 'Lists all test cases for this organization',
+    description: 'Lists all test cases for this organization, including the operator\'s review verdict (review_status: approved/rejected/unreviewed — the authoritative human judgment).',
     inputSchema: z.object({}),
     execute: async () => {
       const { results } = await db.prepare(
-        'SELECT id, description, expected_behavior, test_message, created_at FROM eval_scenarios WHERE tenant_id = ? ORDER BY created_at DESC',
+        'SELECT id, description, expected_behavior, test_message, review_status, reviewed_at, created_at FROM eval_scenarios WHERE tenant_id = ? ORDER BY created_at DESC',
       ).bind(tenantId).all()
       return { scenarios: results, count: results.length }
     },
   })
 
+  const update_test_scenario = tool({
+    description: 'Edit an existing test case\'s wording (description, expected behavior, or the visitor message). Use this when a test is worded badly instead of telling the operator to delete and recreate it. Editing resets its review verdict to unreviewed.',
+    inputSchema: z.object({
+      scenario_id: z.string(),
+      description: z.string().optional(),
+      expected_behavior: z.string().optional(),
+      test_message: z.string().optional(),
+    }),
+    execute: async ({ scenario_id, ...fields }) => {
+      const res = await updateEvalScenario(env, tenantId, scenario_id, fields)
+      if ('error' in res) return { success: false, error: res.error }
+      return { success: true, ...res, message: `Test case updated: "${res.description}"` }
+    },
+  })
+
+  const delete_test_scenario = tool({
+    description: 'Delete a test case. The operator is always allowed to remove a test — NEVER tell them to email support to delete one. Handles cleanup of any past results.',
+    inputSchema: z.object({ scenario_id: z.string() }),
+    execute: async ({ scenario_id }) => {
+      try {
+        await deleteEvalScenario(env, tenantId, scenario_id)
+        return { success: true, scenario_id, message: 'Test case deleted.' }
+      } catch (e) {
+        console.error('[delete_test_scenario] error:', e)
+        return { success: false, error: 'Failed to delete test case.' }
+      }
+    },
+  })
+
+  const mark_test_reviewed = tool({
+    description: 'Record the operator\'s OWN verdict on a test case — this is the authoritative judgment, overriding the auto-grader. Use "approved" when the operator is happy with the bot\'s answer (👍), "rejected" when they are not (👎), or "unreviewed" to clear it.',
+    inputSchema: z.object({
+      scenario_id: z.string(),
+      review_status: z.enum(['approved', 'rejected', 'unreviewed']),
+    }),
+    execute: async ({ scenario_id, review_status }) => {
+      const res = await reviewEvalScenario(env, tenantId, scenario_id, review_status)
+      if ('error' in res) return { success: false, error: res.error }
+      return { success: true, ...res, message: `Marked test case as ${review_status}.` }
+    },
+  })
+
   const run_test_scenario = tool({
-    description: 'Run a test case by ID and return the actual pass/fail result. Waits for the bot response and scoring step so the agent can react to the outcome on the same turn.',
+    description: 'Run a test case by ID and return the auto-grader\'s ADVISORY hint. The auto-grade (passed/scoring_status) is only a suggestion — the operator\'s 👍/👎 verdict is what counts and it NEVER blocks publishing. If the operator disagrees with the auto-grade, take their side and offer to mark_test_reviewed or update_test_scenario. Never treat a fail/not_scored as a blocker.',
     inputSchema: z.object({ scenario_id: z.string() }),
     execute: async ({ scenario_id }) => {
       try {
@@ -89,8 +132,10 @@ export function protocolsTools(ctx: ToolContext) {
           success: true,
           scenario_id,
           description: scenario.description,
-          passed: latest.passed === null ? null : latest.passed === 1,
+          // ADVISORY only — the human verdict (mark_test_reviewed) is authoritative.
+          advisory_passed: latest.passed === null ? null : latest.passed === 1,
           scoring_status: latest.passed === null ? 'not_scored' : latest.passed === 1 ? 'pass' : 'fail',
+          advisory_note: 'This is the auto-grader\'s hint, not a verdict. The operator decides with 👍/👎; it never blocks publishing.',
           result_explanation: formatTestResultExplanation(latest.judge_reasoning),
           response_excerpt: (latest.response || '').slice(0, 600),
         }
@@ -105,6 +150,9 @@ export function protocolsTools(ctx: ToolContext) {
     save_protocols,
     create_test_scenario,
     list_test_scenarios,
+    update_test_scenario,
+    delete_test_scenario,
+    mark_test_reviewed,
     run_test_scenario,
   }
 }

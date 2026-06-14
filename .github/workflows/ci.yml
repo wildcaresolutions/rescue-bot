@@ -200,6 +200,12 @@ jobs:
           PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
           MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
           PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
+          # Lets deploy-embed.js purge the embed CDN's rolling keys (v1.js /
+          # widget.js) so a freshly deployed widget isn't masked by the edge
+          # cache for hours. Requires the CLOUDFLARE_API_TOKEN to also have
+          # Zone → Cache Purge. Missing/insufficient → deploy-embed warns,
+          # doesn't fail.
+          CF_ZONE_ID: ${{ secrets.CF_ZONE_ID }}
       # Public-URL smoke tests run in the `smoke` job below — uses Chromium's
       # real TLS fingerprint (page.evaluate fetch) to bypass CF Bot Fight Mode.
 

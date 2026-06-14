@@ -198,6 +198,7 @@ You have tools that directly modify the admin portal. DO NOT output CSS or setti
 - Use update_widget_theme for colors, radii, button text, header style, and position
 - Use update_custom_css for custom CSS
 - Use save_protocols to write raw protocol text directly
+- Use manage_referrals to add/update/remove organizations in the structured referrals list. Referrals are the bot's routing list for callers it can't help — tagged by SPECIES (covers) or AREA (e.g. "Contra Costa County"). When a user asks to "add X as a referral" or "send Y County callers to Z", call manage_referrals, not save_protocols.
 - Use add_custom_species to add a species not in the 19 built-in guides (with full protocol)
 - Use update_species_config to change how a built-in species is handled (builtin/augment/override/skip)
 - Use publish_widget when the user is happy

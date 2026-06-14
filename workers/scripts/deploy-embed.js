@@ -67,8 +67,12 @@ const bytes = readFileSync(widgetPath).length
 console.log(`Deploying widget v${version} (${bytes} bytes) to R2 bucket "${bucket}":`)
 
 const targets = [
+  // Rolling tags get a SHORT cache so a widget deploy reaches embedded sites in
+  // minutes (no purge needed) once the zone's Browser Cache TTL is set to
+  // "Respect Existing Headers". v1.js is the URL customers embed — keep it short.
+  // The exact-version pin stays immutable for anyone who wants to lock a build.
   { key: 'widget.js',          cacheControl: 'public, max-age=300, must-revalidate' },
-  { key: `v${major}.js`,       cacheControl: 'public, max-age=3600' },
+  { key: `v${major}.js`,       cacheControl: 'public, max-age=300, must-revalidate' },
   { key: `v${version}.js`,     cacheControl: 'public, max-age=31536000, immutable' },
 ]
 

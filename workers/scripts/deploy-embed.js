@@ -84,6 +84,42 @@ for (const t of targets) {
   )
 }
 
+// ── Bust the edge cache for the ROLLING keys ────────────────────────────────
+// v1.js / widget.js are STABLE URLs embedded sites load, but the embed host
+// sits behind a multi-hour Cloudflare cache. Without an explicit purge a freshly
+// deployed widget is masked at the edge for hours — a real incident: a
+// link-render fix sat invisible on discoverwildcare.org because the edge kept
+// serving the old v1.js. The immutable v{version}.js never needs purging.
+// GRACEFUL by design: a missing/insufficient token or zone id only warns — the
+// origin (R2) is already updated, so a purge hiccup must never fail the deploy.
+async function purgeEmbedCache(urls) {
+  const token = process.env.CLOUDFLARE_API_TOKEN
+  if (!token) { console.warn('  (skip cache purge: CLOUDFLARE_API_TOKEN not set)'); return }
+  let zoneId = process.env.CF_ZONE_ID?.trim()
+  try {
+    if (!zoneId) {
+      // Fallback: resolve by the embed host's apex domain (needs Zone:Read).
+      // Setting CF_ZONE_ID explicitly is the simpler, preferred path.
+      const apex = EMBED_HOST.split('.').slice(-2).join('.')
+      const res = await fetch(`https://api.cloudflare.com/client/v4/zones?name=${apex}`, { headers: { Authorization: `Bearer ${token}` } })
+      zoneId = (await res.json())?.result?.[0]?.id
+    }
+    if (!zoneId) { console.warn('  (skip cache purge: set CF_ZONE_ID — could not resolve zone)'); return }
+    const res = await fetch(`https://api.cloudflare.com/client/v4/zones/${zoneId}/purge_cache`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ files: urls }),
+    })
+    const data = await res.json()
+    if (data?.success) console.log(`✓ Purged edge cache: ${urls.join(', ')}`)
+    else console.warn(`  (cache purge NOT applied — grant the token Zone→Cache Purge + set CF_ZONE_ID. CF said: ${JSON.stringify(data?.errors)})`)
+  } catch (e) {
+    console.warn(`  (cache purge skipped: ${e.message})`)
+  }
+}
+
+await purgeEmbedCache([`https://${EMBED_HOST}/widget.js`, `https://${EMBED_HOST}/v${major}.js`])
+
 console.log('')
 console.log(`✓ Widget v${version} deployed to:`)
 console.log(`    https://${EMBED_HOST}/widget.js     (latest)`)

@@ -26,6 +26,11 @@ initErrorReporting()
 // ── Multi-tenant: read data-tenant and data-* attrs from script tag ─────────
 const _widgetScript = document.currentScript || document.querySelector('script[data-tenant]')
 const _tenantSlug = _widgetScript?.getAttribute('data-tenant') || null
+// Set ONLY by the admin preview iframe (same-origin, operator logged in). Tells
+// the server to serve this conversation from the operator's DRAFT instead of
+// the published config. The server still independently verifies admin auth, so
+// this header does nothing for a public embed (no admin cookie → ignored).
+const _previewDraft = _widgetScript?.getAttribute('data-preview-draft') === 'true'
 let _runtimeConfig = null
 
 // Read data-attribute overrides from the script tag
@@ -49,8 +54,10 @@ const _baseUrl = deriveBaseUrl({
 
 /** Add X-Tenant-Slug header to all API requests if tenant is set */
 function _tenantHeaders(headers = {}) {
-  if (_tenantSlug) return { ...headers, 'X-Tenant-Slug': _tenantSlug }
-  return headers
+  const out = { ...headers }
+  if (_tenantSlug) out['X-Tenant-Slug'] = _tenantSlug
+  if (_previewDraft) out['X-Preview-Draft'] = '1'
+  return out
 }
 
 /** Fetch runtime config for multi-tenant branding */

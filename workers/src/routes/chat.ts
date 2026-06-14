@@ -25,6 +25,25 @@ import {
 } from '../lib/vision'
 import { parseOrgConfig } from '../lib/tenant-loader'
 import { dbError } from '../lib/errors'
+import { overlayTenant } from '../lib/draft'
+import { resolveSession, tenantCookiePrefix } from '../lib/auth'
+
+/**
+ * Draft preview: the admin preview iframe sends X-Preview-Draft so the operator
+ * can chat with their UNPUBLISHED config. This is the ONE place a draft touches
+ * the chat path, and it's gated hard: we ONLY overlay when the request also
+ * carries a valid admin session cookie for THIS tenant. A public embed has no
+ * such cookie, so the header is ignored and it always serves live/published.
+ * Returns the live tenant unchanged unless both conditions hold.
+ */
+async function maybeDraftOverlay(c: ChatContext, tenant: Tenant): Promise<Tenant> {
+  if (c.req.header('X-Preview-Draft') !== '1') return tenant
+  try {
+    const verified = await resolveSession(c.req.raw, tenantCookiePrefix(tenant.slug), c.env)
+    if (verified && verified.tenantId === tenant.id) return overlayTenant(tenant)
+  } catch { /* fall through to live */ }
+  return tenant
+}
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -584,6 +603,12 @@ chat.post('/api/sessions/:id', async (c) => {
 
   const tenant = c.get('tenant')
   const tenantId = tenant!.id
+
+  // Admin draft preview: serve this turn from the operator's draft when (and
+  // only when) the request is a verified admin preview. Same tenant id, so
+  // persistence/RAG are unaffected — only the compiled prompt changes.
+  const effectiveTenant = await maybeDraftOverlay(c, tenant!)
+  c.set('tenant', effectiveTenant)
 
   let body: { message?: string; photo_id?: string }
   try {

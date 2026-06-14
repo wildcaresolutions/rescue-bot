@@ -54,6 +54,9 @@
       const s = document.createElement('script')
       s.src = '/widget.js?v=' + Date.now()
       s.setAttribute('data-tenant', tenant)
+      // In the admin editor preview, the widget talks to the operator's DRAFT
+      // (server still verifies the admin cookie before honoring this).
+      if (editorMode) s.setAttribute('data-preview-draft', 'true')
       document.body.appendChild(s)
 
       // Editor mode: handle auto-open toggle from admin editor

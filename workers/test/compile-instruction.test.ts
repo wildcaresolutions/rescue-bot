@@ -218,7 +218,7 @@ describe('compileInstruction', () => {
         emptyBot,
       )
       expect(result).toContain('## Organization-Specific Notes')
-      expect(result).toContain('Raccoon: We see lots of juveniles in spring')
+      expect(result).toContain('**Raccoon**: We see lots of juveniles in spring')
     })
 
     it('augment mode without notes produces no output', () => {
@@ -266,7 +266,7 @@ describe('compileInstruction', () => {
         emptyBot,
       )
       expect(result).toContain('## Species We Do Not Handle')
-      expect(result).toContain('Marine mammals: We do NOT handle this species')
+      expect(result).toContain('**Marine mammals**: We do NOT handle this species')
       expect(result).toContain('Redirect: Call Marine Mammal Center at 415-289-7325')
     })
 
@@ -306,11 +306,40 @@ describe('compileInstruction', () => {
       )
       expect(result).not.toContain('Raccoon')
       expect(result).toContain('## Organization-Specific Notes')
-      expect(result).toContain('Opossum: Extra opossum info')
+      expect(result).toContain('**Opossum**: Extra opossum info')
       expect(result).toContain('## Protocol Overrides')
       expect(result).toContain('### Skunk')
       expect(result).toContain('## Species We Do Not Handle')
       expect(result).toContain('Reptiles')
+    })
+
+    it('keeps a multi-line note (paragraphs + sub-bullets) attached to its species', () => {
+      // Regression: an operator note with blank lines and its own sub-bullets
+      // used to be dumped raw after "- Pigeon: ", so the sub-bullets detached
+      // and read as unrelated top-level rules — confusing the model.
+      const notes = 'Many Bay Area rescues refuse pigeons.\n\nRouting rules ->\n- if not in the SF Bay Area, fall through\n- if Contra Costa, direct to WildCare'
+      const result = compileInstruction(
+        baseTenant(),
+        { species_config: { Pigeon: { mode: 'augment', notes } } },
+        emptyBot,
+      )
+      // Species on its own bolded bullet, body indented 2 spaces so the
+      // sub-bullets nest UNDER Pigeon rather than becoming siblings.
+      expect(result).toContain('- **Pigeon**:\n  Many Bay Area rescues refuse pigeons.')
+      expect(result).toContain('\n  - if not in the SF Bay Area, fall through')
+      expect(result).toContain('\n  - if Contra Costa, direct to WildCare')
+      // No un-indented top-level sub-bullet detached from the species.
+      expect(result).not.toContain('\n- if not in the SF Bay Area')
+    })
+
+    it('single-line notes stay compact', () => {
+      const result = compileInstruction(
+        baseTenant(),
+        { species_config: { Opossum: { mode: 'augment', notes: 'Extra opossum info' } } },
+        emptyBot,
+      )
+      expect(result).toContain('- **Opossum**: Extra opossum info')
+      expect(result).not.toContain('- **Opossum**:\n')
     })
 
     it('species_config suppresses legacy species lists', () => {

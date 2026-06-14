@@ -28,6 +28,7 @@ import {
 import { buildPromptState } from '../lib/prompt-state'
 import { loadSetupState } from '../lib/setup-state'
 import { publishDraft, discardDraft } from '../lib/publish'
+import { overlayTenant } from '../lib/draft'
 import {
   addDomain,
   buildKnowledgeBaseSummary,
@@ -421,8 +422,9 @@ admin.post('/admin/evals/:id/run', async (c) => {
   const scenario = await loadEvalScenarioById(c.env, tenant.id, scenarioId)
   if (!scenario) return c.json({ error: 'Scenario not found' }, 404)
 
-  // Run eval in background via waitUntil
-  c.executionCtx.waitUntil(runEvalScenario(c.env, tenant, scenario))
+  // Run eval in background via waitUntil — against the DRAFT overlay so the
+  // operator tests pending (unpublished) changes.
+  c.executionCtx.waitUntil(runEvalScenario(c.env, overlayTenant(tenant), scenario))
   return c.json({ status: 'started', scenario_id: scenarioId })
 })
 
@@ -446,7 +448,8 @@ admin.get('/admin/knowledge-base', async (c) => {
 admin.get('/admin/prompt', async (c) => {
   const tenant = c.get('tenant')
   if (!tenant) return c.json({ error: 'Tenant required' }, 400)
-  return c.json(buildPromptState(tenant))
+  // "What your bot sees" reflects the operator's unpublished draft.
+  return c.json(buildPromptState(overlayTenant(tenant)))
 })
 
 /**

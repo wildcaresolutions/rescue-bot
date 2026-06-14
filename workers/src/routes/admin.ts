@@ -31,8 +31,6 @@ import { buildPromptState } from '../lib/prompt-state'
 import { loadSetupState } from '../lib/setup-state'
 import { publishDraft, discardDraft } from '../lib/publish'
 import { overlayTenant } from '../lib/draft'
-import { buildChatPrompt } from '../lib/chat-prompt'
-import { runGatewayChatText, getMainChatModelName } from '../lib/ai'
 import {
   addDomain,
   buildKnowledgeBaseSummary,
@@ -488,42 +486,6 @@ admin.get('/admin/prompt', async (c) => {
   return c.json(buildPromptState(overlayTenant(tenant)))
 })
 
-/**
- * Admin-only "talk to your DRAFT bot" tester. Runs a chat turn against the
- * draft overlay so the operator can have a real back-and-forth with their
- * unpublished config before publishing. This is deliberately SEPARATE from the
- * public /api/sessions path (which is live-only and must never serve a draft):
- * admin auth is enforced by this router's middleware, so a draft can't leak to
- * a public caller. Stateless — the client sends the full conversation each turn.
- */
-admin.post('/admin/preview-chat', async (c) => {
-  const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
-  let body: { messages?: { role?: string; content?: string }[] }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
-
-  const convo = (Array.isArray(body.messages) ? body.messages : [])
-    .filter(m => m && (m.role === 'user' || m.role === 'assistant') && typeof m.content === 'string' && m.content.trim())
-    .map(m => ({ role: m.role as 'user' | 'assistant', content: (m.content as string).slice(0, 4000) }))
-    .slice(-20)
-  const lastUser = [...convo].reverse().find(m => m.role === 'user')
-  if (!lastUser) return c.json({ error: 'Send at least one user message' }, 400)
-
-  try {
-    const draftTenant = overlayTenant(tenant) // chat against the DRAFT (recompiled prompt)
-    const turnNumber = convo.filter(m => m.role === 'user').length
-    const { systemPrompt } = await buildChatPrompt(c.env, draftTenant, lastUser.content, { turnNumber })
-    const result = await runGatewayChatText({
-      env: c.env,
-      model: getMainChatModelName(c.env),
-      system: systemPrompt,
-      messages: convo,
-    })
-    return c.json({ reply: result.text || '(no response)' })
-  } catch (e) {
-    return dbError(c, 'admin/preview-chat', 'Could not reach the bot', e)
-  }
-})
 
 /**
  * Dismiss the Lock-1 migration banner. Sets

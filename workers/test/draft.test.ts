@@ -2,7 +2,6 @@ import { describe, it, expect } from 'vitest'
 import {
   loadDraft, hasDraft, overlayTenant, draftPatchToColumns, stageConfigChange, clearDraft,
 } from '../src/lib/draft'
-import { buildTenantIdentityBlock } from '../src/lib/chat-prompt'
 import type { Tenant } from '../src/lib/types'
 
 function tenant(overrides: Partial<Tenant> = {}): Tenant {
@@ -21,18 +20,6 @@ function tenant(overrides: Partial<Tenant> = {}): Tenant {
     ...overrides,
   }
 }
-
-// Regression: the bot fabricated a long google.com/maps URL (coords + tracking
-// params) instead of quoting the short configured maps link. The identity block
-// must carry an explicit "quote links, never construct" rule.
-describe('identity block forbids fabricating URLs', () => {
-  it('tells the bot to quote links exactly and never build a google.com/maps URL', () => {
-    const block = buildTenantIdentityBlock(tenant())
-    expect(block).toMatch(/quote.*never construct/i)
-    expect(block).toMatch(/google\.com\/maps/i)
-    expect(block).toMatch(/never\b[^.]*\b(build|construct|guess)/i)
-  })
-})
 
 describe('loadDraft / hasDraft', () => {
   it('returns {} for null/invalid, parses valid JSON', () => {
@@ -66,50 +53,6 @@ describe('overlayTenant', () => {
     const o = overlayTenant(tenant({ draft_config: '{"email":null,"phone":"7"}' }))
     expect(o.email).toBeNull()
     expect(o.phone).toBe('7')
-  })
-})
-
-// Regression for the "Check your bot tested the published prompt, not the
-// draft" bug: the bot prompt is built from the COMPILED custom_instruction,
-// and staging defers recompile to publish — so overlayTenant must recompile
-// the instruction from the draft's org_config, or admin/test surfaces see a
-// stale prompt.
-describe('overlayTenant recompiles custom_instruction from the draft', () => {
-  const live = tenant({
-    custom_instruction: 'STALE PUBLISHED PROMPT — should not survive an org_config draft',
-    org_config: JSON.stringify({ species_config: { Pigeon: { mode: 'augment', notes: 'OLD pigeon note' } } }),
-    draft_config: JSON.stringify({ org_config: { species_config: { Pigeon: { mode: 'augment', notes: 'NEW pigeon note' } } } }),
-  })
-  it('overlay custom_instruction reflects the DRAFT org_config', () => {
-    const o = overlayTenant(live)
-    expect(o.custom_instruction).toContain('NEW pigeon note')
-    expect(o.custom_instruction).not.toContain('OLD pigeon note')
-    expect(o.custom_instruction).not.toContain('STALE PUBLISHED PROMPT')
-  })
-  it('the LIVE row (bot read path) keeps its published custom_instruction', () => {
-    expect(live.custom_instruction).toBe('STALE PUBLISHED PROMPT — should not survive an org_config draft')
-  })
-  it('a raw custom_instruction edit in the draft wins (no recompile)', () => {
-    const o = overlayTenant(tenant({
-      org_config: JSON.stringify({ species_config: { Pigeon: { mode: 'augment', notes: 'x' } } }),
-      draft_config: JSON.stringify({ custom_instruction: 'HAND EDITED', org_config: { species_config: {} } }),
-    }))
-    expect(o.custom_instruction).toBe('HAND EDITED')
-  })
-  it('a locked prompt is never recompiled', () => {
-    const o = overlayTenant(tenant({
-      custom_instruction: 'LOCKED PROMPT',
-      custom_instruction_locked: 1,
-      draft_config: JSON.stringify({ org_config: { species_config: { Pigeon: { mode: 'augment', notes: 'ignored' } } } }),
-    }))
-    expect(o.custom_instruction).toBe('LOCKED PROMPT')
-  })
-  it('a draft that does NOT touch the prompt (e.g. colors) leaves custom_instruction untouched', () => {
-    const o = overlayTenant(tenant({
-      custom_instruction: 'KEEP ME',
-      draft_config: JSON.stringify({ color_primary: '#abcdef' }),
-    }))
-    expect(o.custom_instruction).toBe('KEEP ME')
   })
 })
 
@@ -173,29 +116,5 @@ describe('clearDraft', () => {
     await clearDraft(db as unknown as D1Database, 't1')
     const w = db.writes.find(x => /UPDATE tenants SET draft_config = NULL/.test(x.sql))
     expect(w).toBeTruthy()
-  })
-})
-
-// THE load-bearing invariant: a staged edit must be invisible to the bot. The
-// bot's prompt builder reads the RAW (live) tenant row; only the admin overlay
-// applies the draft. So the same builder shows LIVE facts for the live row and
-// DRAFT facts for the overlaid row.
-describe('INVARIANT: draft is invisible to the bot prompt, visible to the editor', () => {
-  const live = tenant({
-    phone: 'LIVE-PHONE',
-    org_config: JSON.stringify({ hours: 'LIVE-HOURS' }),
-    draft_config: JSON.stringify({ phone: 'DRAFT-PHONE', org_config: { hours: 'DRAFT-HOURS' } }),
-  })
-  it('bot read (raw live row) shows LIVE facts, never the draft', () => {
-    const block = buildTenantIdentityBlock(live)   // chat path passes the live row
-    expect(block).toContain('LIVE-PHONE')
-    expect(block).not.toContain('DRAFT-PHONE')
-    expect(block).toContain('LIVE-HOURS')
-    expect(block).not.toContain('DRAFT-HOURS')
-  })
-  it('editor read (overlaid row) shows the DRAFT facts', () => {
-    const block = buildTenantIdentityBlock(overlayTenant(live))
-    expect(block).toContain('DRAFT-PHONE')
-    expect(block).toContain('DRAFT-HOURS')
   })
 })

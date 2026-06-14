@@ -14,9 +14,9 @@
  * are untouched, so the re-cached row serves the bot identical live config.
  */
 import type { Env, Tenant } from './types'
-import { compileInstruction, type OrgConfig, type BotOverrides } from './compile-instruction'
+import type { OrgConfig, BotOverrides } from './compile-instruction'
 import { invalidateTenantCache } from './cache'
-import { loadTenantBySlug, parseOrgConfig } from './tenant-loader'
+import { loadTenantBySlug } from './tenant-loader'
 
 /** Columns that hold JSON — stored as parsed objects inside the draft patch,
  *  serialized to strings when overlaid onto a Tenant row or written at publish. */
@@ -48,7 +48,6 @@ export interface DraftConfig {
   custom_instruction?: string | null
   custom_instruction_locked?: number
   custom_instruction_locked_at?: string | null
-  house_rules?: string | null
   widget_custom_css?: string | null
   report_recipients?: string | null
   daily_reports_enabled?: number
@@ -90,22 +89,6 @@ export function overlayTenant(tenant: Tenant): Tenant {
     const v = (draft as Record<string, unknown>)[k]
     if (v === undefined) continue
     out[k] = JSON_COLUMNS.has(k) && v !== null && typeof v === 'object' ? JSON.stringify(v) : v
-  }
-  // CRITICAL: the bot's prompt is built from the COMPILED `custom_instruction`,
-  // but staging defers recompile to publish (see lib/publish.ts). Without
-  // recompiling here, the editing/preview/TEST surfaces would carry the draft's
-  // new org_config but a STALE compiled prompt — i.e. "Check your bot" would
-  // test the last-PUBLISHED protocols, not the draft. Recompile exactly as
-  // publish does (a raw custom_instruction edit, or a locked prompt, takes
-  // precedence) so the overlay == what the bot will see after publish.
-  const draftRec = draft as Record<string, unknown>
-  const touchesPrompt = 'org_config' in draftRec || 'bot_overrides' in draftRec
-  const rawEdit = typeof draftRec.custom_instruction === 'string'
-  const locked = out.custom_instruction_locked === 1
-  if (touchesPrompt && !rawEdit && !locked) {
-    const oc = parseOrgConfig<OrgConfig>(out.org_config as string | null)
-    const bo = parseOrgConfig<BotOverrides>(out.bot_overrides as string | null)
-    out.custom_instruction = compileInstruction(out as unknown as Tenant, oc, bo).trim().slice(0, 10_000)
   }
   return out as unknown as Tenant
 }

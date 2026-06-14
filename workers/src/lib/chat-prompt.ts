@@ -92,6 +92,8 @@ export function buildTenantIdentityBlock(tenant: Tenant): string {
 
   lines.push(`Operational facts (phone, hours, address, after-hours line, email) for ${tenant.name} live in THIS section. (Species protocols and redirect rules may also name OTHER organizations' phones — those are never ${tenant.name}'s own; see the whitelist above.) If a fact is not listed here, say so plainly ("I don't have those hours on file") and direct the caller to ${tenant.name}'s public phone above. Never invent hours, addresses, or after-hours numbers.`)
   lines.push('')
+  lines.push(`**Links: quote, never construct.** When you share a URL — a navigation/Google Maps link, website, or any link — copy it EXACTLY as written above, character for character. NEVER build, expand, shorten, or guess a URL. In particular, do NOT generate a \`google.com/maps\` link with coordinates or tracking parameters — a fabricated map link can send a rescuer to the wrong place. If a navigation link IS provided above (e.g. inside the drop-off address), share that exact link. If none is provided, give the written address and suggest the caller search it in their maps app — do not make up a link.`)
+  lines.push('')
   lines.push('---')
   lines.push('')
   return lines.join('\n')

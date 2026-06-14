@@ -22,6 +22,18 @@ function tenant(overrides: Partial<Tenant> = {}): Tenant {
   }
 }
 
+// Regression: the bot fabricated a long google.com/maps URL (coords + tracking
+// params) instead of quoting the short configured maps link. The identity block
+// must carry an explicit "quote links, never construct" rule.
+describe('identity block forbids fabricating URLs', () => {
+  it('tells the bot to quote links exactly and never build a google.com/maps URL', () => {
+    const block = buildTenantIdentityBlock(tenant())
+    expect(block).toMatch(/quote.*never construct/i)
+    expect(block).toMatch(/google\.com\/maps/i)
+    expect(block).toMatch(/never\b[^.]*\b(build|construct|guess)/i)
+  })
+})
+
 describe('loadDraft / hasDraft', () => {
   it('returns {} for null/invalid, parses valid JSON', () => {
     expect(loadDraft(null)).toEqual({})

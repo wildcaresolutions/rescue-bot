@@ -9,11 +9,9 @@
 // code in admin.js can patch them when update_widget_theme /
 // update_custom_css tools fire from anywhere in the admin UI.
 
-import { apiFetch, getTenantSlug, invalidateSetupStateCache } from './api.js'
+import { apiFetch, getTenantSlug } from './api.js'
 import { esc, tip } from './helpers.js'
-import { getTenantConfig, setTenantConfig } from './state.js'
-import { refreshSiteConfig } from '../shared/site-config.js'
-import { checkBotStatus } from './bot-status.js'
+import { getTenantConfig } from './state.js'
 
 let editorState = null
 let _sendPreviewUpdate = null
@@ -168,12 +166,8 @@ export function renderPreviewView() {
     // tab — flipping it shows the Publish bar instead of saving silently.
     photoUploadsEnabled: false,
   }
-  let savedState = { ...editorState }
   let activeTab = 'appearance'
   let embedMode = 'simple'
-  let discardConfirming = false
-
-  function hasUnsavedChanges() { return JSON.stringify(editorState) !== JSON.stringify(savedState) }
 
   function computeHeaderBg(state) {
     if (state.headerStyle === 'solid-primary') return state.primary
@@ -181,27 +175,57 @@ export function renderPreviewView() {
     return `linear-gradient(135deg, ${state.secondary} 0%, ${state.primary} 100%)`
   }
 
-  function renderPublishBar() {
-    const bar = document.getElementById('edPublishBar')
-    if (!bar) return
-    const changed = hasUnsavedChanges()
-    // First-publish: when the tenant hasn't published yet, the bar is
-    // ALWAYS visible — operator needs to find Publish even with no theme
-    // tweaks. The label adapts: "Ready to publish your bot" when no
-    // changes, "Unpublished changes" when there are theme tweaks too.
-    const notYetPublished = !getTenantConfig()?.onboarded
-    const visible = changed || notYetPublished
-    bar.style.display = visible ? 'flex' : 'none'
-    const label = bar.querySelector('.ed-publish-label')
-    if (label) {
-      label.textContent = notYetPublished && !changed
-        ? '● Ready to publish your bot'
-        : notYetPublished && changed
-          ? '● Ready to publish — with your latest theme tweaks'
-          : '● Unpublished changes'
+  // ── Staging ────────────────────────────────────────────────────────────────
+  // Every control change updates the live iframe instantly (sendPreviewUpdate)
+  // AND debounce-stages the full widget theme/CSS into the server-side draft.
+  // The GLOBAL Publish bar (admin.js shell) takes the draft live — this tab no
+  // longer has its own publish button. A successful /platform/setup POST
+  // dispatches `tenant-config-changed`, which lights up the global bar.
+  let _stageTimer = null
+  function scheduleStage() {
+    if (_stageTimer) clearTimeout(_stageTimer)
+    _stageTimer = setTimeout(() => { _stageTimer = null; stageThemeNow() }, 600)
+  }
+
+  async function stageThemeNow() {
+    const slug = getTenantSlug()
+    if (!slug) return
+    const buttonPosition = collectPos('btn')
+    const panePosition = collectPos('pane')
+    const widgetTheme = {
+      primaryColor: editorState.primary,
+      secondaryColor: editorState.secondary,
+      accentColor: editorState.accent,
+      headerStyle: editorState.headerStyle,
+      radiusButton: editorState.radiusButton,
+      radiusPane: editorState.radiusPane,
+      radiusBubble: editorState.radiusBubble,
+      buttonText: editorState.buttonText,
+      welcomeMessage: editorState.welcomeMessage,
+      headerText: editorState.headerText,
+      autoOpen: editorState.autoOpen,
+      buttonPosition,
+      panePosition,
+      embedOptions: {
+        cms: editorState.embedCms || 'none',
+        customWrapper: editorState.embedCustomWrapper || '',
+      },
     }
-    const discardBtn = document.getElementById('edDiscard')
-    if (discardBtn) discardBtn.style.display = changed ? '' : 'none'
+    try {
+      // No `widget_published` — staging never publishes. The global bar does.
+      await apiFetch('/platform/setup/' + slug, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          color_primary: editorState.primary,
+          color_secondary: editorState.secondary,
+          widget_theme: widgetTheme,
+          widget_custom_css: editorState.customCSS || null,
+        }),
+      })
+    } catch (e) {
+      console.error('[preview] stage failed', e)
+    }
   }
 
   function renderTabs() {
@@ -210,14 +234,6 @@ export function renderPreviewView() {
   }
 
   container.innerHTML = `
-    <div class="ed-publish-bar" id="edPublishBar" style="display:none">
-      <div style="display:flex;align-items:center;gap:10px;flex:1">
-        <span class="ed-publish-label" style="color:var(--color-ochre);font-weight:600;font-size:0.85rem">&#9679; Unpublished changes</span>
-        <span class="setup-msg" id="edPublishStatus" style="margin:0"></span>
-      </div>
-      <button class="btn btn-secondary btn-sm" id="edDiscard">Discard</button>
-      <button class="btn btn-primary btn-sm" id="edPublish" style="background:var(--color-sage);color:#fff;border:none;padding:6px 18px">Publish</button>
-    </div>
     <div class="editor-layout">
       <div class="editor-panel" style="padding:0;display:flex;flex-direction:column">
         <div class="ed-tab-bar" style="display:flex;border-bottom:1px solid var(--color-dried-grass);flex-shrink:0">
@@ -442,7 +458,7 @@ export function renderPreviewView() {
     }, '*')
     // The Embed Code tab depends on position state too — keep it in sync.
     if (typeof updateEmbedCode === 'function') updateEmbedCode()
-    renderPublishBar()
+    scheduleStage()
   }
   _sendPreviewUpdate = sendPreviewUpdate
 
@@ -641,12 +657,13 @@ export function renderPreviewView() {
   wirePos('edPaneBottom', 'paneBottom'); wirePos('edPaneTop', 'paneTop')
   wirePos('edPaneLeft', 'paneLeft');     wirePos('edPaneRight', 'paneRight')
 
-  // Experimental: photo upload toggle. Persists immediately on toggle (see
-  // the change handler below for why it can't be a deferred draft like the
-  // theme edits — the preview paperclip needs a server-minted session token).
-  // The Publish handler still carries a defensive feature-flag POST for the
-  // case where editorState/savedState diverge, but in normal operation the
-  // toggle has already synced both.
+  // Experimental: photo upload toggle. This is an INTENTIONAL exception to the
+  // draft/publish model — it persists LIVE immediately, not into the draft. The
+  // preview paperclip only appears once the server mints a session token, and
+  // the server only mints one when the flag is persisted (chat.ts POST
+  // /api/sessions → photoUploadsEnabled). A draft-only toggle could never
+  // preview, so the operator would see nothing change and assume it's broken.
+  // We persist immediately and nudge the iframe to refetch its token.
   ;(async () => {
     const cb = document.getElementById('edPhotoUploads')
     if (!cb) return
@@ -656,25 +673,12 @@ export function renderPreviewView() {
       })
       if (r.ok) {
         const data = await r.json()
-        const enabled = Boolean(data?.feature_flags?.photo_uploads_enabled)
-        // Land in BOTH editorState and savedState so the published-state
-        // baseline is correct — without this, an unmodified page would
-        // show as having "unsaved changes" (false dirty).
-        editorState.photoUploadsEnabled = enabled
-        savedState.photoUploadsEnabled = enabled
-        cb.checked = enabled
+        editorState.photoUploadsEnabled = Boolean(data?.feature_flags?.photo_uploads_enabled)
+        cb.checked = editorState.photoUploadsEnabled
       }
     } catch (e) {
       console.warn('[preview] feature-flags fetch failed:', e)
     }
-    // Persist + reflect on toggle. Unlike the visual theme toggles (which the
-    // widget applies client-side via sendPreviewUpdate), the photo paperclip
-    // only appears once the server mints a session token — and the server
-    // only mints one when the flag is persisted (chat.ts POST /api/sessions →
-    // photoUploadsEnabled). So a draft-only toggle could never preview: the
-    // operator saw nothing change and assumed it was broken. We persist
-    // immediately, nudge the iframe to refetch its token, and sync savedState
-    // so this doesn't also count as an unpublished diff in the Publish bar.
     cb.addEventListener('change', async () => {
       editorState.photoUploadsEnabled = cb.checked
       try {
@@ -684,7 +688,6 @@ export function renderPreviewView() {
           body: JSON.stringify({ photo_uploads_enabled: cb.checked }),
         })
         if (!r.ok) throw new Error(`feature-flags ${r.status}`)
-        savedState.photoUploadsEnabled = cb.checked
         const iframe = document.getElementById('previewFrame')
         iframe?.contentWindow?.postMessage(
           { type: 'wildcare-preview-config', refetchPhotoFlag: true },
@@ -696,23 +699,22 @@ export function renderPreviewView() {
         cb.checked = !cb.checked
         editorState.photoUploadsEnabled = cb.checked
       }
-      renderPublishBar()
     })
   })()
 
   // CMS picker + custom wrapper — these affect server-side config (the
   // widget reads them at runtime) and the Embed Code tab output. The live
   // preview iframe doesn't need to react because guards only matter on the
-  // host page, not inside our own preview frame.
+  // host page, not inside our own preview frame. Stage them into the draft.
   document.getElementById('edEmbedCms')?.addEventListener('change', (e) => {
     editorState.embedCms = e.target.value || 'none'
     updateEmbedCode()
-    renderPublishBar()
+    scheduleStage()
   })
   document.getElementById('edCustomWrapper')?.addEventListener('input', (e) => {
     editorState.embedCustomWrapper = e.target.value
     updateEmbedCode()
-    renderPublishBar()
+    scheduleStage()
   })
 
   // Custom CSS
@@ -744,195 +746,12 @@ export function renderPreviewView() {
     setTimeout(() => { btn.textContent = 'Copy Embed Code' }, 2000)
   })
 
-  // ── Publish ────────────────────────────────────────────────────────────────
-  document.getElementById('edPublish').addEventListener('click', async () => {
-    const btn = document.getElementById('edPublish')
-    const status = document.getElementById('edPublishStatus')
-    btn.textContent = 'Publishing...'
-    btn.disabled = true
-    try {
-      const buttonPosition = collectPos('btn')
-      const panePosition = collectPos('pane')
-      const widgetTheme = {
-        primaryColor: editorState.primary,
-        secondaryColor: editorState.secondary,
-        accentColor: editorState.accent,
-        headerStyle: editorState.headerStyle,
-        radiusButton: editorState.radiusButton,
-        radiusPane: editorState.radiusPane,
-        radiusBubble: editorState.radiusBubble,
-        buttonText: editorState.buttonText,
-        welcomeMessage: editorState.welcomeMessage,
-        headerText: editorState.headerText,
-        autoOpen: editorState.autoOpen,
-        buttonPosition,
-        panePosition,
-        // The widget reads embedOptions.cms at runtime to decide whether
-        // to mount on the current page (e.g. skip on Divi visual builder).
-        // customWrapper is editor-only metadata for regenerating the embed.
-        embedOptions: {
-          cms: editorState.embedCms || 'none',
-          customWrapper: editorState.embedCustomWrapper || '',
-        },
-      }
-      const res = await apiFetch('/platform/setup/' + slug, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          color_primary: editorState.primary,
-          color_secondary: editorState.secondary,
-          widget_theme: widgetTheme,
-          widget_custom_css: editorState.customCSS || null,
-          widget_published: true,
-        }),
-      })
-      // If the experimental photo-upload flag changed in this draft, persist
-      // it alongside the theme publish. It uses a different endpoint
-      // (/admin/feature-flags) because feature flags live in their own
-      // tenants column, but operators experience it as a single Publish.
-      if (res.ok && editorState.photoUploadsEnabled !== savedState.photoUploadsEnabled) {
-        try {
-          await fetch('/admin/feature-flags', {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-Tenant-Slug': getTenantSlug() ?? '',
-            },
-            body: JSON.stringify({ photo_uploads_enabled: editorState.photoUploadsEnabled }),
-          })
-          // Nudge the iframe widget to refetch its session token so the
-          // paperclip composer affordance shows/hides in place (no full
-          // iframe reload, which would close the chat panel).
-          const iframe = document.getElementById('previewFrame')
-          iframe?.contentWindow?.postMessage(
-            { type: 'wildcare-preview-config', refetchPhotoFlag: true },
-            '*',
-          )
-        } catch (e) {
-          console.error('[publish] feature-flag save failed:', e)
-        }
-      }
-      if (res.ok) {
-        const wasFirstPublish = !getTenantConfig()?.onboarded
-        savedState = { ...editorState }
-        setTenantConfig(await refreshSiteConfig({}))
-        invalidateSetupStateCache()
-        // Refresh the top-left status dot (was stuck on "needs setup"
-        // until the 5-min interval ticked) and the Home dashboard
-        // (the empty-state still showed "Continue Setup" because
-        // showFeed doesn't re-call renderFeed).
-        checkBotStatus(getTenantConfig())
-        _deps.renderFeed?.()
-        status.textContent = wasFirstPublish ? 'Published — your bot is live!' : 'Published'
-        status.className = 'setup-msg success'
-        renderPublishBar()
-        if (wasFirstPublish) {
-          // First publish — surface the embed snippet so operator knows how
-          // to get it onto their site. Switch to the Embed Code tab + scroll
-          // it into view + post a confirmation in the chat rail.
-          activeTab = 'embed'
-          renderTabs()
-          if (typeof updateEmbedCode === 'function') updateEmbedCode()
-          _deps.appendAssistantMessage?.('You’re live. Step 5 complete. The Embed Code tab now shows the `<script>` snippet — paste it just before `</body>` on every page where you want the chat widget to appear. If you’re on WordPress / Squarespace / Webflow, use the CMS preset dropdown to get a snippet shaped for your platform.')
-        }
-        setTimeout(() => { status.textContent = ''; status.className = 'setup-msg' }, wasFirstPublish ? 5000 : 3000)
-      } else {
-        // Technical detail to console for DevTools / on-call. Operator UI
-        // gets a clean, human message — never raw HTTP codes or SQL errors.
-        let serverMsg = ''
-        try {
-          const errBody = await res.json()
-          serverMsg = errBody?.error || ''
-        } catch { /* response had no JSON body */ }
-        console.error('[publish] failed', { status: res.status, statusText: res.statusText, serverMsg })
-        if (res.status === 401) {
-          status.textContent = 'Your session expired. Refresh the page to sign in again.'
-        } else if (res.status >= 500) {
-          status.textContent = serverMsg || 'Couldn’t publish right now. Try again in a moment.'
-        } else {
-          // 4xx other than 401: usually a validation message worth showing
-          status.textContent = serverMsg || 'Couldn’t publish — try again, or open the Assistant for help.'
-        }
-        status.className = 'setup-msg error'
-      }
-    } catch (e) {
-      console.error('[publish] network error', e)
-      status.textContent = 'Couldn’t reach the server. Check your connection and try again.'
-      status.className = 'setup-msg error'
-    } finally {
-      btn.textContent = 'Publish'
-      btn.disabled = false
-    }
-  })
-
-  // ── Discard ────────────────────────────────────────────────────────────────
-  document.getElementById('edDiscard').addEventListener('click', () => {
-    if (!discardConfirming) {
-      discardConfirming = true
-      document.getElementById('edDiscard').textContent = 'Discard unpublished changes?'
-      setTimeout(() => {
-        if (discardConfirming) {
-          discardConfirming = false
-          const btn = document.getElementById('edDiscard')
-          if (btn) btn.textContent = 'Discard'
-        }
-      }, 4000)
-      return
-    }
-    discardConfirming = false
-    editorState = { ...savedState }
-    // Reset UI controls
-    document.getElementById('edPrimaryHex').value = editorState.primary
-    document.getElementById('edPrimary').value = editorState.primary
-    document.getElementById('edPrimaryHex').closest('.color-row')?.querySelector('.color-swatch').style.setProperty('background-color', editorState.primary)
-    document.getElementById('edSecondaryHex').value = editorState.secondary
-    document.getElementById('edSecondary').value = editorState.secondary
-    document.getElementById('edSecondaryHex').closest('.color-row')?.querySelector('.color-swatch').style.setProperty('background-color', editorState.secondary)
-    document.getElementById('edAccentHex').value = editorState.accent
-    document.getElementById('edAccent').value = editorState.accent
-    document.getElementById('edAccentHex').closest('.color-row')?.querySelector('.color-swatch').style.setProperty('background-color', editorState.accent)
-    document.querySelector(`input[name="edHeaderStyle"][value="${editorState.headerStyle}"]`).checked = true
-    document.getElementById('edRadiusButton').value = parseInt(editorState.radiusButton)
-    document.getElementById('edRadiusBtnVal').textContent = editorState.radiusButton
-    document.getElementById('edRadiusPane').value = parseInt(editorState.radiusPane)
-    document.getElementById('edRadiusPaneVal').textContent = editorState.radiusPane
-    document.getElementById('edRadiusBubble').value = parseInt(editorState.radiusBubble)
-    document.getElementById('edRadiusBubbleVal').textContent = editorState.radiusBubble
-    document.getElementById('edButtonText').value = editorState.buttonText
-    const ht = document.getElementById('edHeaderText'); if (ht) ht.value = editorState.headerText || ''
-    document.getElementById('edAutoOpen').checked = editorState.autoOpen
-    document.getElementById('edCustomCSS').value = editorState.customCSS
-    const photoCb = document.getElementById('edPhotoUploads')
-    if (photoCb) photoCb.checked = editorState.photoUploadsEnabled
-    document.getElementById('edDiscard').textContent = 'Discard'
-    sendPreviewUpdate()
-  })
-
-  // ── beforeunload ───────────────────────────────────────────────────────────
-  function onBeforeUnload(e) {
-    if (hasUnsavedChanges()) { e.preventDefault(); e.returnValue = '' }
-  }
-  window.addEventListener('beforeunload', onBeforeUnload)
-
-  // Cleanup when view changes — store remover on container
-  container._cleanupBeforeUnload = () => window.removeEventListener('beforeunload', onBeforeUnload)
-
-  // Cmd+S / Ctrl+S to publish
-  function onKeydown(e) {
-    if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-      e.preventDefault()
-      if (hasUnsavedChanges()) document.getElementById('edPublish')?.click()
-    }
-  }
-  document.addEventListener('keydown', onKeydown)
-  const origCleanup = container._cleanupBeforeUnload
-  container._cleanupBeforeUnload = () => { origCleanup(); document.removeEventListener('keydown', onKeydown) }
+  // Publishing is now handled by the GLOBAL Publish bar in the admin shell.
+  // Every control here debounce-stages into the server-side draft (scheduleStage)
+  // and the global bar lights up via the `tenant-config-changed` event. There's
+  // no per-tab Publish/Discard, no beforeunload guard (staged edits are durable
+  // on the server — a reload re-reads them), and no Cmd+S here (the shell owns it).
 
   updateEmbedCode()
   _deps.updateAgentContext?.()
-  // First-publish CTA: show the publish bar on initial render when the
-  // tenant isn't onboarded yet, even with no theme changes. Without this,
-  // a brand-new operator who never tweaks colors lands on Preview and
-  // sees no Publish button anywhere.
-  renderPublishBar()
 }

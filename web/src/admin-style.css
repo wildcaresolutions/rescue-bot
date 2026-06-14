@@ -3824,6 +3824,16 @@ body {
   font-family: var(--font-body);
   background: var(--color-parchment);
   color: var(--color-umber);
+  box-sizing: border-box;
+}
+
+/* Match every other textarea in the app: a clear vertical drag handle. This
+   was the only notes box left on the browser default, so it read as
+   un-resizable. */
+.kb-species-detail textarea {
+  resize: vertical;
+  min-height: 52px;
+  line-height: 1.5;
 }
 
 .kb-triage-tester {

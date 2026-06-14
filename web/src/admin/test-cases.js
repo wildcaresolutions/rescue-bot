@@ -13,7 +13,7 @@
 // latest answer when the LLM returns an empty assistant message.
 
 import { apiFetch } from './api.js'
-import { esc, escapeHtml, safeMarkdown, showSetupMsg, highlightElement } from './helpers.js'
+import { esc, escapeHtml, safeMarkdown, showSetupMsg, highlightElement, formatDbDateTime } from './helpers.js'
 
 let evalScenarios = []
 
@@ -472,7 +472,7 @@ function renderEvalResults(scenarioId, results) {
   // No auto-grade shown — the operator's 👍/👎 is the whole verdict.
   el.innerHTML = `
     <div class="eval-result">
-      <div class="eval-section-label">The bot answered <span class="eval-result-date">${latest.created_at ? new Date(latest.created_at).toLocaleString() : ''}</span></div>
+      <div class="eval-section-label">The bot answered <span class="eval-result-date">${formatDbDateTime(latest.created_at)}</span></div>
       <div class="eval-response">${safeMarkdown(latest.response || '')}</div>
 
       <div class="eval-verdict-prompt">

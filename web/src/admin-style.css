@@ -3033,6 +3033,33 @@ body {
 .eval-turn-line { display: flex; gap: 6px; align-items: baseline; margin-top: 3px; }
 .eval-turn-line .eval-turn-n { color: var(--color-storm); font-weight: 600; font-size: 0.72rem; }
 
+/* ── Preview → "Try it (draft)" chat with the draft bot ──────────────────── */
+.draft-chat { display: flex; flex-direction: column; height: 100%; min-height: 360px; gap: 10px; }
+.draft-chat-banner {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 0.8rem; color: var(--color-umber);
+  background: var(--color-parchment); border: 1px solid var(--color-dried-grass);
+  border-left: 3px solid var(--color-ochre); border-radius: var(--radius-sm); padding: 8px 12px;
+}
+.draft-chat-clear { margin-left: auto; flex: 0 0 auto; }
+.draft-chat-log {
+  flex: 1; overflow-y: auto; display: flex; flex-direction: column; gap: 10px;
+  padding: 12px; border: 1px solid var(--color-dried-grass); border-radius: var(--radius-sm);
+  background: var(--color-field-white); min-height: 200px;
+}
+.draft-chat-empty { color: var(--color-storm); font-size: 0.85rem; margin: auto; text-align: center; max-width: 420px; }
+.dc-msg { max-width: 85%; padding: 8px 12px; border-radius: var(--radius-md); font-size: 0.88rem; line-height: 1.5; }
+.dc-msg .dc-who { display: block; font-size: 0.66rem; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.7; margin-bottom: 3px; }
+.dc-user { align-self: flex-end; background: var(--color-sage); color: #fff; }
+.dc-assistant { align-self: flex-start; background: var(--color-parchment); color: var(--color-umber); border: 1px solid var(--color-dried-grass); }
+.dc-typing { opacity: 0.7; font-style: italic; }
+.draft-chat-input { display: flex; gap: 8px; align-items: flex-end; }
+.draft-chat-input textarea {
+  flex: 1; resize: vertical; min-height: 44px; padding: 8px 10px;
+  border: 1px solid var(--color-dried-grass); border-radius: var(--radius-sm);
+  font-family: var(--font-body); font-size: 0.9rem; background: var(--color-parchment); color: var(--color-umber);
+}
+
 /* ── Bot Preview (in-app iframe) ─────────────────────────────────────────── */
 
 .preview-section {

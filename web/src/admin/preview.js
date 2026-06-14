@@ -10,7 +10,7 @@
 // update_custom_css tools fire from anywhere in the admin UI.
 
 import { apiFetch, getTenantSlug } from './api.js'
-import { esc, tip } from './helpers.js'
+import { esc, tip, safeMarkdown } from './helpers.js'
 import { getTenantConfig } from './state.js'
 
 let editorState = null
@@ -240,6 +240,7 @@ export function renderPreviewView() {
           <button class="ed-tab-btn active" data-tab="appearance">Appearance</button>
           <button class="ed-tab-btn" data-tab="css">CSS</button>
           <button class="ed-tab-btn" data-tab="embed">Embed Code</button>
+          <button class="ed-tab-btn" data-tab="try">Try it (draft)</button>
         </div>
         <div style="flex:1;overflow-y:auto;padding:20px">
 
@@ -413,6 +414,22 @@ export function renderPreviewView() {
             <p style="font-size:0.78rem;color:var(--color-storm);margin-top:12px">This widget will only work on domains you have added in Settings.</p>
           </div>
 
+          <div class="ed-tab-content" data-tab="try" style="display:none">
+            <div class="draft-chat">
+              <div class="draft-chat-banner">
+                Talking to your <strong>draft</strong> bot — your unpublished edits, live. Visitors still get the published version until you Publish.
+                <button class="btn btn-sm draft-chat-clear" id="dcClear" type="button">Clear</button>
+              </div>
+              <div class="draft-chat-log" id="dcLog">
+                <div class="draft-chat-empty">Type a caller's message below to start a conversation. It's a real back-and-forth — follow up just like a caller would.</div>
+              </div>
+              <div class="draft-chat-input">
+                <textarea id="dcInput" rows="2" placeholder="I found a baby bird on the ground…" autocomplete="off" data-1p-ignore data-lpignore="true"></textarea>
+                <button class="btn btn-primary" id="dcSend" type="button">Send</button>
+              </div>
+            </div>
+          </div>
+
         </div>
       </div>
       <div class="editor-preview">
@@ -427,8 +444,59 @@ export function renderPreviewView() {
       activeTab = btn.dataset.tab
       renderTabs()
       if (activeTab === 'embed') updateEmbedCode()
+      if (activeTab === 'try') document.getElementById('dcInput')?.focus()
     })
   })
+
+  // ── Try it (draft) — chat with the DRAFT bot, multi-turn ────────────────────
+  // Hits the admin-only /admin/preview-chat, which runs against the draft
+  // overlay (recompiled prompt). Stateless on the server; we keep the full
+  // conversation here and resend it each turn.
+  const draftChat = []
+  function renderDraftChat() {
+    const log = document.getElementById('dcLog')
+    if (!log) return
+    if (!draftChat.length) {
+      log.innerHTML = '<div class="draft-chat-empty">Type a caller\'s message below to start a conversation. It\'s a real back-and-forth — follow up just like a caller would.</div>'
+      return
+    }
+    log.innerHTML = draftChat.map(m =>
+      `<div class="dc-msg dc-${m.role}"><span class="dc-who">${m.role === 'user' ? 'Caller' : 'Bot'}</span>${safeMarkdown(m.content)}</div>`,
+    ).join('') + (draftChat._pending ? '<div class="dc-msg dc-assistant dc-typing"><span class="dc-who">Bot</span>…</div>' : '')
+    log.scrollTop = log.scrollHeight
+  }
+  async function sendDraftChat() {
+    const input = document.getElementById('dcInput')
+    const text = (input?.value || '').trim()
+    if (!text || draftChat._pending) return
+    input.value = ''
+    draftChat.push({ role: 'user', content: text })
+    draftChat._pending = true
+    renderDraftChat()
+    try {
+      const res = await apiFetch('/admin/preview-chat', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ messages: draftChat.map(m => ({ role: m.role, content: m.content })) }),
+      })
+      draftChat._pending = false
+      if (res.ok) {
+        const data = await res.json()
+        draftChat.push({ role: 'assistant', content: data.reply || '(no response)' })
+      } else {
+        draftChat.push({ role: 'assistant', content: '_Couldn\'t reach the bot — try again._' })
+      }
+    } catch {
+      draftChat._pending = false
+      draftChat.push({ role: 'assistant', content: '_Network error — try again._' })
+    }
+    renderDraftChat()
+  }
+  document.getElementById('dcSend')?.addEventListener('click', sendDraftChat)
+  document.getElementById('dcInput')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendDraftChat() }
+  })
+  document.getElementById('dcClear')?.addEventListener('click', () => { draftChat.length = 0; draftChat._pending = false; renderDraftChat() })
 
   // ── Preview update ─────────────────────────────────────────────────────────
   function sendPreviewUpdate() {

@@ -16,6 +16,7 @@
 import { apiFetch, getTenantSlug } from './api.js'
 import { escapeHtml, esc, tip, safeMarkdown, showSetupMsg } from './helpers.js'
 import { getTenantConfig, setTenantConfig } from './state.js'
+import speciesCatalog from '../../../shared/species-catalog.json'
 
 let _deps = { expandAgent: null, sendAgentMessage: null, showCopilotToast: null }
 export function bindPlaybook(deps) { _deps = { ..._deps, ...deps } }
@@ -28,12 +29,9 @@ export function setKbTab(t) {
     : (['setup', 'triage', 'knowledge', 'account'].includes(t) ? t : 'setup')
 }
 
-const BUILTIN_SPECIES = [
-  'Heron & Egret', 'Bat', 'Bobcat', 'Coyote', 'Deer & Fawn',
-  'Duck & Goose', 'Fox', 'Gull', 'Hummingbird', 'Opossum',
-  'Raccoon', 'Raptor', 'Raven', 'Rodent', 'Skunk',
-  'Snake', 'Songbird', 'Squirrel', 'Wild Turkey', 'Entangled Animal',
-]
+// Derived from shared/species-catalog.json — single source of truth shared
+// with the worker (workers/src/lib/species-catalog.ts) and the build scripts.
+const BUILTIN_SPECIES = speciesCatalog.species.map(s => s.name)
 
 const DEFAULT_TRIAGE_RULES = [
   { id: 'bat-exposure', label: 'Bat in living space / rabies exposure', patterns: ['bat.*house', 'bat.*bedroom', 'bat.*room', 'rabies', 'bat.*inside'], urgency: 'critical', hint: 'Potential rabies exposure. Transfer to intake coordinator immediately.' },

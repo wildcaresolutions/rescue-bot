@@ -1,0 +1,200 @@
+{
+  "$schema": "./species-catalog.schema.json",
+  "description": "Single source of truth for the platform's built-in species catalog. Consumed by both workers/src and web/src. Per-tenant custom species live in org_config.custom_species — they bypass this file.",
+  "species": [
+    {
+      "name": "Heron & Egret",
+      "token": "heron_egret",
+      "filename": "adult_heron_and_egret_rescue_and_care_-_google_docs.txt",
+      "category": "waterbird",
+      "detect": "heron|egret|wading bird",
+      "normalize_aliases": ["heron egret", "heron", "egret"],
+      "onboarding_terms": ["heron", "egret"],
+      "filename_keywords": ["heron", "egret"]
+    },
+    {
+      "name": "Bat",
+      "token": "bat",
+      "filename": "bat_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "bat|bats",
+      "normalize_aliases": [],
+      "onboarding_terms": ["bat"]
+    },
+    {
+      "name": "Bobcat",
+      "token": "bobcat",
+      "filename": "bobcat_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "bobcat",
+      "normalize_aliases": [],
+      "onboarding_terms": ["bobcat"]
+    },
+    {
+      "name": "Coyote",
+      "token": "coyote",
+      "filename": "coyote_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "coyote",
+      "normalize_aliases": [],
+      "onboarding_terms": ["coyote"]
+    },
+    {
+      "name": "Deer & Fawn",
+      "token": "deer",
+      "filename": "deer_and_fawn_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "deer|fawn",
+      "normalize_aliases": ["deer fawn", "deer", "fawn"],
+      "onboarding_terms": ["deer", "fawn"],
+      "filename_keywords": ["deer", "fawn"]
+    },
+    {
+      "name": "Duck & Goose",
+      "token": "duck_goose",
+      "filename": "duck_and_goose_rescue_and_care.txt",
+      "category": "waterbird",
+      "detect": "duck|goose|geese|duckling|gosling|mallard",
+      "normalize_aliases": ["duck goose", "duck", "goose"],
+      "onboarding_terms": ["duck", "goose", "waterfowl"],
+      "filename_keywords": ["duck", "goose"]
+    },
+    {
+      "name": "Fox",
+      "token": "fox",
+      "filename": "fox_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "fox",
+      "normalize_aliases": [],
+      "onboarding_terms": ["fox"]
+    },
+    {
+      "name": "Gull",
+      "token": "gull",
+      "filename": "gull_rescue_and_care.txt",
+      "category": "waterbird",
+      "detect": "gull|seagull",
+      "normalize_aliases": [],
+      "onboarding_terms": ["gull"]
+    },
+    {
+      "name": "Hummingbird",
+      "token": "hummingbird",
+      "filename": "hummingbird_rescue_and_care.txt",
+      "category": "songbird",
+      "detect": "hummingbird|humming bird|hummer",
+      "normalize_aliases": [],
+      "onboarding_terms": ["hummingbird"]
+    },
+    {
+      "name": "Opossum",
+      "token": "opossum",
+      "filename": "opossum_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "opossum|possum",
+      "normalize_aliases": [],
+      "onboarding_terms": ["opossum", "possum"]
+    },
+    {
+      "name": "Pigeon",
+      "token": "pigeon",
+      "filename": null,
+      "category": "songbird",
+      "detect": "pigeon|rock dove|mourning dove|dove|columbid",
+      "normalize_aliases": ["pigeon dove", "pigeon", "dove"],
+      "onboarding_terms": ["pigeon", "dove"]
+    },
+    {
+      "name": "Raccoon",
+      "token": "raccoon",
+      "filename": "raccoon_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "raccoon|coon",
+      "normalize_aliases": [],
+      "onboarding_terms": ["raccoon"]
+    },
+    {
+      "name": "Raptor",
+      "token": "raptor",
+      "filename": "raptor_rescue_and_care.txt",
+      "category": "raptor",
+      "detect": "hawk|owl|falcon|eagle|vulture|raptor|kestrel|osprey",
+      "normalize_aliases": [],
+      "onboarding_terms": ["raptor", "hawk", "owl", "eagle"]
+    },
+    {
+      "name": "Raven",
+      "token": "raven",
+      "filename": "raven_rescue_and_care.txt",
+      "category": "songbird",
+      "detect": "raven",
+      "normalize_aliases": [],
+      "onboarding_terms": ["raven", "crow"]
+    },
+    {
+      "name": "Rodent",
+      "token": "rodent",
+      "filename": "rodent_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "mouse|mice|rat|rodent|gopher|chipmunk",
+      "normalize_aliases": [],
+      "onboarding_terms": ["rodent", "mouse", "rat"]
+    },
+    {
+      "name": "Skunk",
+      "token": "skunk",
+      "filename": "skunk_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "skunk",
+      "normalize_aliases": [],
+      "onboarding_terms": ["skunk"]
+    },
+    {
+      "name": "Snake",
+      "token": "snake",
+      "filename": "snake_identification_and_rescue.txt",
+      "guide_display_name": "Snake Identification and Rescue",
+      "category": "reptile",
+      "detect": "snake|rattlesnake|garter|gopher snake|king snake",
+      "normalize_aliases": [],
+      "onboarding_terms": ["snake"]
+    },
+    {
+      "name": "Songbird",
+      "token": "songbird",
+      "filename": "songbird_rescue_and_care_guide.txt",
+      "category": "songbird",
+      "detect": "songbird|robin|sparrow|finch|jay|crow|starling|swallow|wren|warbler|blackbird|chickadee|junco|mockingbird|woodpecker|flicker|nuthatch|phoebe|thrush|towhee|goldfinch|waxwing|bushtit|creeper|kinglet|lark|titmouse|swift|poorwill",
+      "normalize_aliases": [],
+      "onboarding_terms": ["songbird", "bird"]
+    },
+    {
+      "name": "Squirrel",
+      "token": "squirrel",
+      "filename": "squirrel_rescue_and_care.txt",
+      "category": "mammal",
+      "detect": "squirrel",
+      "normalize_aliases": [],
+      "onboarding_terms": ["squirrel"]
+    },
+    {
+      "name": "Wild Turkey",
+      "token": "turkey",
+      "filename": "wild_turkey_rescue_and_care.txt",
+      "category": "gamebird",
+      "detect": "wild turkey|turkey|poult",
+      "normalize_aliases": ["wild turkey", "turkey"],
+      "onboarding_terms": ["wild turkey", "turkey", "poult"]
+    },
+    {
+      "name": "Entangled Animal",
+      "token": "entangled",
+      "filename": "animal_entangled___caught_in_fishing_line___fishing_hooks___fishing_tackle.txt",
+      "guide_display_name": "Entangled Animal Rescue",
+      "category": "general",
+      "detect": null,
+      "normalize_aliases": ["entangled animal", "entangled"],
+      "onboarding_terms": ["entangled"]
+    }
+  ]
+}

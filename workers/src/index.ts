@@ -467,6 +467,7 @@ app.get('/api/config', async (c) => {
     turnstile_site_key: turnstileSiteKey,
     dev_auth_bypass: devAuthBypass,
     custom_instruction: isAuthed ? (tenant.custom_instruction ?? '') : undefined,
+    house_rules: isAuthed ? (tenant.house_rules ?? '') : undefined,
     org_config: isAuthed ? parseOrgConfig(tenant.org_config) : undefined,
     bot_overrides: isAuthed ? parseOrgConfig<Record<string, unknown>>(tenant.bot_overrides) : undefined,
     report_recipients: isAuthed ? (tenant.report_recipients ?? '') : undefined,

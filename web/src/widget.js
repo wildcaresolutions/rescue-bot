@@ -571,8 +571,29 @@ function createWidgetUI() {
   initializeChat()
 }
 
+// WordPress (and similar CMSes) render a FIXED admin bar pinned to the top of
+// the viewport for logged-in users. The widget now shows for logged-in admins,
+// so the open chat pane's title could sit UNDER that bar. Measure the bar and
+// expose its height as --rbot-top-inset; the overlay pads its top by that much
+// so the pane (and its header) always clears it. 0 when no bar is present.
+function updateTopInset() {
+  let inset = 0
+  const bar = document.getElementById('wpadminbar')
+  if (bar) {
+    const r = bar.getBoundingClientRect()
+    // Only count a bar actually pinned to the very top of the viewport.
+    if (r.height > 0 && r.top <= 1 && r.bottom > 0) inset = Math.ceil(r.bottom)
+  }
+  document.documentElement.style.setProperty('--rbot-top-inset', inset + 'px')
+}
+
+// The admin bar height changes at WP's 783px breakpoint (32px ↔ 46px); keep the
+// inset current while the pane is open.
+window.addEventListener('resize', () => { if (isOpen) updateTopInset() })
+
 function openWidget() {
   isOpen = true
+  updateTopInset()
   const container = document.getElementById('rbot-widget-container')
   container.classList.add('rbot-widget-open')
   document.getElementById('rbot-widget-button').style.display = 'none'

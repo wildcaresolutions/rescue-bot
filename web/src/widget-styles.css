@@ -123,8 +123,12 @@
      pane's top off-screen and the header becomes unreachable. */
   align-items: safe center;
   justify-content: safe center;
-  /* Keep the pane clear of notches / the home indicator on mobile. */
-  padding: env(safe-area-inset-top) env(safe-area-inset-right) env(safe-area-inset-bottom) env(safe-area-inset-left);
+  /* Keep the pane clear of: a CMS top bar (WordPress admin bar — see
+     --rbot-top-inset, set in JS) and notches / the home indicator (safe-area). */
+  padding-top: calc(env(safe-area-inset-top) + var(--rbot-top-inset, 0px));
+  padding-right: env(safe-area-inset-right);
+  padding-bottom: env(safe-area-inset-bottom);
+  padding-left: env(safe-area-inset-left);
   box-sizing: border-box;
   font-family: var(--rbot-font);
 }

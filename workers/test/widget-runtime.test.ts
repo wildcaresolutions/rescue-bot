@@ -26,11 +26,12 @@ describe('shouldHideForCMS', () => {
     expect(shouldHideForCMS({ cms: 'wordpress' }, env('', ['logged-in']))).toBe(true)
   })
 
-  it('cms=wordpress-divi hides on logged-in OR ?et_fb=1', () => {
+  it('cms=wordpress-divi hides ONLY in the Divi builder (?et_fb=1), not for plain logged-in', () => {
     const eo = { cms: 'wordpress-divi' }
     expect(shouldHideForCMS(eo, env('', []))).toBe(false)
     expect(shouldHideForCMS(eo, env('?et_fb=1', []))).toBe(true)
-    expect(shouldHideForCMS(eo, env('', ['logged-in']))).toBe(true)
+    // Logged-in admin on a NORMAL page → bot shows (so they can test it).
+    expect(shouldHideForCMS(eo, env('', ['logged-in']))).toBe(false)
     expect(shouldHideForCMS(eo, env('?et_fb=1', ['logged-in']))).toBe(true)
     // Make sure the regex requires the full `et_fb=1` value, not a substring
     expect(shouldHideForCMS(eo, env('?et_fb=12', []))).toBe(false)
@@ -38,11 +39,11 @@ describe('shouldHideForCMS', () => {
     expect(shouldHideForCMS(eo, env('?foo=bar&et_fb=1', []))).toBe(true)
   })
 
-  it('cms=wordpress-elementor hides on logged-in OR ?elementor-preview=', () => {
+  it('cms=wordpress-elementor hides ONLY in the Elementor preview, not for plain logged-in', () => {
     const eo = { cms: 'wordpress-elementor' }
     expect(shouldHideForCMS(eo, env('', []))).toBe(false)
     expect(shouldHideForCMS(eo, env('?elementor-preview=42', []))).toBe(true)
-    expect(shouldHideForCMS(eo, env('', ['logged-in']))).toBe(true)
+    expect(shouldHideForCMS(eo, env('', ['logged-in']))).toBe(false)
   })
 
   it('cms=squarespace hides on body.sqs-edit-mode-active', () => {

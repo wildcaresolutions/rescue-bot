@@ -95,14 +95,13 @@ test.describe('Widget embed — cross-origin (live)', () => {
     expect(await launcherVisible(page)).toBe(true)
   })
 
-  test('WP-admin logged-in visitor is hidden', async ({ page }) => {
-    // Worker config has embedOptions.cms = "wordpress-divi" for this tenant
-    // which tells the widget to hide when the WP admin bar is present.
+  test('WP-admin logged-in admin still SEES the widget on a normal page', async ({ page }) => {
+    // embedOptions.cms = "wordpress-divi" now hides ONLY inside the Divi visual
+    // builder (et_fb=1) — NOT for plain logged-in users — so a logged-in admin
+    // browsing a normal page still gets the widget (to test it on the real site).
     await page.goto(`${baseUrl}/?bodyClass=${encodeURIComponent('home wp-singular et_divi_theme et-db logged-in admin-bar')}`)
-    // Give the widget the same window it would need to render if it weren't
-    // intentionally hiding — so a regression that ALWAYS shows is caught.
-    await page.waitForTimeout(3000)
-    expect(await launcherVisible(page)).toBe(false)
+    await page.waitForSelector('#rbot-widget-button', { timeout: 15_000 })
+    expect(await launcherVisible(page)).toBe(true)
   })
 
   test('Divi visual-builder (et_fb=1) is hidden', async ({ page }) => {

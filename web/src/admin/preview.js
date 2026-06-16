@@ -393,8 +393,8 @@ export function renderPreviewView() {
               <select id="edEmbedCms" data-1p-ignore style="width:100%;margin-top:6px;padding:7px 10px;border:1px solid var(--color-dried-grass);border-radius:var(--radius-sm);font-family:var(--font-body);font-size:0.88rem;background:#fff;color:var(--color-umber)">
                 <option value="none"${editorState.embedCms === 'none' ? ' selected' : ''}>None / static HTML — always show the widget</option>
                 <option value="wordpress"${editorState.embedCms === 'wordpress' ? ' selected' : ''}>WordPress — hide while a WP admin is logged in</option>
-                <option value="wordpress-divi"${editorState.embedCms === 'wordpress-divi' ? ' selected' : ''}>WordPress + Divi — hide on Divi visual builder + while logged in</option>
-                <option value="wordpress-elementor"${editorState.embedCms === 'wordpress-elementor' ? ' selected' : ''}>WordPress + Elementor — hide on Elementor preview + while logged in</option>
+                <option value="wordpress-divi"${editorState.embedCms === 'wordpress-divi' ? ' selected' : ''}>WordPress + Divi — hide only in the Divi visual builder (shows for logged-in admins)</option>
+                <option value="wordpress-elementor"${editorState.embedCms === 'wordpress-elementor' ? ' selected' : ''}>WordPress + Elementor — hide only in the Elementor preview (shows for logged-in admins)</option>
                 <option value="squarespace"${editorState.embedCms === 'squarespace' ? ' selected' : ''}>Squarespace — hide while in Squarespace edit mode</option>
               </select>
               <p style="font-size:0.72rem;color:var(--color-storm);margin-top:6px;line-height:1.5">If your site doesn't match any option exactly, pick the closest WordPress preset (most rehab sites are WordPress) or use the Custom wrapper below for one-off rules.</p>
@@ -494,8 +494,8 @@ export function renderPreviewView() {
   const CMS_HINTS = {
     none: '',
     wordpress: 'WordPress preset: the widget hides itself while a WP admin is logged in (so the chat doesn’t open over your dashboard).',
-    'wordpress-divi': 'WordPress + Divi preset: hides on the Divi visual builder and while a WP admin is logged in.',
-    'wordpress-elementor': 'WordPress + Elementor preset: hides during Elementor preview and while a WP admin is logged in.',
+    'wordpress-divi': 'WordPress + Divi preset: hides only inside the Divi visual builder (so the bubble doesn’t cover your editor). The bot still shows for logged-in admins on normal pages, so you can test it on the real site.',
+    'wordpress-elementor': 'WordPress + Elementor preset: hides only during Elementor preview. The bot still shows for logged-in admins on normal pages.',
     squarespace: 'Squarespace preset: hides while you’re in Squarespace edit mode.',
     webflow: 'Webflow preset: hides while you’re in the Webflow designer.',
     wix: 'Wix preset: hides while editing in the Wix editor.',

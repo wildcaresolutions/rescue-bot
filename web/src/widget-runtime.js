@@ -24,13 +24,17 @@ export function shouldHideForCMS(embedOptions, env) {
 
   switch (cms) {
   case 'wordpress':
+    // Plain WordPress (no page builder): hide for any logged-in WP user.
     if (has('logged-in')) return true
     break
   case 'wordpress-divi':
-    if (has('logged-in') || hasParam(/[?&]et_fb=1\b/)) return true
+    // Builder presets hide ONLY inside the active builder so the chat bubble
+    // doesn't sit over the editor — the bot still works for logged-in admins on
+    // normal pages (so they can test it on the real site).
+    if (hasParam(/[?&]et_fb=1\b/)) return true
     break
   case 'wordpress-elementor':
-    if (has('logged-in') || hasParam(/[?&]elementor-preview=/)) return true
+    if (hasParam(/[?&]elementor-preview=/)) return true
     break
   case 'squarespace':
     if (has('sqs-edit-mode-active')) return true

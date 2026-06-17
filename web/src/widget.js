@@ -9,7 +9,7 @@ import { initErrorReporting, reportError } from './error-reporter.js'
 import { renderMarkdown } from './shared/message-renderer.js'
 import { SITE_CONFIG } from './shared/site-config.js'
 import { setCookie, getCookie, deleteCookie } from './shared/cookies.js'
-import { shouldHideForCMS, deriveBaseUrl } from './widget-runtime.js'
+import { shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl } from './widget-runtime.js'
 import {
   reencodeImage,
   uploadPhoto,
@@ -170,7 +170,12 @@ function applyPositionConfig(config) {
   }
   if (config.panePosition) {
     const props = Object.entries(config.panePosition)
-      .map(([k, v]) => `${k}: ${v} !important;`)
+      // A `top`-anchored pane is positioned from the viewport top, so a fixed
+      // CMS bar (WordPress admin bar — see --rbot-top-inset) would clip its
+      // header. Add the measured inset to `top` so it always clears the bar.
+      .map(([k, v]) => k === 'top'
+        ? `${k}: calc(${v} + var(--rbot-top-inset, 0px)) !important;`
+        : `${k}: ${v} !important;`)
       .join(' ')
     // Apply to the pane itself with position:fixed so it escapes the
     // backdrop's flex layout. Without this, anchor coords like `top: 50%`
@@ -363,8 +368,23 @@ function _shouldHideForCMS(embedOptions) {
   })
 }
 
+// Config-independent check: are we inside a page-builder editor (Divi Visual
+// Builder, Elementor, …)? Uses LOCAL DOM signals only, so it works even when
+// /api/config can't load — which it often can't inside a builder, the exact
+// case where the config-driven _shouldHideForCMS silently no-ops.
+function _inBuilderEditor() {
+  return inPageBuilderEditor({
+    search: typeof window !== 'undefined' ? window.location.search : '',
+    bodyClassList: document.body ? Array.from(document.body.classList) : [],
+    htmlClassList: document.documentElement ? Array.from(document.documentElement.classList) : [],
+  })
+}
+
 // Initialize widget
 async function initWidget() {
+  // NEVER mount inside a page-builder editor. Checked first, with no network
+  // dependency, so it holds even when /api/config fails to load in the builder.
+  if (_inBuilderEditor()) return
   widgetConfig = getWidgetConfig()
 
   // Multi-tenant: fetch runtime config for branding

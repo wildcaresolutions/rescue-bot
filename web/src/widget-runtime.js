@@ -49,6 +49,35 @@ export function shouldHideForCMS(embedOptions, env) {
 }
 
 /**
+ * Universal "are we inside a page-builder EDITOR canvas?" check — INDEPENDENT of
+ * any tenant config. A builder's editing surface (Divi Visual Builder, Elementor
+ * editor, …) is never a place for a live chat widget, for ANY tenant. Crucially
+ * this uses only LOCAL DOM signals, so it works even when /api/config can't load
+ * — which it often can't inside a builder, the exact case where the
+ * config-driven shouldHideForCMS check silently no-ops and the widget wrongly
+ * shows. The widget calls this BEFORE fetching config or mounting anything.
+ *
+ * @param {object} env
+ * @param {string} env.search          - window.location.search
+ * @param {string[]} env.bodyClassList - document.body.classList tokens
+ * @param {string[]} env.htmlClassList - document.documentElement.classList tokens
+ * @returns {boolean} true → do not mount the widget here
+ */
+export function inPageBuilderEditor(env) {
+  const search = env?.search ?? ''
+  const cls = [...(env?.bodyClassList ?? []), ...(env?.htmlClassList ?? [])]
+  const hasClass = (pred) => cls.some(pred)
+  // Divi Visual Builder: ?et_fb=1, or the et-fb / et-fb-* root classes it stamps
+  // on <html>/<body> (present even when the URL param isn't where we look).
+  if (/[?&]et_fb=1\b/.test(search)) return true
+  if (hasClass((c) => c === 'et-fb' || c.startsWith('et-fb-'))) return true
+  // Elementor editor / preview.
+  if (/[?&]elementor-preview=/.test(search)) return true
+  if (hasClass((c) => c === 'elementor-editor-active')) return true
+  return false
+}
+
+/**
  * Pick the API origin the widget should call.
  *
  * Priority (highest first):

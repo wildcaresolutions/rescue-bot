@@ -1162,5 +1162,42 @@ tests:
 
           PASS if criterion 1 holds AND criteria 2, 3 are absent.
 
+  - description: "Regression: out-of-area caller who gives only a state must not get a [your city] placeholder"
+    # Teri's 2026-06-17 report: caller said 'I'm in New York' (state, no city) and
+    # the bot suggested searching 'wildlife rehabilitator near [your city], New York'
+    # — a literal fill-in-the-blank placeholder leaked to the citizen. Root cause:
+    # the out-of-area instruction handed the model a '<city, state>' slot with no
+    # value for the unknown city.
+    vars:
+      user_input: |
+        I found a bloody skunk
+        |||
+        It looks like a baby. I'm in New York
+    assert:
+      # Deterministic: the exact failure mode and the placeholder family must never appear.
+      - type: not-icontains
+        value: "[your"
+      - type: not-regex
+        value: "[\\[<](your |a |the )?(city|town|location|name|zip|county|phone|address|species)\\b"
+      - type: llm-rubric
+        value: |
+          The caller is in New York (a STATE, with NO specific city given) — OUTSIDE
+          WildCare's service area (Marin County, CA). The bot correctly treats this as
+          out-of-area and gives local-resource routing.
+
+          The response MUST NOT:
+          1. Contain ANY fill-in-the-blank placeholder for the citizen to complete —
+             e.g. "near [your city]", "<city>", "[location]", "<your town>". Brackets or
+             angle brackets wrapping a slot the bot did not fill is an automatic FAIL.
+
+          The response MUST (if it suggests a Google search at all):
+          2. Make the search query copy-paste-ready using ONLY the location actually given —
+             e.g. "wildlife rehabilitator in New York" — never a query the citizen has to
+             edit before it works.
+
+          PASS only if criterion 1 holds (no placeholders) AND, when a search is suggested,
+          criterion 2 holds. A response that omits the search suggestion entirely still PASSES
+          as long as it has no placeholders.
+
 # Output configuration
 outputPath: ./evals/promptfoo-results.json

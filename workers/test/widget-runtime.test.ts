@@ -3,7 +3,34 @@ import { describe, it, expect } from 'vitest'
 // because that's where the widget itself lives, but vitest is wired up here
 // in workers/ so we co-locate the unit tests with the existing harness.
 // @ts-expect-error — JS module without types
-import { shouldHideForCMS, deriveBaseUrl } from '../../web/src/widget-runtime.js'
+import { shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl } from '../../web/src/widget-runtime.js'
+
+// ── inPageBuilderEditor (config-independent builder guard) ──────────────────────
+
+describe('inPageBuilderEditor', () => {
+  const env = (search = '', body: string[] = [], html: string[] = []) =>
+    ({ search, bodyClassList: body, htmlClassList: html })
+
+  it('false on a normal page', () => {
+    expect(inPageBuilderEditor(env())).toBe(false)
+    expect(inPageBuilderEditor(env('?foo=bar', ['home', 'et_divi_theme']))).toBe(false)
+  })
+  it('Divi builder via ?et_fb=1', () => {
+    expect(inPageBuilderEditor(env('?et_fb=1&PageSpeed=off'))).toBe(true)
+    // substring guard — et_fb=12 is not the builder
+    expect(inPageBuilderEditor(env('?et_fb=12'))).toBe(false)
+  })
+  it('Divi builder via et-fb body/html classes (works even with NO et_fb param)', () => {
+    // The real failure: config can\'t load in the builder so the param check
+    // never runs — the class signal must catch it. Classes from a real session.
+    expect(inPageBuilderEditor(env('', ['et_divi_theme', 'et-db', 'et-fb', 'et-fb-root-ancestor']))).toBe(true)
+    expect(inPageBuilderEditor(env('', [], ['et-fb-root-ancestor', 'et-fb-top-html']))).toBe(true)
+  })
+  it('Elementor editor / preview', () => {
+    expect(inPageBuilderEditor(env('?elementor-preview=42'))).toBe(true)
+    expect(inPageBuilderEditor(env('', ['elementor-editor-active']))).toBe(true)
+  })
+})
 
 // ── shouldHideForCMS ───────────────────────────────────────────────────────────
 

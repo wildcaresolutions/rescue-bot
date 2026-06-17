@@ -110,6 +110,14 @@ test.describe('Widget embed — cross-origin (live)', () => {
     expect(await launcherVisible(page)).toBe(false)
   })
 
+  test('Divi visual-builder via et-fb body class (no et_fb param) is hidden', async ({ page }) => {
+    // The real-world failure: inside the builder /api/config can't load, so the
+    // config-driven hide never runs — the et-fb class must hide it regardless.
+    await page.goto(`${baseUrl}/?bodyClass=${encodeURIComponent('home et_divi_theme et-db et-fb et-fb-root-ancestor')}`)
+    await page.waitForTimeout(3000)
+    expect(await launcherVisible(page)).toBe(false)
+  })
+
   test('loads without SyntaxError when host page pre-declares const $', async ({ page }) => {
     // Regression for 2026-06-02: Vite's minifier picked $ as the compressed
     // name for the photoCap variable. Without an IIFE wrapper, var $ leaked

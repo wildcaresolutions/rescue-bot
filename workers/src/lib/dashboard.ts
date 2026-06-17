@@ -7,9 +7,20 @@
 import type { Env } from './types'
 
 export async function loadDashboardActionItems(env: Env, tenantId: string): Promise<unknown[]> {
-  // Action items = sessions where we can actually follow up: needs_action=1
-  // is set when the caller left contact info (or rated negatively).
-  // Urgency labels are still shown in the row, but don't gate the list.
+  // Action items = anything unresolved that an operator should look at:
+  //   - needs_action=1 (the caller left contact info, or rated negatively), OR
+  //   - urgency critical/urgent — a serious case ALWAYS surfaces, even if the
+  //     caller left no contact info.
+  //
+  // That second clause is load-bearing. The recent-sessions list below
+  // deliberately excludes critical/urgent ("those land in action items"),
+  // but action items used to gate on needs_action=1 ALONE — so an urgent
+  // session with needs_action=0 (e.g. an injured animal where the citizen
+  // never volunteered a phone number) matched NEITHER list and vanished from
+  // the dashboard entirely, while still showing in the daily report (which
+  // lists every session in its window). The most urgent cases were the ones
+  // most likely to be hidden. The OR-urgency clause closes that gap; keep it
+  // in sync with the recent query's NOT IN ('critical','urgent') exclusion.
   const { results } = await env.DB.prepare(`
     SELECT sa.*,
       COALESCE(m.message_count, 0) as message_count,
@@ -26,7 +37,8 @@ export async function loadDashboardActionItems(env: Env, tenantId: string): Prom
       SELECT session_id, rating FROM feedback WHERE tenant_id = ?
       GROUP BY session_id
     ) f ON f.session_id = sa.session_id
-    WHERE sa.tenant_id = ? AND sa.resolved_at IS NULL AND sa.needs_action = 1
+    WHERE sa.tenant_id = ? AND sa.resolved_at IS NULL
+      AND (sa.needs_action = 1 OR sa.urgency IN ('critical', 'urgent'))
     -- Sort by when the CONVERSATION happened, not when the analyzer ran.
     -- analyzed_at is wall-clock time of the regex pass; for sessions
     -- backfilled in batch (the /admin/analyze-backfill endpoint or a

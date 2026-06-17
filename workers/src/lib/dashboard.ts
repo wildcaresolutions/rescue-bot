@@ -7,20 +7,27 @@
 import type { Env } from './types'
 
 export async function loadDashboardActionItems(env: Env, tenantId: string): Promise<unknown[]> {
-  // Action items = anything unresolved that an operator should look at:
+  // Action items = recent, unresolved sessions an operator should follow up on:
   //   - needs_action=1 (the caller left contact info, or rated negatively), OR
-  //   - urgency critical/urgent — a serious case ALWAYS surfaces, even if the
-  //     caller left no contact info.
+  //   - urgency critical/urgent — a serious case surfaces even if the caller
+  //     left no contact info.
+  //   - AND the conversation happened in the trailing window (below).
   //
-  // That second clause is load-bearing. The recent-sessions list below
-  // deliberately excludes critical/urgent ("those land in action items"),
-  // but action items used to gate on needs_action=1 ALONE — so an urgent
-  // session with needs_action=0 (e.g. an injured animal where the citizen
-  // never volunteered a phone number) matched NEITHER list and vanished from
-  // the dashboard entirely, while still showing in the daily report (which
-  // lists every session in its window). The most urgent cases were the ones
-  // most likely to be hidden. The OR-urgency clause closes that gap; keep it
-  // in sync with the recent query's NOT IN ('critical','urgent') exclusion.
+  // The urgency clause closes a real gap: action items used to gate on
+  // needs_action=1 ALONE, so an urgent session with needs_action=0 (an injured
+  // animal where the citizen never left a phone number) matched neither this
+  // list nor the recent list, and vanished from the dashboard while still
+  // showing in the daily report.
+  //
+  // The trailing-window clause is just as load-bearing in the other direction.
+  // Lots of urgent/needs_action sessions are never *formally* resolved — the
+  // operator handles them and moves on without clicking "resolve". Without a
+  // window, resolved_at IS NULL kept months of those at the top of the
+  // dashboard (some from May), turning a triage list into an ever-growing
+  // backlog. Bounding to ACTION_ITEM_WINDOW_DAYS keeps the top section to
+  // "what needs attention now"; older unresolved sessions fall back into the
+  // Recent conversations list (which is the catch-all for the window) and then
+  // age off the dashboard entirely (still findable under All Sessions).
   const { results } = await env.DB.prepare(`
     SELECT sa.*,
       COALESCE(m.message_count, 0) as message_count,
@@ -39,6 +46,7 @@ export async function loadDashboardActionItems(env: Env, tenantId: string): Prom
     ) f ON f.session_id = sa.session_id
     WHERE sa.tenant_id = ? AND sa.resolved_at IS NULL
       AND (sa.needs_action = 1 OR sa.urgency IN ('critical', 'urgent'))
+      AND m.last_message >= (strftime('%s', 'now', '-3 days') * 1000)
     -- Sort by when the CONVERSATION happened, not when the analyzer ran.
     -- analyzed_at is wall-clock time of the regex pass; for sessions
     -- backfilled in batch (the /admin/analyze-backfill endpoint or a
@@ -53,8 +61,13 @@ export async function loadDashboardActionItems(env: Env, tenantId: string): Prom
 }
 
 export async function loadDashboardRecentSessions(env: Env, tenantId: string): Promise<unknown[]> {
-  // Recent conversations (last 3 days, callers we DIDN'T flag for follow-up
-  // and that aren't critical/urgent — those land in action items above).
+  // Recent conversations = the catch-all log for the trailing window: every
+  // analyzed session in the last 3 days that ISN'T a current action item
+  // (loadDashboard dedups the action-item session_ids out of this list). It
+  // deliberately does NOT re-filter on needs_action/urgency — an urgent
+  // session that aged out of action items (handled but never formally
+  // resolved) belongs here as a record, not nowhere. That "otherwise it lands
+  // in Recent" behavior is the whole point of bounding action items above.
   const { results } = await env.DB.prepare(`
     SELECT sa.*,
       COALESCE(m.message_count, 0) as message_count,
@@ -73,7 +86,7 @@ export async function loadDashboardRecentSessions(env: Env, tenantId: string): P
       SELECT session_id, rating FROM feedback WHERE tenant_id = ?
       GROUP BY session_id
     ) f ON f.session_id = sa.session_id
-    WHERE sa.tenant_id = ? AND sa.needs_action = 0 AND sa.urgency NOT IN ('critical', 'urgent')
+    WHERE sa.tenant_id = ?
     -- Window by when the CONVERSATION happened, not when we analyzed it.
     -- For backfilled history a batch run sets every analyzed_at to the
     -- same minute, which both inflates the "last 3 days" filter and

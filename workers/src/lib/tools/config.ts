@@ -160,7 +160,7 @@ export function configTools(ctx: ToolContext) {
   })
 
   const get_config = tool({
-    description: 'Gets the current tenant configuration (including unpublished/staged edits)',
+    description: 'Gets the current tenant configuration (including unpublished/staged edits). This is your READ tool — call it before editing anything. It returns the FULL house_rules text, so you never need to "probe" with a write tool to see the current prompt.',
     inputSchema: z.object({}),
     execute: async () => {
       const t = await overlay()
@@ -171,8 +171,14 @@ export function configTools(ctx: ToolContext) {
         color_primary: t.color_primary, color_secondary: t.color_secondary, color_accent: t.color_accent,
         hours: oc.hours || null, after_hours_phone: oc.after_hours_phone || null, emergency_contacts: oc.emergency_contacts || null,
         species_config: oc.species_config || {},
-        custom_instruction_preview: t.custom_instruction ? t.custom_instruction.slice(0, 500) + '...' : null,
-        has_custom_instruction: !!t.custom_instruction,
+        // The operator-editable prose ("House rules"). Returned IN FULL so the
+        // agent can read-modify-write it via save_protocols. (Returning a
+        // truncated preview here is what drove the agent to misuse a write tool
+        // as a read and clobber the prompt — 2026-06-18 incident.)
+        house_rules: t.house_rules || '',
+        // custom_instruction is DERIVED (compiled from species/referrals config
+        // at publish). Shown read-only for context — do NOT write it directly.
+        custom_instruction: t.custom_instruction || null,
       }
     },
   })

@@ -23,13 +23,32 @@ export function protocolsTools(ctx: ToolContext) {
   const target = { id: tenantId, slug: freshTenant.slug }
 
   const save_protocols = tool({
-    description: 'Saves custom rescue instructions/protocols for the organization. Staged as a draft until the operator publishes (a raw-prompt edit wins over auto-compile at publish).',
+    description: "Replaces the organization's House Rules — the operator's plain-language, cross-cutting protocols and exceptions (sign-offs, phrasing, special cases, redirect policy). This OVERWRITES the entire House Rules text, so you MUST call get_config first, edit the FULL text it returns, and pass the complete result back — never a fragment or a placeholder. Staged as a draft until the operator publishes. This does NOT touch per-species protocols or the compiled prompt (custom_instruction): species behavior is managed via update_species_config / add_custom_species and recompiled automatically at publish. NEVER call this tool to read or probe state — get_config is the read tool.",
     inputSchema: z.object({
-      custom_instruction: z.string().describe('The full custom instruction text for the rescue bot'),
+      house_rules: z.string().describe('The COMPLETE new House Rules text — replaces the current text entirely. Read it first via get_config and return the full edited version, never a partial or placeholder.'),
+      confirm_replace: z.boolean().optional().describe('Set true ONLY to confirm an intentional large reduction or wholesale replacement of existing House Rules.'),
     }),
     execute: async (input) => {
-      await stageConfigChange(db, target, { custom_instruction: input.custom_instruction.slice(0, 10_000) })
-      return { success: true, message: 'Protocols saved (staged)' }
+      const next = input.house_rules.trim()
+      const current = (overlayTenant(freshTenant).house_rules || '').trim()
+      // Guards against the 2026-06-18 incident, where the agent used this write
+      // tool to "probe" current state and slammed a placeholder over the real
+      // prompt. get_config is the read path; this only ever WRITES.
+      if (!next) {
+        return { success: false, error: 'empty', message: 'Refusing to save empty House Rules. Pass the full text, or ask the operator to confirm they really want to clear all rules.' }
+      }
+      if (/placeholder|_to_read\b/i.test(next)) {
+        return { success: false, error: 'placeholder', message: 'That looks like placeholder/probe text, not real House Rules. To READ the current rules, call get_config — never write to read.' }
+      }
+      if (current.length > 500 && next.length < current.length * 0.2 && !input.confirm_replace) {
+        return {
+          success: false,
+          error: 'drastic_shrink',
+          message: `This would shrink House Rules from ${current.length} to ${next.length} chars — likely an accidental overwrite. Call get_config to read the current rules first. If you genuinely intend to replace them, re-call with confirm_replace=true.`,
+        }
+      }
+      await stageConfigChange(db, target, { house_rules: next.slice(0, 10_000) })
+      return { success: true, message: 'House Rules saved (staged). The operator can hit Publish to take it live.' }
     },
   })
 

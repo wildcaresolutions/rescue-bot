@@ -78,24 +78,44 @@ export function inPageBuilderEditor(env) {
 }
 
 /**
+ * Compare the origins of two URL strings.
+ *
+ * Both values may be the empty string (relative origin — caller falls back to
+ * the page's own origin via relative fetch). Two empty strings are considered
+ * the same origin. Returns false for any malformed / unparseable URL.
+ *
+ * @param {string} a
+ * @param {string} b
+ * @returns {boolean}
+ */
+export function sameOrigin(a, b) {
+  if (!a && !b) return true
+  if (!a || !b) return false
+  try {
+    return new URL(a).origin === new URL(b).origin
+  } catch { return false }
+}
+
+/**
  * Pick the API origin the widget should call.
  *
  * Priority (highest first):
- *   1. Explicit `userBaseUrl` (legacy / self-hosted override)
- *   2. `<slug>.wildcaresolutions.org` if tenantSlug is set AND scriptSrc is on
+ *   1. `<slug>.wildcaresolutions.org` if tenantSlug is set AND scriptSrc is on
  *      a *.wildcaresolutions.org host — the SaaS default
- *   3. The script's own origin
- *   4. Empty string (caller falls back to relative `/api/...`)
+ *   2. The script's own origin
+ *   3. Empty string (caller falls back to relative `/api/...`)
+ *
+ * window.RescueBotChat.baseUrl overrides are intentionally NOT accepted here.
+ * The widget validates them separately via `sameOrigin` in widget.js before
+ * passing them on — accepting a cross-origin override without validation would
+ * let a compromised embedding page redirect all API/data traffic elsewhere.
  *
  * @param {object} input
- * @param {string} [input.userBaseUrl] - window.RescueBotChat.baseUrl
  * @param {string} [input.tenantSlug]  - <script data-tenant="...">
  * @param {string} [input.scriptSrc]   - the script tag's src URL
  * @returns {string}
  */
-export function deriveBaseUrl({ userBaseUrl, tenantSlug, scriptSrc }) {
-  if (userBaseUrl) return userBaseUrl
-
+export function deriveBaseUrl({ tenantSlug, scriptSrc } = {}) {
   if (scriptSrc) {
     try {
       const u = new URL(scriptSrc, 'https://example.com/')

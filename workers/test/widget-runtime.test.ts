@@ -3,7 +3,7 @@ import { describe, it, expect } from 'vitest'
 // because that's where the widget itself lives, but vitest is wired up here
 // in workers/ so we co-locate the unit tests with the existing harness.
 // @ts-expect-error — JS module without types
-import { shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl } from '../../web/src/widget-runtime.js'
+import { shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl, sameOrigin } from '../../web/src/widget-runtime.js'
 
 // ── inPageBuilderEditor (config-independent builder guard) ──────────────────────
 
@@ -102,14 +102,6 @@ describe('shouldHideForCMS', () => {
 // ── deriveBaseUrl ──────────────────────────────────────────────────────────────
 
 describe('deriveBaseUrl', () => {
-  it('user-supplied baseUrl wins over everything else', () => {
-    expect(deriveBaseUrl({
-      userBaseUrl: 'https://my-self-host.example.com',
-      tenantSlug: 'wildcare',
-      scriptSrc: 'https://embed.wildcaresolutions.org/v1.js',
-    })).toBe('https://my-self-host.example.com')
-  })
-
   it('SaaS path: derives <slug>.wildcaresolutions.org from data-tenant + embed host', () => {
     expect(deriveBaseUrl({
       tenantSlug: 'wildcare',
@@ -145,9 +137,10 @@ describe('deriveBaseUrl', () => {
     })).toBe('https://customer-site.com')
   })
 
-  it('returns empty string when no scriptSrc and no userBaseUrl', () => {
+  it('returns empty string when no scriptSrc', () => {
     expect(deriveBaseUrl({ tenantSlug: 'wildcare' })).toBe('')
     expect(deriveBaseUrl({})).toBe('')
+    expect(deriveBaseUrl()).toBe('')
   })
 
   it('does not treat a host that merely contains "wildcaresolutions.org" as ours', () => {
@@ -168,5 +161,51 @@ describe('deriveBaseUrl', () => {
   it('handles a bad scriptSrc by falling through to empty string', () => {
     // URL constructor throws on garbage; we expect graceful fallback.
     expect(deriveBaseUrl({ tenantSlug: 'wildcare', scriptSrc: '' })).toBe('')
+  })
+})
+
+// ── sameOrigin ─────────────────────────────────────────────────────────────────────────────
+
+describe('sameOrigin', () => {
+  it('two empty strings are same-origin', () => {
+    expect(sameOrigin('', '')).toBe(true)
+  })
+
+  it('one empty, one non-empty is not same-origin', () => {
+    expect(sameOrigin('', 'https://example.com')).toBe(false)
+    expect(sameOrigin('https://example.com', '')).toBe(false)
+  })
+
+  it('same scheme+host+port are same-origin', () => {
+    expect(sameOrigin('https://example.com', 'https://example.com')).toBe(true)
+    expect(sameOrigin('https://example.com/foo', 'https://example.com/bar')).toBe(true)
+    expect(sameOrigin(
+      'https://slug.wildcaresolutions.org',
+      'https://slug.wildcaresolutions.org',
+    )).toBe(true)
+  })
+
+  it('different host is not same-origin', () => {
+    expect(sameOrigin('https://example.com', 'https://attacker.com')).toBe(false)
+    expect(sameOrigin('https://slug.wildcaresolutions.org', 'https://evil.example.com')).toBe(false)
+  })
+
+  it('different scheme is not same-origin', () => {
+    expect(sameOrigin('https://example.com', 'http://example.com')).toBe(false)
+  })
+
+  it('different port is not same-origin', () => {
+    expect(sameOrigin('https://example.com:8443', 'https://example.com')).toBe(false)
+    expect(sameOrigin('http://localhost:8787', 'http://localhost:9000')).toBe(false)
+  })
+
+  it('same-origin localhost dev URLs', () => {
+    expect(sameOrigin('http://localhost:8787', 'http://localhost:8787')).toBe(true)
+    expect(sameOrigin('http://localhost:8787/api', 'http://localhost:8787')).toBe(true)
+  })
+
+  it('malformed URL returns false', () => {
+    expect(sameOrigin('not-a-url', 'https://example.com')).toBe(false)
+    expect(sameOrigin('https://example.com', 'not-a-url')).toBe(false)
   })
 })

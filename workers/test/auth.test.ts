@@ -268,6 +268,22 @@ describe('isDevAuthBypass', () => {
     expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'TRUE' }))).toBe(false)  // case-sensitive
     expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'true' }))).toBe(true)
   })
+
+  it('always false when ENVIRONMENT is production, even if bypass value is set', () => {
+    expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'true', ENVIRONMENT: 'production' }))).toBe(false)
+  })
+
+  it('always false when ENVIRONMENT is test, even if bypass value is set', () => {
+    expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'true', ENVIRONMENT: 'test' }))).toBe(false)
+  })
+
+  it('true when ENVIRONMENT is dev and bypass value is set', () => {
+    expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: 'true', ENVIRONMENT: 'dev' }))).toBe(true)
+  })
+
+  it('false when ENVIRONMENT is dev but bypass value is not set', () => {
+    expect(isDevAuthBypass(fakeEnv({ DEV_AUTH_BYPASS: '', ENVIRONMENT: 'dev' }))).toBe(false)
+  })
 })
 
 describe('tenantCookiePrefix', () => {

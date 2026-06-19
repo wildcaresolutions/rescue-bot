@@ -42,7 +42,7 @@ export function queriesTools(ctx: ToolContext) {
   })
 
   const run_analytics_query = tool({
-    description: `Run a one-off read-only SQL query against this tenant's data when no other tool fits the question (e.g. "how many cat-attack sessions last month with thumbs down", "median response time"). Read-only: single SELECT only — no WITH/CTEs, no subqueries, no UNION, no JOIN, no comma-joins. The query MUST be tenant-scoped using the :tenant_id placeholder — never a literal. Results are capped at 100 rows. Schema and examples:\n\n${ANALYTICS_SCHEMA_DESCRIPTION}`,
+    description: `Run a one-off read-only SQL query against this tenant's data when no other tool fits the question (e.g. "how many cat-attack sessions last month with thumbs down", "median response time"). Read-only: single SELECT only — no WITH/CTEs, no subqueries, no UNION, no JOIN, no comma-joins. Use AND-only filters: OR and standalone NOT are rejected (IS NOT NULL, NOT IN, NOT LIKE are still allowed). The query MUST be tenant-scoped using the :tenant_id placeholder — never a literal. Results are capped at 100 rows. Schema and examples:\n\n${ANALYTICS_SCHEMA_DESCRIPTION}`,
     inputSchema: z.object({
       question: z.string().describe('The plain-English question this query answers (shown to the user alongside the SQL).'),
       sql: z.string().describe('A single read-only SELECT using :tenant_id for tenant scoping. WITH/CTEs, JOIN, and subqueries are rejected.'),
@@ -59,12 +59,31 @@ export function queriesTools(ctx: ToolContext) {
         const binds = Array(v.bindCount ?? 1).fill(tenantId)
         const { results } = await stmt.bind(...binds).all()
         const rows = (results || []).slice(0, 100)
+
+        // Belt-and-braces: if any returned row exposes a tenant_id column
+        // that does not match the caller, drop it and log a security alert.
+        // This provides defense-in-depth against any validator bypass that
+        // somehow passes — the row level is always safe regardless.
+        const safeRows = rows.filter((r) => {
+          if (r && typeof r === 'object' && 'tenant_id' in r) {
+            const match = (r as Record<string, unknown>).tenant_id === tenantId
+            if (!match) {
+              console.error(
+                `[analytics_query] SECURITY: row tenant_id mismatch — dropped row`,
+                { caller: tenantId, row_tenant: (r as Record<string, unknown>).tenant_id },
+              )
+            }
+            return match
+          }
+          return true
+        })
+        const dropped = rows.length - safeRows.length
         return {
           question,
           sql: v.sql,
-          row_count: rows.length,
-          truncated: (results || []).length > rows.length,
-          rows,
+          row_count: safeRows.length,
+          truncated: (results || []).length > rows.length || dropped > 0,
+          rows: safeRows,
         }
       } catch (e) {
         return { error: 'Query execution failed: ' + (e instanceof Error ? e.message : String(e)), sql: v.sql }

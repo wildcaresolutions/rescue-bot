@@ -241,8 +241,15 @@ export function isPlatformAdminEmail(email: string, env: Env): boolean {
  * This is here so day-to-day local dev doesn't require clicking a magic link
  * or wiring Turnstile keys — but flipping it to anything other than "true" in
  * .dev.vars exercises the real flow when you're testing auth changes.
+ *
+ * The ENVIRONMENT guard is belt-and-braces: even if DEV_AUTH_BYPASS is
+ * accidentally set to "true" in a named environment's vars, the check returns
+ * false for ENVIRONMENT === 'production' or ENVIRONMENT === 'test'. This
+ * prevents the fail-open default from shipping when a bare `wrangler deploy`
+ * (no --env) is run, or from leaking into a named env via copy-paste.
  */
 export function isDevAuthBypass(env: Env): boolean {
+  if (env.ENVIRONMENT === 'production' || env.ENVIRONMENT === 'test') return false
   return env.DEV_AUTH_BYPASS === 'true'
 }
 

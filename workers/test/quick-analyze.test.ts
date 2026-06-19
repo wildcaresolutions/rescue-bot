@@ -67,8 +67,8 @@ class FakeDb {
   }
 }
 
-/** Convenience: run the analyzer and return the captured INSERT bind array.
- *  Throws if no INSERT was issued (early-return path). */
+/** Run the analyzer and return the FakeDb so callers can inspect insertBinds.
+ *  When the early-return path fires (< 2 messages), insertBinds remains null. */
 async function analyze(
   messages: Array<{ role: string; content: string }>,
   orgConfig: string | null = null,
@@ -252,6 +252,16 @@ describe('quickAnalyzeSession — outcome detection', () => {
     ]
     const db = await analyze(msgs)
     expect(db.insertBinds![3]).toBe('unknown')
+  })
+
+  it('outcome = "redirected" and inServiceArea = 0 when assistant redirects out-of-area', async () => {
+    const msgs = [
+      { role: 'user', content: 'I found a deer in Sacramento.' },
+      { role: 'assistant', content: 'This animal is outside our service area. Please call your local wildlife agency.' },
+    ]
+    const db = await analyze(msgs)
+    expect(db.insertBinds![3]).toBe('redirected')
+    expect(db.insertBinds![6]).toBe(0)  // inServiceArea = 0
   })
 })
 

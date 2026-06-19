@@ -9,7 +9,9 @@ import { initErrorReporting, reportError } from './error-reporter.js'
 import { renderMarkdown } from './shared/message-renderer.js'
 import { SITE_CONFIG } from './shared/site-config.js'
 import { setCookie, getCookie, deleteCookie } from './shared/cookies.js'
-import { shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl } from './widget-runtime.js'
+import {
+  shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl, sameOrigin,
+} from './widget-runtime.js'
 import {
   reencodeImage,
   uploadPhoto,
@@ -42,15 +44,24 @@ const _dataAttrs = {
   maxHeight: _widgetScript?.getAttribute('data-max-height') || null,
 }
 
-// Resolve the API origin once at load time. Logic lives in widget-runtime.js
-// (pure, unit-tested); we just feed it the runtime values it needs.
-const _baseUrl = deriveBaseUrl({
-  userBaseUrl: (typeof window !== 'undefined'
-    ? (window.RescueBotChat || window.WildCareChat || {})
-    : {}).baseUrl,
+// Resolve the trusted API origin from the SCRIPT TAG only — never from the
+// embedding page's window.RescueBotChat.baseUrl, which is attacker-controllable
+// on a compromised host and could redirect all API/data traffic elsewhere.
+const _scriptBaseUrl = deriveBaseUrl({
   tenantSlug: _tenantSlug,
   scriptSrc: _widgetScript?.src,
 })
+
+// Accept a window.RescueBotChat.baseUrl override ONLY when it points at the
+// same origin as the script tag (e.g. a self-hosted deploy where the embedding
+// page mirrors the script origin). A cross-origin override is silently ignored
+// and the script-tag-derived origin is used instead.
+const _windowBaseUrl = (typeof window !== 'undefined'
+  ? (window.RescueBotChat || window.WildCareChat || {})
+  : {}).baseUrl
+const _baseUrl = (_windowBaseUrl && sameOrigin(_windowBaseUrl, _scriptBaseUrl))
+  ? _windowBaseUrl
+  : _scriptBaseUrl
 
 /** Add X-Tenant-Slug header to all API requests if tenant is set */
 function _tenantHeaders(headers = {}) {
@@ -288,12 +299,13 @@ window.addEventListener('message', (event) => {
 })
 
 // API functions that support configurable baseUrl. _baseUrl is the
-// auto-derived origin (see _deriveBaseUrl) — we pass it through to
-// widgetConfig.baseUrl so anything that reads from getWidgetConfig() also
-// sees the resolved value.
+// script-origin-validated API base — always use it, even if getWidgetConfig()
+// spread a window.RescueBotChat.baseUrl override into widgetConfig. The
+// override was already validated above; re-applying _baseUrl here closes any
+// remaining path by which the raw window value could enter API_BASE.
 let widgetConfig = getWidgetConfig()
-if (!widgetConfig.baseUrl && _baseUrl) widgetConfig.baseUrl = _baseUrl
-const API_BASE = widgetConfig.baseUrl ? `${widgetConfig.baseUrl}/api` : '/api'
+widgetConfig.baseUrl = _baseUrl
+const API_BASE = _baseUrl ? `${_baseUrl}/api` : '/api'
 
 async function createSession() {
   const response = await fetch(`${API_BASE}/sessions`, {
@@ -511,10 +523,14 @@ function createWidgetUI() {
   container.id = 'rbot-widget-container'
   container.className = 'rbot-widget-container'
   const resizableClass = widgetConfig.resizable !== false ? ' rbot-widget-resizable' : ''
+  // Static scaffold only — NO operator-supplied strings interpolated here.
+  // agentName and welcomeMessage come from tenant config and must be set via
+  // .textContent / .placeholder AFTER insertion to avoid stored XSS on
+  // widget-embedded pages (H-2: innerHTML injection).
   container.innerHTML = `
     <div class="rbot-widget-pane${resizableClass}">
       <div class="rbot-widget-header">
-        <span class="rbot-widget-title">${widgetConfig.agentName}</span>
+        <span class="rbot-widget-title"></span>
         <div class="rbot-widget-header-actions">
           <button class="rbot-widget-new" title="Start new conversation">↻</button>
           <button class="rbot-widget-close" title="Close">×</button>
@@ -541,7 +557,6 @@ function createWidgetUI() {
         <textarea
           class="rbot-widget-input"
           id="rbot-widget-input"
-          placeholder="${(widgetConfig.welcomeMessage || 'Describe the animal and situation...').replace(/"/g, '&quot;')}"
           rows="1"
         ></textarea>
         <button class="rbot-widget-send" id="rbot-widget-send">Send</button>
@@ -549,6 +564,10 @@ function createWidgetUI() {
     </div>
   `
   document.body.appendChild(container)
+  // Set operator-supplied text via safe DOM properties (never innerHTML).
+  container.querySelector('.rbot-widget-title').textContent = widgetConfig.agentName
+  container.querySelector('#rbot-widget-input').placeholder =
+    widgetConfig.welcomeMessage || 'Describe the animal and situation...'
 
   // Close button
   container.querySelector('.rbot-widget-close').addEventListener('click', closeWidget)

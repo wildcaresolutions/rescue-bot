@@ -139,6 +139,10 @@ export async function servePhotoAsset(
   obj.writeHttpMetadata(headers)
   // Short private cache: defends against admin URL leakage.
   headers.set('Cache-Control', 'private, max-age=300')
+  // L-1: Security hardening headers (matches the /assets/* logo route).
+  headers.set('X-Content-Type-Options', 'nosniff')
+  headers.set('Content-Disposition', 'inline')
+  headers.set('X-Frame-Options', 'DENY')
   return new Response(obj.body, { headers })
 }
 

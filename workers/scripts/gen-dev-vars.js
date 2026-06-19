@@ -77,6 +77,10 @@ const devVars = [
   // prod/test envs via `make cf-push-secrets[-test]`.
   'TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA',
   `PLATFORM_ADMIN_EMAILS=${envVars.PLATFORM_ADMIN_EMAILS ?? 'mark@bluesnoop.com'}`,
+  // Auth bypass: wrangler.template.toml base [vars] now defaults DEV_AUTH_BYPASS=""
+  // so a bare `wrangler deploy` ships fail-closed. Set it here (gitignored
+  // .dev.vars) so `wrangler dev` still bypasses auth for local development.
+  'DEV_AUTH_BYPASS=true',
 ].join('\n') + '\n'
 
 const devVarsPath = join(__dirname, '../.dev.vars')

@@ -110,6 +110,8 @@ class StubD1 {
 
 // ── Fake Env / context ─────────────────────────────────────────────────────────
 
+const stubRateLimit: RateLimit = { limit: async () => ({ success: true }) }
+
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     SIGNING_SECRET: 'test-signing-secret',
@@ -119,6 +121,9 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     DEV_AUTH_BYPASS: '',
     ENVIRONMENT: 'test',
     DB: new StubD1() as unknown as D1Database,
+    RL_IP_CHAT: stubRateLimit,
+    RL_IP_SESSION: stubRateLimit,
+    RL_TENANT: stubRateLimit,
     ...overrides,
   } as unknown as Env
 }

@@ -236,3 +236,17 @@ describe('sanitizeCustomCss — input validation', () => {
     expect(r.warnings).toEqual([])
   })
 })
+
+// ── Comment-only CSS ──────────────────────────────────────────────────────────
+
+describe('sanitizeCustomCss — comment-only input', () => {
+  it('passes through CSS that consists only of block comments', () => {
+    // CSS comments are not a threat vector (no execution model) and should
+    // not produce spurious warnings. The output may or may not preserve
+    // comments exactly, but must not crash and must have zero warnings.
+    const input = '/* Theme overrides go here */ /* Second comment */'
+    const { css, warnings } = sanitizeCustomCss(input)
+    expect(typeof css).toBe('string')
+    expect(warnings).toHaveLength(0)
+  })
+})

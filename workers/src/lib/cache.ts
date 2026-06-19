@@ -44,6 +44,15 @@ export function invalidateTenantCache(slug: string) {
 //
 // Invalidate whenever a domain is added or removed via the admin API so
 // CORS changes take effect immediately within the current isolate.
+//
+// Known limitation (same as tenantCache): Cloudflare Workers run across
+// multiple isolates. invalidateDomainsCache() only clears the current
+// isolate's Map. Other isolates retain stale domain lists for up to 5
+// minutes. For domain *removal* (a security-relevant action that closes
+// CORS access for a previously-allowed origin), another isolate may keep
+// granting that origin access for up to 5 minutes after removal.
+// Acceptable at current scale; a Cache-API backed approach would provide
+// cross-isolate invalidation if needed.
 
 const DOMAINS_CACHE_TTL = TENANT_CACHE_TTL  // 5 minutes, same as tenant row
 const domainsCache = new Map<string, { domains: string[]; expiry: number }>()

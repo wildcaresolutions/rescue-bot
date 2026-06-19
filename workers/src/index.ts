@@ -519,12 +519,14 @@ app.use('/api/sessions/*', async (c, next) => {
   if (c.req.method !== 'POST') return next()
   const ip = clientIp(c)
   if (!(await c.env.RL_IP_CHAT.limit({ key: ip })).success) {
-    return c.json({ error: 'Rate limit exceeded. Please wait before sending more messages.' }, 429)
+    return c.json({ error: 'Rate limit exceeded. Please wait before sending more messages.' }, 429,
+      { 'Retry-After': '60' })
   }
   const tenant = c.get('tenant')
   if (tenant) {
     if (!(await c.env.RL_TENANT.limit({ key: `chat:${tenant.id}` })).success) {
-      return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429)
+      return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429,
+        { 'Retry-After': '60' })
     }
   }
   return next()
@@ -535,12 +537,14 @@ app.use('/api/sessions', async (c, next) => {
   if (c.req.method !== 'POST') return next()
   const ip = clientIp(c)
   if (!(await c.env.RL_IP_SESSION.limit({ key: ip })).success) {
-    return c.json({ error: 'Rate limit exceeded. Please wait before creating new sessions.' }, 429)
+    return c.json({ error: 'Rate limit exceeded. Please wait before creating new sessions.' }, 429,
+      { 'Retry-After': '60' })
   }
   const tenant = c.get('tenant')
   if (tenant) {
     if (!(await c.env.RL_TENANT.limit({ key: `sess:${tenant.id}` })).success) {
-      return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429)
+      return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429,
+        { 'Retry-After': '60' })
     }
   }
   return next()

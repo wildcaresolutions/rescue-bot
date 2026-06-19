@@ -100,6 +100,8 @@ remote = true
 
 [[ratelimits]]
 name = "RL_IP_CHAT"
+# namespace_id must be a unique integer within this CF account.
+# For forks: choose values that don't collide with other workers in your account.
 namespace_id = "3001"
 simple = { limit = 15, period = 60 }
 

@@ -22,9 +22,18 @@ export interface PublishResult {
   applied: string[]
 }
 
-export async function publishDraft(env: Env, tenant: Tenant): Promise<PublishResult> {
+/** Returned (not thrown) when a concurrent stageConfigChange raced the read. */
+export interface PublishConflict {
+  published: false
+  conflict: true
+  error: string
+}
+
+export async function publishDraft(env: Env, tenant: Tenant): Promise<PublishResult | PublishConflict> {
   // Re-read fresh (an agent turn may have staged more since the request started).
   const fresh = (await loadTenantById(env.DB, tenant.id)) ?? tenant
+  // Snapshot the draft timestamp for the compare-and-swap below.
+  const expectedDraftStamp = fresh.draft_updated_at
   const draft = loadDraft(fresh)
   const merged = overlayTenant(fresh) // live + draft = what we're publishing
 
@@ -51,8 +60,17 @@ export async function publishDraft(env: Env, tenant: Tenant): Promise<PublishRes
   cols.push('draft_updated_at = NULL')       // literal — no bind
   cols.push("updated_at = datetime('now')")  // literal — no bind
 
-  await env.DB.prepare(`UPDATE tenants SET ${cols.join(', ')} WHERE id = ?`)
-    .bind(...vals, fresh.id).run()
+  // CAS: the WHERE clause also checks draft_updated_at IS ? (IS handles NULL).
+  // If a concurrent stageConfigChange wrote a newer timestamp between our read
+  // and this UPDATE, changes === 0 and we surface a retriable error instead of
+  // silently discarding the concurrent edit.
+  const result = await env.DB.prepare(
+    `UPDATE tenants SET ${cols.join(', ')} WHERE id = ? AND draft_updated_at IS ?`
+  ).bind(...vals, fresh.id, expectedDraftStamp).run()
+
+  if (result.meta.changes === 0) {
+    return { published: false, conflict: true, error: 'Concurrent edit detected, please retry' }
+  }
 
   invalidateTenantCache(fresh.slug)
   return { published: true, first_publish: firstPublish, applied: Object.keys(draft) }

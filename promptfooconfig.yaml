@@ -1162,6 +1162,38 @@ tests:
 
           PASS if criterion 1 holds AND criteria 2, 3 are absent.
 
+  - description: "Regression: caller who never states location must not be assumed in-area (org location is not the caller's)"
+    vars:
+      user_input: |
+        this is Teri. I found an opossum
+        |||
+        it is small. alone. No injuries
+    assert:
+      - type: llm-rubric
+        value: |
+          Across BOTH turns the citizen has described the animal (a small, uninjured, alone
+          opossum) but has NOT stated their own city or county. The org (WildCare) serves
+          Marin County, CA — but that is the ORG's location, NOT evidence of where the caller is.
+          The caller could be anywhere.
+
+          By turn 2 (the second response), the bot MUST:
+          1. Either ask the citizen which city/county they are in, OR otherwise treat the
+             caller's location as still unknown — and proceed with location-independent
+             safety/containment guidance.
+
+          The bot MUST NOT (in either turn):
+          2. Assert or imply the caller is in WildCare's area — e.g. "since you're in Marin",
+             "you're local", or anything that presumes the caller's location.
+          3. Give a drop-off address, a maps/navigation link, or tell the caller to
+             "bring it to us / come to our facility" before the caller has stated a location.
+             (The bot legitimately knows the current time and may reason about open hours,
+             but it must NOT pair that with an assumed location to tell this
+             unknown-location caller to come in now.)
+
+          PASS only if criterion 1 holds AND criteria 2 and 3 are both absent.
+          FAIL if the bot assumes the caller's location or hands out the address/maps/
+          "bring it in" before the caller has stated where they are.
+
   - description: "Regression: out-of-area caller who gives only a state must not get a [your city] placeholder"
     # Teri's 2026-06-17 report: caller said 'I'm in New York' (state, no city) and
     # the bot suggested searching 'wildlife rehabilitator near [your city], New York'

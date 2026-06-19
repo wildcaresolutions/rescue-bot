@@ -5,7 +5,7 @@
  * router-only.
  */
 import type { Env, Tenant } from './types'
-import { invalidateTenantCache } from './cache'
+import { invalidateTenantCache, invalidateDomainsCache } from './cache'
 import { getAiGatewayToken } from './ai'
 import { searchRAG } from './rag'
 import { BUILTIN_GUIDES } from '../guides'
@@ -74,6 +74,7 @@ export async function addDomain(env: Env, tenantId: string, raw: string): Promis
   await env.DB.prepare(
     'INSERT OR IGNORE INTO allowed_domains (tenant_id, domain) VALUES (?, ?)',
   ).bind(tenantId, domain).run()
+  invalidateDomainsCache(tenantId)
   return { ok: true }
 }
 
@@ -81,6 +82,7 @@ export async function removeDomain(env: Env, tenantId: string, id: string): Prom
   await env.DB.prepare(
     'DELETE FROM allowed_domains WHERE id = ? AND tenant_id = ?',
   ).bind(id, tenantId).run()
+  invalidateDomainsCache(tenantId)
 }
 
 // ── Knowledge base summary ───────────────────────────────────────────────────

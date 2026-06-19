@@ -35,6 +35,10 @@ class FakeDb {
 
       async all(): Promise<{ results: Row[] }> {
         if (/SELECT role, content FROM messages/.test(sql)) {
+          // Note: the real query also filters message_type = 'chat'. This mock
+          // returns all fixture rows unconditionally, which is acceptable as long
+          // as test fixtures only include chat-type messages (all current fixtures
+          // do). The simplification avoids coupling test data to DB column values.
           return { results: self.messages as Row[] }
         }
         return { results: [] }
@@ -143,6 +147,10 @@ describe('quickAnalyzeSession — urgency detection', () => {
     ]
     const db = await analyze(msgs)
     expect(db.insertBinds![2]).toBe('urgent')
+    // triageHint is the human-facing guidance string from the matched rule;
+    // verify it is populated (non-null) when a rule matches.
+    expect(db.insertBinds![10]).not.toBeNull()
+    expect(typeof db.insertBinds![10]).toBe('string')
   })
 
   it('"baby" triggers urgency = "moderate" (baby-animal triage rule)', async () => {
@@ -161,6 +169,8 @@ describe('quickAnalyzeSession — urgency detection', () => {
     ]
     const db = await analyze(msgs)
     expect(db.insertBinds![2]).toBe('none')
+    // triageHint is null when no rule matched
+    expect(db.insertBinds![10]).toBeNull()
   })
 })
 
@@ -187,6 +197,19 @@ describe('quickAnalyzeSession — contact info detection', () => {
     const db = await analyze(msgs)
     expect(db.insertBinds![7]).toBe(0)
     expect(db.insertBinds![8]).toBeNull() // no contactInfo
+  })
+
+  it('sets needs_action=1 when feedback rating is 0 (bad bot answer), even with no contact info', async () => {
+    // Per the inline comment in quickAnalyzeSession: negative feedback flags
+    // for follow-up so operators can review bad bot answers even when the
+    // caller did not share contact info.
+    const msgs = [
+      { role: 'user', content: 'What time do you open?' },
+      { role: 'assistant', content: 'We open at 9am.' },
+    ]
+    const db = await analyze(msgs, null, { rating: 0 })
+    expect(db.insertBinds![7]).toBe(1)  // needsAction forced by negative feedback
+    expect(db.insertBinds![8]).toBeNull()  // still no contact info
   })
 
   it('detects an email address in a user message', async () => {

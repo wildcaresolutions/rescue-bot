@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { compileInstruction, OrgConfig, BotOverrides } from '../src/lib/compile-instruction'
+import { compileInstruction, recompileAndMaybeWrite, OrgConfig, BotOverrides } from '../src/lib/compile-instruction'
 
 function baseTenant(overrides: Partial<Parameters<typeof compileInstruction>[0]> = {}) {
   return {
@@ -546,8 +546,6 @@ describe('compileInstruction', () => {
 // ── recompileAndMaybeWrite — locked-instruction path ─────────────────────────
 // This function exists alongside compileInstruction in compile-instruction.ts
 // and handles the DB write + lock semantics. Zero tests existed for it before.
-
-import { recompileAndMaybeWrite } from '../src/lib/compile-instruction'
 
 // Minimal D1 mock that captures UPDATE statements.
 class FakeDb {

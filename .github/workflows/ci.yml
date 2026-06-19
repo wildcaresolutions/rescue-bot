@@ -6,11 +6,17 @@ on:
   pull_request:
     branches: [main]
 
-# Cancel any in-progress run on the same branch when a new push lands.
-# Avoids stacking deploys when you push twice in quick succession.
+# PRs: share a per-ref group and cancel the in-progress run when a new commit
+# is pushed — no point finishing CI on a superseded PR head.
+# main pushes: append the commit SHA so every merge gets its OWN group. Pushes
+# to main therefore never cancel (cancel-in-progress is false for push) AND
+# never queue/evict each other under a shared group. This closes the trap where
+# merging two PRs to main within a few minutes let the second push cancel the
+# first push's run — silently stranding the first commit's prod deploy. Each
+# main commit now deploys on its own run.
 concurrency:
-  group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  group: ci-${{ github.ref }}${{ github.event_name == 'push' && format('-{0}', github.sha) || '' }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   GIT_CONFIG_COUNT: '1'
@@ -84,9 +90,18 @@ jobs:
         with:
           node-version: '22'
           cache: 'npm'
-      - run: npm audit --audit-level=high
-      - run: cd workers && npm audit --audit-level=high
-      - run: cd web && npm audit --audit-level=high
+      # --omit=dev: only audit deps that actually ship in the Worker / web bundle.
+      # This is a required gate for deploy-prod, so a high-severity vuln in code
+      # we deploy SHOULD block a release. But build/test-only tooling (vite,
+      # esbuild, wrangler/miniflare, promptfoo, …) must NOT — an advisory in a
+      # dev dependency has no runtime exposure, yet under the old unscoped audit
+      # it hard-blocked every prod deploy, including pure prompt fixes (this is
+      # exactly what stranded the location-grounding fix in #85). evals/ and
+      # infra/watchdog/ are not audited here at all — they're separate dev/cron
+      # tooling, not part of the shipped product.
+      - run: npm audit --audit-level=high --omit=dev
+      - run: cd workers && npm audit --audit-level=high --omit=dev
+      - run: cd web && npm audit --audit-level=high --omit=dev
 
   widget-e2e:
     name: Widget E2E (cross-origin)

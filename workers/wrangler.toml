@@ -184,6 +184,7 @@ remote = true
 
 [[env.test.ratelimits]]
 name = "RL_IP_CHAT"
+# namespace_id must be unique in your CF account — change these if you have other workers using the same ids.
 namespace_id = "2001"
 simple = { limit = 15, period = 60 }
 
@@ -280,6 +281,7 @@ remote = true
 
 [[env.production.ratelimits]]
 name = "RL_IP_CHAT"
+# namespace_id must be unique in your CF account — change these if you have other workers using the same ids.
 namespace_id = "1001"
 simple = { limit = 15, period = 60 }
 

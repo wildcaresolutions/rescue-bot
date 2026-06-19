@@ -590,4 +590,38 @@ describe('Rate limiting middleware', () => {
     const body = await res.json() as { error: string }
     expect(body.error).toMatch(/rate limit/i)
   })
+
+  it('returns 429 with scope:tenant when RL_TENANT rejects a chat POST', async () => {
+    const env = makeEnv({ RL_TENANT: denyRateLimit })
+    const res = await request(
+      'https://wildcare.wildcaresolutions.org/api/sessions/sess-abc/messages',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
+        body: '{}',
+      },
+      env,
+    )
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('60')
+    const body = await res.json() as { error: string; scope: string }
+    expect(body.scope).toBe('tenant')
+  })
+
+  it('returns 429 with scope:tenant when RL_TENANT rejects a session create', async () => {
+    const env = makeEnv({ RL_TENANT: denyRateLimit })
+    const res = await request(
+      'https://wildcare.wildcaresolutions.org/api/sessions',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
+        body: '{}',
+      },
+      env,
+    )
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('60')
+    const body = await res.json() as { error: string; scope: string }
+    expect(body.scope).toBe('tenant')
+  })
 })

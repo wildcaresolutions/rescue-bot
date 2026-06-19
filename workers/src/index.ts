@@ -16,6 +16,7 @@ import authRoutes from './routes/auth'
 import type { HealthResponse, HealthStatus, HealthCheckKey } from './types/health'
 import { parseOrgConfig } from './lib/tenant-loader'
 import { overlayTenant, hasDraft } from './lib/draft'
+import { logWarn } from './lib/logger'
 
 // Sentinel tenantId for platform-admin sessions (admin.<root>).
 const PLATFORM_TENANT_ID = 'platform'
@@ -512,19 +513,31 @@ app.get('/assets/*', async (c) => {
   return new Response(object.body, { headers })
 })
 
+// Fail-open helper: if the binding throws (misconfigured namespace, transient
+// platform fault), allow the request and log — this is a cost-DoS guard, not
+// an auth gate. A misconfigured binding should not take the service down.
+async function rlCheck(binding: RateLimit, key: string): Promise<boolean> {
+  try {
+    return (await binding.limit({ key })).success
+  } catch (err) {
+    logWarn('rate-limit-binding-error', { key, error: String(err) })
+    return true  // fail open
+  }
+}
+
 // ── Rate limiting middleware for public chat endpoints ────────────────────────
 
 // POST /api/sessions/* — chat messages (per-IP + per-tenant)
 app.use('/api/sessions/*', async (c, next) => {
   if (c.req.method !== 'POST') return next()
   const ip = clientIp(c)
-  if (!(await c.env.RL_IP_CHAT.limit({ key: ip })).success) {
+  if (!(await rlCheck(c.env.RL_IP_CHAT, ip))) {
     return c.json({ error: 'Rate limit exceeded. Please wait before sending more messages.' }, 429,
       { 'Retry-After': '60' })
   }
   const tenant = c.get('tenant')
   if (tenant) {
-    if (!(await c.env.RL_TENANT.limit({ key: `chat:${tenant.id}` })).success) {
+    if (!(await rlCheck(c.env.RL_TENANT, `chat:${tenant.id}`))) {
       return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429,
         { 'Retry-After': '60' })
     }
@@ -536,13 +549,13 @@ app.use('/api/sessions/*', async (c, next) => {
 app.use('/api/sessions', async (c, next) => {
   if (c.req.method !== 'POST') return next()
   const ip = clientIp(c)
-  if (!(await c.env.RL_IP_SESSION.limit({ key: ip })).success) {
+  if (!(await rlCheck(c.env.RL_IP_SESSION, ip))) {
     return c.json({ error: 'Rate limit exceeded. Please wait before creating new sessions.' }, 429,
       { 'Retry-After': '60' })
   }
   const tenant = c.get('tenant')
   if (tenant) {
-    if (!(await c.env.RL_TENANT.limit({ key: `sess:${tenant.id}` })).success) {
+    if (!(await rlCheck(c.env.RL_TENANT, `sess:${tenant.id}`))) {
       return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429,
         { 'Retry-After': '60' })
     }

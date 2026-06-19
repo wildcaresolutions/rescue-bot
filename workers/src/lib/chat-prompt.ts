@@ -80,6 +80,11 @@ export function buildTenantIdentityBlock(tenant: Tenant): string {
   }
   lines.push('')
 
+  if (tenant.location_service_area || tenant.location_county || tenant.location_state) {
+    lines.push(`**The service area / location above is OURS, not the caller's.** It describes where ${tenant.name} is and whom we serve — it is NOT evidence of where the caller is. The caller could be writing from anywhere. NEVER assume the caller is in our area, never say "since you're in <our area>", and never give drop-off directions, a maps link, or "bring it to us" until the caller has told you their OWN city or county. When in doubt about the caller's location, ask.`)
+    lines.push('')
+  }
+
   if (tenantPhones.length) {
     lines.push(`### Phone number whitelist for ${tenant.name}`)
     lines.push('')

@@ -9,6 +9,7 @@
 // In dev / DEV_AUTH_BYPASS, validation short-circuits to allow.
 
 import type { Env } from './types'
+import { isDevAuthBypass } from './auth'
 
 const SESSION_TOKEN_TTL_SECONDS = 24 * 60 * 60 // 24 hours per design doc
 
@@ -54,7 +55,7 @@ export async function validateSessionToken(
   sessionId: string,
   tenantId: string,
 ): Promise<boolean> {
-  if (env.DEV_AUTH_BYPASS === 'true') return true
+  if (isDevAuthBypass(env)) return true
 
   const authHeader = request.headers.get('authorization') ?? ''
   const match = authHeader.match(/^Bearer (.+)$/i)

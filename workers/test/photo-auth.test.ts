@@ -68,6 +68,15 @@ describe('validateSessionToken', () => {
     expect(await validateSessionToken(env, reqWith(null), 's', 't')).toBe(true)
   })
 
+  it('does NOT short-circuit when ENVIRONMENT is production, even with DEV_AUTH_BYPASS=true', async () => {
+    // Belt-and-braces: the isDevAuthBypass() ENVIRONMENT guard must prevent the
+    // photo validation path from fail-opening on a production worker, even if
+    // DEV_AUTH_BYPASS is accidentally set.
+    const env = makeEnv({ DEV_AUTH_BYPASS: 'true', ENVIRONMENT: 'production' })
+    // No auth header → no valid token → must return false.
+    expect(await validateSessionToken(env, reqWith(null), 's', 't')).toBe(false)
+  })
+
   it('returns FALSE when DEV_AUTH_BYPASS is anything other than "true"', async () => {
     for (const v of ['', 'false', '0', '1', 'yes']) {
       const env = makeEnv({ DEV_AUTH_BYPASS: v })

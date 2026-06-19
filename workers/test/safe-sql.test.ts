@@ -405,4 +405,11 @@ describe('validateAnalyticsSql — boolean-logic bypass (H-1)', () => {
     )
     expect(r.ok).toBe(true)
   })
+
+  it('accepts NOT BETWEEN (operator-NOT, safe range exclusion)', () => {
+    const r = validateAnalyticsSql(
+      'SELECT session_id, timestamp FROM messages WHERE tenant_id = :tenant_id AND timestamp NOT BETWEEN 0 AND 1000',
+    )
+    expect(r.ok).toBe(true)
+  })
 })

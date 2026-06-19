@@ -542,3 +542,84 @@ describe('compileInstruction', () => {
     })
   })
 })
+
+// ── recompileAndMaybeWrite — locked-instruction path ─────────────────────────
+// This function exists alongside compileInstruction in compile-instruction.ts
+// and handles the DB write + lock semantics. Zero tests existed for it before.
+
+import { recompileAndMaybeWrite } from '../src/lib/compile-instruction'
+
+// Minimal D1 mock that captures UPDATE statements.
+class FakeDb {
+  writes: { sql: string; binds: unknown[] }[] = []
+  prepare(sql: string) {
+    const self = this
+    let binds: unknown[] = []
+    return {
+      bind(...args: unknown[]) { binds = args; return this },
+      async run() { self.writes.push({ sql, binds: [...binds] }); return { success: true, meta: {} } },
+      async first() { return null },
+      async all() { return { results: [] } },
+    }
+  }
+}
+
+function dbTenant(locked: number) {
+  return {
+    id: 'tenant-locked-test',
+    name: 'Acme Wildlife',
+    phone: null,
+    email: null,
+    url: null,
+    location_service_area: null,
+    location_county: null,
+    location_state: null,
+    house_rules: null,
+    custom_instruction_locked: locked,
+  }
+}
+
+describe('recompileAndMaybeWrite — custom_instruction_locked', () => {
+  it('does NOT write to the DB when the instruction is locked (locked=1)', async () => {
+    const db = new FakeDb()
+    const orgConfig: OrgConfig = { species_config: { Raccoon: { mode: 'augment', notes: 'Stay calm.' } } }
+    const result = await recompileAndMaybeWrite(
+      db as unknown as D1Database,
+      dbTenant(1),
+      orgConfig,
+      {},
+    )
+    expect(result.wrote).toBe(false)
+    const updates = db.writes.filter(w => /UPDATE tenants/.test(w.sql))
+    expect(updates).toHaveLength(0)
+  })
+
+  it('returns a compiled string even when locked (preview still works)', async () => {
+    const db = new FakeDb()
+    const orgConfig: OrgConfig = { species_config: { Bat: { mode: 'augment', notes: 'Handle with gloves.' } } }
+    const result = await recompileAndMaybeWrite(
+      db as unknown as D1Database,
+      dbTenant(1),
+      orgConfig,
+      {},
+    )
+    expect(result.compiled).toContain('Bat')
+    expect(result.compiled).toContain('Handle with gloves.')
+  })
+
+  it('writes to the DB when the instruction is NOT locked (locked=0)', async () => {
+    const db = new FakeDb()
+    const orgConfig: OrgConfig = { species_config: { Opossum: { mode: 'augment', notes: 'Check for pouch young.' } } }
+    const result = await recompileAndMaybeWrite(
+      db as unknown as D1Database,
+      dbTenant(0),
+      orgConfig,
+      {},
+    )
+    expect(result.wrote).toBe(true)
+    const updates = db.writes.filter(w => /UPDATE tenants/.test(w.sql))
+    expect(updates).toHaveLength(1)
+    expect(updates[0].binds[0]).toContain('Opossum')
+    expect(updates[0].binds[1]).toBe('tenant-locked-test')
+  })
+})

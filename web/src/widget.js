@@ -9,7 +9,9 @@ import { initErrorReporting, reportError } from './error-reporter.js'
 import { renderMarkdown } from './shared/message-renderer.js'
 import { SITE_CONFIG } from './shared/site-config.js'
 import { setCookie, getCookie, deleteCookie } from './shared/cookies.js'
-import { shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl } from './widget-runtime.js'
+import {
+  shouldHideForCMS, inPageBuilderEditor, deriveBaseUrl, sameOrigin,
+} from './widget-runtime.js'
 import {
   reencodeImage,
   uploadPhoto,
@@ -50,15 +52,6 @@ const _scriptBaseUrl = deriveBaseUrl({
   scriptSrc: _widgetScript?.src,
 })
 
-/** Compare the origins of two URL strings (both may be '' for relative). */
-function _sameOrigin(a, b) {
-  if (!a && !b) return true
-  if (!a || !b) return false
-  try {
-    return new URL(a).origin === new URL(b).origin
-  } catch { return false }
-}
-
 // Accept a window.RescueBotChat.baseUrl override ONLY when it points at the
 // same origin as the script tag (e.g. a self-hosted deploy where the embedding
 // page mirrors the script origin). A cross-origin override is silently ignored
@@ -66,7 +59,7 @@ function _sameOrigin(a, b) {
 const _windowBaseUrl = (typeof window !== 'undefined'
   ? (window.RescueBotChat || window.WildCareChat || {})
   : {}).baseUrl
-const _baseUrl = (_windowBaseUrl && _sameOrigin(_windowBaseUrl, _scriptBaseUrl))
+const _baseUrl = (_windowBaseUrl && sameOrigin(_windowBaseUrl, _scriptBaseUrl))
   ? _windowBaseUrl
   : _scriptBaseUrl
 

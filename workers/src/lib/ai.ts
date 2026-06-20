@@ -1,6 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import type { Env } from './types'
+import { logError } from './logger'
 
 export const DEFAULT_MAIN_CHAT_MODEL = 'anthropic/claude-sonnet-4-6'
 export const DEFAULT_EVAL_JUDGE_MODEL = 'workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast'
@@ -350,7 +351,7 @@ export async function openGatewayChatStream(opts: {
         }
         controller.close()
       } catch (e) {
-        console.error('[ai] SSE stream error:', redactSensitive(String(e)))
+        logError('ai/sse-stream-error', { error: redactSensitive(String(e)) })
         controller.close()
       } finally {
         try { reader.releaseLock() } catch { /* already released */ }
@@ -442,7 +443,7 @@ export async function runGatewayImageObject<T>(opts: {
       })
     }
   } catch (e) {
-    console.error('[ai] Gateway image failed; failing closed without inferred metadata:', errorMessage(e))
+    logError('ai/gateway-image-failed', { error: errorMessage(e) })
     return {
       object: null,
       usage: null,

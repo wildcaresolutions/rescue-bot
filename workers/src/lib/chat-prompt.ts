@@ -12,6 +12,7 @@
 
 import { COMBINED_INSTRUCTION } from '../instructions'
 import { searchRAG, buildSpeciesModeMap, normalizeSpeciesKey } from './rag'
+import { logWarn } from './logger'
 import type { Env, Tenant } from './types'
 import { photoUploadsEnabled } from './feature-flags'
 import { parseOrgConfig } from './tenant-loader'
@@ -152,7 +153,7 @@ export async function buildChatPrompt(
     const docs = ragResult.results.map(d => `[Source: ${d.source}]\n${d.text}`)
     if (docs.length) context = docs.join('\n\n---\n\n')
   } catch (e) {
-    console.warn('[chat-prompt] RAG lookup failed, continuing without context:', e)
+    logWarn('chat-prompt/rag-failed', { error: e })
   }
 
   // For skip species, look up the per-species redirect text the operator

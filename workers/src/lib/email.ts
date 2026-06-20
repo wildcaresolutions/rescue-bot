@@ -1,4 +1,5 @@
 import type { Env } from './types'
+import { logInfo, logError } from './logger'
 
 export type EmailMessage = {
   from: { name: string; email: string }
@@ -39,10 +40,7 @@ export async function sendEmail(env: Env, msg: EmailMessage): Promise<SendEmailR
   const finalMsg: EmailMessage = { ...msg, to: finalTo, subject: finalSubject }
 
   if (!env.EMAIL) {
-    console.log(
-      `[email] no EMAIL binding — would send to=${JSON.stringify(finalTo)} ` +
-      `subject=${JSON.stringify(finalSubject)} from=${finalMsg.from.email}`,
-    )
+    logInfo('email/dev-no-binding', { to: finalTo, subject: finalSubject, from: finalMsg.from.email })
     return { sent: false, reason: 'no_binding' }
   }
 
@@ -50,7 +48,7 @@ export async function sendEmail(env: Env, msg: EmailMessage): Promise<SendEmailR
     await env.EMAIL.send(finalMsg)
     return { sent: true }
   } catch (e) {
-    console.error('[email] send failed:', e)
+    logError('email/send-failed', { error: e })
     return { sent: false, reason: 'send_failed', error: e }
   }
 }

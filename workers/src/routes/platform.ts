@@ -9,6 +9,7 @@ import { sanitizeCustomCss } from '../lib/css-sanitize'
 import { loadTenantBySlug } from '../lib/tenant-loader'
 import { stageConfigChange, type DraftConfig } from '../lib/draft'
 import { dbError } from '../lib/errors'
+import { logError } from '../lib/logger'
 import { sendEmail } from '../lib/email'
 import { getPlatformName, getAuthFromEmail } from '../lib/platform'
 import { tenantHostFor, tenantPortalUrl } from '../lib/routing'
@@ -96,7 +97,7 @@ platform.post('/platform/apply', async (c) => {
       // Always log — site/secret mismatches and timeout-or-duplicate rejections
       // were silent before, which made the form's "Captcha verification failed"
       // banner impossible to root-cause.
-      console.error('[platform/apply] turnstile rejected:', tr)
+      logError('platform/apply-turnstile-rejected', { reason: tr.reason })
       if (tr.reason === 'missing_secret' || tr.reason === 'network') {
         return c.json({ error: 'Captcha service unavailable' }, 503)
       }
@@ -239,7 +240,7 @@ platform.post('/platform/signup', async (c) => {
         </div>`,
     })
     if (emailResult.sent === false && emailResult.reason !== 'no_binding') {
-      console.error('[platform/signup] welcome email failed:', emailResult)
+      logError('platform/signup-welcome-email-failed', { emailResult })
     }
 
     return c.json({
@@ -340,7 +341,7 @@ platform.post('/platform/setup/:slug', async (c) => {
         }
         indexedDocs.push(safeName)
       } catch (e) {
-        console.error(`[setup] Failed to index doc ${doc.name}:`, e)
+        logError('platform/setup-index-doc-failed', { docName: doc.name, error: e })
       }
     }
     if (indexedDocs.length) results.docs = indexedDocs
@@ -393,7 +394,7 @@ platform.post('/platform/setup/:slug', async (c) => {
     try {
       await stageConfigChange(c.env.DB, tenant, patch)
     } catch (e) {
-      console.error('[platform/setup] stage failed:', e, { slug, keys: Object.keys(patch) })
+      logError('platform/setup-stage-failed', { slug, keys: Object.keys(patch), error: e })
       return c.json({ error: 'Couldn’t save your changes. Try again in a moment — if this keeps happening, contact support.' }, 500)
     }
   }
@@ -551,7 +552,7 @@ platform.post('/platform/applications/:id/approve', async (c) => {
         `,
       })
       if (emailResult.sent === false && emailResult.reason !== 'no_binding') {
-        console.error('[platform/approve] welcome email failed:', emailResult)
+        logError('platform/approve-welcome-email-failed', { emailResult })
       }
     }
 

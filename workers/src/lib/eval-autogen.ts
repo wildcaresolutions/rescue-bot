@@ -7,6 +7,7 @@
  */
 import type { Env, Tenant } from './types'
 import { getEvalJudgeModelName, runGatewayChatText } from './ai'
+import { logError } from './logger'
 
 export interface GeneratedScenario {
   id: string
@@ -78,7 +79,7 @@ Each scenario should have:
 
     return { scenarios: inserted, count: inserted.length }
   } catch (e) {
-    console.error('[admin/evals/auto-generate] Error:', e)
+    logError('evals/auto-generate-error', { error: e })
     return { error: 'Generation failed: ' + String(e), status: 500 }
   }
 }

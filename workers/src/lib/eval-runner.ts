@@ -15,6 +15,7 @@
  */
 import type { Env, Tenant } from './types'
 import { getEvalJudgeModelName, getMainChatModelName, runGatewayChatText } from './ai'
+import { logWarn, logError } from './logger'
 import { extractJudgeJson } from './judge-parse'
 import { parseOrgConfig } from './tenant-loader'
 
@@ -279,11 +280,11 @@ Critical: respond with ONLY a single JSON object on one line, no prose before or
         passed = parsed.passed ? 1 : 0
         judgeReasoning = parsed.reasoning || ''
       } else {
-        console.warn('[eval/judge] LLM emitted no parseable verdict after retry; falling back to heuristic', { textPreview: lastText.slice(0, 200) })
+        logWarn('eval/judge-no-parseable-verdict', { textPreview: lastText.slice(0, 200) })
         useFallback('The AI grader didn\'t return a clear verdict.')
       }
     } catch (e) {
-      console.error('[eval/judge] AI Gateway error:', e)
+      logError('eval/judge-ai-gateway-error', { error: e })
       useFallback('The scoring service was unavailable.')
     }
 
@@ -295,7 +296,7 @@ Critical: respond with ONLY a single JSON object on one line, no prose before or
     ).bind(scenario.id, tenant.id, transcript.slice(0, 32_000), passed, judgeReasoning.slice(0, 4000)).run()
 
   } catch (e) {
-    console.error('[eval/run] Error:', e)
+    logError('eval/run-error', { error: e })
     // Store error result
     try {
       await env.DB.prepare(

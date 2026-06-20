@@ -1,5 +1,6 @@
 import type { Env } from './types'
 import { sendEmail } from './email'
+import { logWarn, logError } from './logger'
 import { runGatewayChatText } from './ai'
 import { redactPIITextOnly } from './pii-redact'
 import { getPlatformName } from './platform'
@@ -63,17 +64,17 @@ export async function analyzeSession(
     const text = result.text ?? ''
     const match = text.match(/\{[\s\S]*\}/)
     if (!match) {
-      console.warn('[analyzeSession] Could not parse JSON from response:', text.slice(0, 200))
+      logWarn('report/analyze-session-no-json', { textPreview: text.slice(0, 200) })
       return { error: 'parse failed' }
     }
     try {
       return JSON.parse(match[0])
     } catch (parseErr) {
-      console.warn('[analyzeSession] JSON.parse failed on extracted match:', parseErr)
+      logWarn('report/analyze-session-parse-failed', { error: parseErr })
       return { error: 'parse failed' }
     }
   } catch (e) {
-    console.error('[analyzeSession] Error:', e)
+    logError('report/analyze-session-error', { error: e })
     return { error: String(e) }
   }
 }

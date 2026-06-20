@@ -6,6 +6,7 @@
  */
 import type { Env } from './types'
 import { DISTRESS_TAGS } from './vision'
+import { logError, logWarn } from './logger'
 
 export const PHOTO_FEED_DEFAULT_LIMIT = 50
 export const PHOTO_FEED_MAX_LIMIT = 200
@@ -82,7 +83,7 @@ export async function loadPhotoFeed(
     `).bind(tenantId, sinceTs, pageLimit).all<PhotoFeedRow>()
     rows = result.results
   } catch (e) {
-    console.error('[admin/photo-feed] DB error:', e)
+    logError('admin/photo-feed-db-error', { error: e })
     return { error: 'Database error', status: 500 }
   }
 
@@ -160,7 +161,7 @@ export async function resolvePhoto(
     if (result.meta.changes === 0) return { error: 'Not found', status: 404 }
     return { success: true }
   } catch (e) {
-    console.error('[admin/photo-resolve] DB error:', e)
+    logError('admin/photo-resolve-db-error', { error: e })
     return { error: 'Database error', status: 500 }
   }
 }
@@ -208,7 +209,7 @@ export async function manualTagPhoto(
     if (result.meta.changes === 0) return { error: 'Not found', status: 404 }
     return { success: true }
   } catch (e) {
-    console.error('[admin/photo-manual-tag] DB error:', e)
+    logError('admin/photo-manual-tag-db-error', { error: e })
     return { error: 'Database error', status: 500 }
   }
 }
@@ -251,7 +252,7 @@ export async function deletePhoto(
       ).bind(auditId, photoId, tenantId, deletedBy, reason, now),
     ])
   } catch (e) {
-    console.error('[admin/photo-delete] DB error:', e)
+    logError('admin/photo-delete-db-error', { error: e })
     return { error: 'Database error', status: 500 }
   }
 
@@ -260,7 +261,7 @@ export async function deletePhoto(
       env.MEDIA_BUCKET.delete(row.r2_key),
       row.thumbnail_key ? env.MEDIA_BUCKET.delete(row.thumbnail_key) : Promise.resolve(),
     ]).then((rs) => rs.forEach((r, i) => {
-      if (r.status === 'rejected') console.warn(`[admin/photo-delete] R2 delete ${i} failed:`, r.reason)
+      if (r.status === 'rejected') logWarn('admin/photo-delete-r2-failed', { index: i, reason: r.reason })
     })),
   )
 

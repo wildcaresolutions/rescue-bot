@@ -20,6 +20,7 @@ import { searchRAG } from '../rag'
 import { validateAnalyticsSql, ANALYTICS_SCHEMA_DESCRIPTION } from '../safe-sql'
 import { redactPIITextOnly } from '../pii-redact'
 import type { ToolContext } from './types'
+import { logWarn, logError, logInfo } from '../logger'
 
 export function queriesTools(ctx: ToolContext) {
   const { env, db, tenantId } = ctx
@@ -51,10 +52,10 @@ export function queriesTools(ctx: ToolContext) {
     execute: async ({ question, sql }) => {
       const v = validateAnalyticsSql(sql)
       if (!v.ok) {
-        console.log(`[analytics_query] rejected tenant=${tenantId} reason=${v.reason} sql=${sql}`)
+        logWarn('analytics/query-rejected', { tenantId, reason: v.reason, sql })
         return { error: `Query rejected: ${v.reason}`, attempted_sql: sql }
       }
-      console.log(`[analytics_query] tenant=${tenantId} sql=${v.sql}`)
+      logInfo('analytics/query-executing', { tenantId, sql: v.sql })
       try {
         const stmt = db.prepare(v.sql!)
         const binds = Array(v.bindCount ?? 1).fill(tenantId)
@@ -69,10 +70,7 @@ export function queriesTools(ctx: ToolContext) {
           if (r && typeof r === 'object' && 'tenant_id' in r) {
             const match = (r as Record<string, unknown>).tenant_id === tenantId
             if (!match) {
-              console.error(
-                `[analytics_query] SECURITY: row tenant_id mismatch — dropped row`,
-                { caller: tenantId, row_tenant: (r as Record<string, unknown>).tenant_id },
-              )
+              logError('analytics/cross-tenant-row-dropped', { callerTenantId: tenantId, rowTenantId: (r as Record<string, unknown>).tenant_id })
             }
             return match
           }

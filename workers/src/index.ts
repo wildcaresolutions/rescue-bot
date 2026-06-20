@@ -17,7 +17,7 @@ import type { HealthResponse, HealthStatus, HealthCheckKey } from './types/healt
 import { getCachedDomains, cacheDomains } from './lib/cache'
 import { parseOrgConfig } from './lib/tenant-loader'
 import { overlayTenant, hasDraft } from './lib/draft'
-import { logWarn } from './lib/logger'
+import { logWarn, logError } from './lib/logger'
 
 // Sentinel tenantId for platform-admin sessions (admin.<root>).
 const PLATFORM_TENANT_ID = 'platform'
@@ -136,7 +136,7 @@ app.use('*', async (c, next) => {
       // DB error (e.g., missing tenants table on a fresh local D1) shouldn't
       // 500 the request. Log + treat as unknown tenant — downstream code
       // either serves marketing or 401s on auth-gated paths.
-      console.error('[tenant-resolver] DB lookup failed:', e)
+      logError('tenant-resolver/db-lookup-failed', { error: e })
       c.set('tenant', null)
     }
   } else {
@@ -384,7 +384,7 @@ app.get('/health', async (c) => {
     await c.env.DB.prepare('SELECT 1').run()
     checks.database = 'healthy'
   } catch (e) {
-    console.error('[health] DB check failed:', e)
+    logError('health/db-check-failed', { error: e })
   }
 
   // Vectorize (768d cosine index)
@@ -392,7 +392,7 @@ app.get('/health', async (c) => {
     await c.env.VECTORIZE.query(new Array(768).fill(0), { topK: 1 })
     checks.vectorize = 'healthy'
   } catch (e) {
-    console.error('[health] Vectorize check failed:', e)
+    logError('health/vectorize-check-failed', { error: e })
   }
 
   // R2: head() returns null for missing keys without throwing. Any thrown error
@@ -403,14 +403,14 @@ app.get('/health', async (c) => {
     await c.env.R2.head('_health_check_nonexistent')
     checks.storage = 'healthy'
   } catch (e) {
-    console.error('[health] R2 check failed:', e)
+    logError('health/r2-check-failed', { error: e })
   }
 
   try {
     await c.env.MEDIA_BUCKET.head('_health_check_nonexistent')
     checks.media_storage = 'healthy'
   } catch (e) {
-    console.error('[health] MEDIA_BUCKET check failed:', e)
+    logError('health/media-bucket-check-failed', { error: e })
   }
 
   // Workers AI — minimal embeddings call to verify the AI binding is live.
@@ -704,7 +704,7 @@ export default {
         // DB lookup failed (missing table on fresh local D1, transient
         // outage, etc.). Don't 500 — fall through to the unknown-tenant
         // path below and serve marketing.
-        console.error('[asset-router] tenant lookup failed:', e)
+        logError('asset-router/tenant-lookup-failed', { error: e })
       }
 
       if (!tenant) {
@@ -753,7 +753,7 @@ export default {
         env.DB.prepare('DELETE FROM citizen_session_tokens WHERE expires_at < ?')
           .bind(Date.now())
           .run()
-          .catch(e => console.error('[scheduled] Session-token cleanup failed:', e)),
+          .catch(e => logError('scheduled/session-token-cleanup-failed', { error: e })),
       )
       // M-14: purge expired magic link tokens (accumulate indefinitely otherwise;
       // previously cleaned only when the same email requested a new token).
@@ -773,7 +773,7 @@ export default {
         if (isReportCron && (t.daily_reports_enabled as number) === 1) {
           ctx.waitUntil(
             generateReport(env, t.id as string, false).catch(e =>
-              console.error(`[scheduled] Report failed for tenant ${t.id}:`, e),
+              logError('scheduled/report-failed', { tenantId: t.id, error: e }),
             ),
           )
         }
@@ -787,7 +787,7 @@ export default {
             `UPDATE session_analysis SET contact_info = NULL WHERE tenant_id = ? AND contact_info IS NOT NULL AND analyzed_at < datetime('now', '-' || ? || ' days')`,
           ).bind(t.id, analysisDays).run(),
           runPhotoRetention(env, t.id as string),
-        ]).catch(e => console.error(`[scheduled] Retention cleanup failed for tenant ${t.id}:`, e))
+        ]).catch(e => logError('scheduled/retention-cleanup-failed', { tenantId: t.id, error: e }))
       })
 
       ctx.waitUntil((async () => {
@@ -796,7 +796,7 @@ export default {
         }
       })())
     } catch (e) {
-      console.error('[scheduled] Failed to query tenants for reports:', e)
+      logError('scheduled/query-tenants-failed', { error: e })
     }
   },
 }

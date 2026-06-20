@@ -4,6 +4,7 @@
         cf-deploy cf-deploy-test cf-deploy-embed cf-deploy-watchdog \
         cf-push-secrets cf-push-secrets-test cf-push-secrets-watchdog \
         cf-init-config cf-init-org cf-render-config cf-render-watchdog-config cf-verify-stub \
+        cf-test-integration \
         op-doctor secrets-doctor \
         eval eval-site eval-photo eval-photo-dry eval-photo-ingest
 
@@ -436,6 +437,17 @@ cf-deploy-test: cf-migrate-test
 	@echo "Deploying to Cloudflare (test) [secrets: $(SECRETS_SRC)]..."
 	@$(SECRETS) sh -c 'cd workers && npx wrangler deploy --env test'
 	@echo "✓ Deployed (test)"
+
+# Run HTTP integration tests against the deployed test worker.
+# Requires BASE_URL, SIGNING_SECRET, TEST_TENANT_SLUG, TEST_TENANT_ID
+# (set by the CI seed step or exported locally).
+cf-test-integration:
+	@cd workers && \
+		BASE_URL="$(BASE_URL)" \
+		SIGNING_SECRET="$(SIGNING_SECRET)" \
+		TEST_TENANT_SLUG="$(TEST_TENANT_SLUG)" \
+		TEST_TENANT_ID="$(TEST_TENANT_ID)" \
+		npm run test:integration
 
 # Build widget and publish to R2 with versioned URLs
 cf-deploy-embed:

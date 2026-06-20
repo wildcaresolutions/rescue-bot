@@ -1,11 +1,12 @@
 /**
  * SSRF defense for outbound fetches.
  *
- * Cloudflare Workers don't expose DNS resolution natively (no `dns.resolve()`)
- * so we can't fully prevent DNS-rebinding attacks here — a hostname that
- * resolves to a public IP at validation time could resolve to a private IP at
- * fetch time. That's a known gap; mitigated separately by network egress
- * policies and follow-up DoH-based resolution before each fetch.
+ * Cloudflare Workers don't expose DNS resolution natively (no `dns.resolve()`).
+ * Known gap: DNS rebinding — a hostname that resolves to a public IP at
+ * validation time may resolve to a private IP at actual fetch time. DoH
+ * pre-resolution is NOT yet implemented; Cloudflare Workers platform-level
+ * egress filtering provides partial mitigation, but this gap is not fully
+ * closed in application code.
  *
  * What this module DOES defend against:
  *   - IP-literal hostnames in private/reserved ranges (10/8, 127/8, 169.254/16,

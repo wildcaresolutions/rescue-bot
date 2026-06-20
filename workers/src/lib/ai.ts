@@ -252,6 +252,13 @@ export async function runGatewayChatText(opts: {
 
 // ── Streaming variant ─────────────────────────────────────────────────────────
 //
+// Typed interface for OpenAI-compatible SSE stream events.
+// Matches the shape emitted by the Cloudflare AI Gateway /compat endpoint.
+interface OpenAIStreamEvent {
+  choices?: Array<{ delta?: { content?: string } }>
+  usage?: { prompt_tokens?: number; completion_tokens?: number }
+}
+
 // Opens an SSE chat-completions stream against /compat with `stream: true`,
 // parses the delta events, and returns a ReadableStream of text-only chunks
 // the caller can pipe into a streaming HTTP response. Usage tokens (when the
@@ -330,7 +337,7 @@ export async function openGatewayChatStream(opts: {
               return
             }
             try {
-              const ev = JSON.parse(data) as Record<string, any>
+              const ev = JSON.parse(data) as OpenAIStreamEvent
               const delta = ev.choices?.[0]?.delta?.content
               if (typeof delta === 'string' && delta.length > 0) {
                 controller.enqueue(delta)

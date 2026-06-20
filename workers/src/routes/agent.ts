@@ -20,6 +20,29 @@ import { fetchTools } from '../lib/tools/fetch'
 import type { ToolContext } from '../lib/tools/types'
 import { dbError } from '../lib/errors'
 
+// M-10: Log copilot token usage the same way chat.ts does for main-chat.
+function copilotUsageTokens(usage: unknown): { promptTokens: number; completionTokens: number } {
+  const u = usage as Record<string, number | undefined> | undefined
+  return {
+    promptTokens: u?.promptTokens ?? u?.inputTokens ?? 0,
+    completionTokens: u?.completionTokens ?? u?.outputTokens ?? 0,
+  }
+}
+
+async function logCopilotUsage(
+  env: Env,
+  tenantId: string,
+  model: string,
+  usage: unknown,
+): Promise<void> {
+  const { promptTokens, completionTokens } = copilotUsageTokens(usage)
+  const today = new Date().toISOString().slice(0, 10)
+  await env.DB.prepare(
+    `INSERT INTO usage_log (tenant_id, date, model, prompt_tokens, completion_tokens, request_count)
+     VALUES (?, ?, ?, ?, ?, 1)`,
+  ).bind(tenantId, today, model, promptTokens, completionTokens).run()
+}
+
 const AGENT_MODEL = 'claude-sonnet-4-6'
 const AGENT_HISTORY_LIMIT = 20
 
@@ -175,6 +198,14 @@ agentApp.post('/admin/agent', async (c) => {
         fetch_url: fTools.fetch_url,
       },
       stopWhen: stepCountIs(7),
+      onFinish: (event) => {
+        // M-10: Track copilot token usage in usage_log, same as main chat.
+        c.executionCtx.waitUntil(
+          logCopilotUsage(c.env, tenantId, AGENT_MODEL, event.usage).catch(e =>
+            console.error('[agent] Failed to log copilot usage:', e),
+          ),
+        )
+      },
       onError: (event) => {
         // Surface structured detail. The previous swallow-and-fallback
         // behavior left operators staring at "I could not complete that

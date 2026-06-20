@@ -124,12 +124,17 @@ test: test-worktree
 		echo "See workers/ — add vitest + @cloudflare/vitest-pool-workers to get started."; \
 	fi
 
-# Integration tests — fire real HTTP at a deployed test worker with a live LLM.
-# Requires env vars: BASE_URL, SIGNING_SECRET, TEST_TENANT_SLUG, TEST_TENANT_ID.
-# See workers/integration/agent.test.ts for details.
+# Integration tests — fire real HTTP at a live worker. Requires a deployed
+# (or local) worker and environment variables:
+#   BASE_URL          URL of the target worker (default: http://localhost:8787)
+#   TEST_TENANT_SLUG  Slug of an existing tenant row (default: test-org)
+#   TEST_TENANT_ID    UUID of that tenant row (default: test-0001-dev-tenant)
+#   SIGNING_SECRET    Must match the worker's secret (loaded from .env / .env.op)
+# Run `make cf-dev` in a separate terminal to test against a local dev server.
 test-integration:
-	@echo "Running integration tests against $${BASE_URL:-http://localhost:8787}..."
-	@cd workers && npm run test:integration
+	@echo "Running integration tests against $${BASE_URL:-http://localhost:8787} [secrets: $(SECRETS_SRC)]..."
+	@$(SECRETS) sh -c 'cd workers && npm run test:integration'
+	@echo "✓ Integration tests complete"
 
 # Worktree-isolation shell test. Asserts `make cf-dev-resolve-config` returns
 # distinct ports / hashes / state dirs across two git worktrees, so two

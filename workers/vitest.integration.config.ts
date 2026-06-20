@@ -27,13 +27,10 @@ export default defineConfig({
     // No workers-pool — integration tests use native Node fetch against a real
     // URL.  The workers pool intercepts fetch, which breaks real network calls.
     pool: 'forks',
-    poolOptions: {
-      forks: {
-        // Sequential: integration tests hit a shared DB so parallel CRUD tests
-        // (create/delete evals) would race each other.
-        singleFork: true,
-      },
-    },
+    // Sequential file execution — integration tests hit a shared DB so
+    // parallel test files would race each other on create/delete evals.
+    // fileParallelism: false is the vitest 4 replacement for singleFork.
+    fileParallelism: false,
     testTimeout: 60_000,
     hookTimeout: 30_000,
     // Required for top-level await in _harness.ts

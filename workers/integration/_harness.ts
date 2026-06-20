@@ -108,19 +108,3 @@ export const chatHeaders: Record<string, string> = {
   Origin: 'http://localhost',
   'Content-Type': 'application/json',
 }
-
-// ── Convenience fetch wrappers ────────────────────────────────────────────────
-
-export function adminFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(`${BASE_URL}${path}`, {
-    ...init,
-    headers: { ...adminHeaders, ...(init.headers as Record<string, string> | undefined) },
-  })
-}
-
-export function noAuthFetch(path: string, init: RequestInit = {}): Promise<Response> {
-  return fetch(`${BASE_URL}${path}`, {
-    ...init,
-    headers: { ...noAuthHeaders, ...(init.headers as Record<string, string> | undefined) },
-  })
-}

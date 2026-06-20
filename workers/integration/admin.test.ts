@@ -31,7 +31,7 @@
  * to tolerate any future hardening, but reality today is always 401.
  */
 
-import { describe, it, expect, beforeAll } from 'vitest'
+import { describe, it, expect, beforeAll, afterAll } from 'vitest'
 import {
   BASE_URL,
   adminHeaders,
@@ -332,7 +332,7 @@ describe('GET /admin/evals', () => {
 })
 
 describe('Evals CRUD lifecycle', () => {
-  let createdId: string
+  let createdId: string | undefined
 
   it('POST /admin/evals creates a scenario (200) and returns an id', async () => {
     const res = await fetch(`${BASE_URL}/admin/evals`, {
@@ -354,6 +354,7 @@ describe('Evals CRUD lifecycle', () => {
   })
 
   it('GET /admin/evals includes the newly created scenario', async () => {
+    if (!createdId) return
     const res = await fetch(`${BASE_URL}/admin/evals`, {
       headers: { ...adminHeaders },
     })
@@ -364,6 +365,7 @@ describe('Evals CRUD lifecycle', () => {
   })
 
   it('PUT /admin/evals/:id updates the scenario and resets verdict to unreviewed', async () => {
+    if (!createdId) return
     const res = await fetch(`${BASE_URL}/admin/evals/${createdId}`, {
       method: 'PUT',
       headers: { ...adminHeaders },
@@ -380,6 +382,7 @@ describe('Evals CRUD lifecycle', () => {
   })
 
   it('POST /admin/evals/:id/review marks the scenario as approved', async () => {
+    if (!createdId) return
     const res = await fetch(`${BASE_URL}/admin/evals/${createdId}/review`, {
       method: 'POST',
       headers: { ...adminHeaders },
@@ -391,6 +394,7 @@ describe('Evals CRUD lifecycle', () => {
   })
 
   it('GET /admin/evals/:id/results returns results array', async () => {
+    if (!createdId) return
     const res = await fetch(`${BASE_URL}/admin/evals/${createdId}/results`, {
       headers: { ...adminHeaders },
     })
@@ -400,6 +404,7 @@ describe('Evals CRUD lifecycle', () => {
   })
 
   it('DELETE /admin/evals/:id removes the created scenario (200)', async () => {
+    if (!createdId) return
     const res = await fetch(`${BASE_URL}/admin/evals/${createdId}`, {
       method: 'DELETE',
       headers: { ...adminHeaders },
@@ -484,6 +489,24 @@ describe('GET /admin/domains', () => {
 
 describe('Domain CRUD', () => {
   let addedDomainId: string | undefined
+
+  afterAll(async () => {
+    // Always attempt cleanup by fetching the current list and deleting the
+    // integration test domain if it is still there (e.g. if the find-in-list
+    // step within the POST test failed, this afterAll still cleans up).
+    const listRes = await fetch(`${BASE_URL}/admin/domains`, {
+      headers: { ...adminHeaders },
+    })
+    if (!listRes.ok) return
+    const list = await listRes.json() as { domains: Array<{ id: string; domain: string }> }
+    const found = list.domains.find(d => d.domain === 'integration-test-domain.example.org')
+    if (found) {
+      await fetch(`${BASE_URL}/admin/domains/${found.id}`, {
+        method: 'DELETE',
+        headers: { ...adminHeaders },
+      })
+    }
+  })
 
   it('POST /admin/domains adds a domain', async () => {
     const res = await fetch(`${BASE_URL}/admin/domains`, {

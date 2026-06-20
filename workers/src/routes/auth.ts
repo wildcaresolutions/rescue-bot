@@ -9,6 +9,8 @@ import {
   resolveSession,
   tenantCookiePrefix,
   PLATFORM_COOKIE_PREFIX,
+  timingSafeCompare,
+  ADMIN_TOKEN_TTL_DAYS,
   type Role,
 } from '../lib/auth'
 import { sendEmail } from '../lib/email'
@@ -16,7 +18,6 @@ import { getAuthFromEmail, getPlatformName } from '../lib/platform'
 import { verifyTurnstile } from '../lib/turnstile'
 
 const TOKEN_EXPIRY_MINUTES = 15
-const SESSION_EXPIRY_DAYS = 30
 
 const auth = new Hono<{ Bindings: Env; Variables: Variables }>()
 
@@ -110,8 +111,8 @@ export async function issueMagicLink(
 
   const protocol = opts.host.includes('localhost') ? 'http' : 'https'
   return opts.tenantSlug
-    ? `${protocol}://${opts.host}/api/auth/verify?token=${token}&tenant=${opts.tenantSlug}`
-    : `${protocol}://${opts.host}/api/auth/verify?token=${token}`
+    ? `${protocol}://${opts.host}/api/auth/verify?token=${token}&tenant=${opts.tenantSlug}&email=${encodeURIComponent(opts.email)}`
+    : `${protocol}://${opts.host}/api/auth/verify?token=${token}&email=${encodeURIComponent(opts.email)}`
 }
 
 /** Request a magic link. Sends an email with a login token. */
@@ -239,15 +240,20 @@ auth.post('/api/auth/request', async (c) => {
 auth.get('/api/auth/verify', async (c) => {
   const magicToken = c.req.query('token')
   const tenantSlug = c.req.query('tenant') ?? ''
+  const email = (c.req.query('email') ?? '').trim().toLowerCase()
 
-  if (!magicToken) return c.text('Invalid link', 400)
+  if (!magicToken || !email || !emailValid(email)) return c.text('Invalid link', 400)
 
-  // Soft check — does the token exist and is unused? Don't consume yet.
-  const row = await c.env.DB.prepare(
-    "SELECT email FROM magic_tokens WHERE token = ? AND used = 0 AND expires_at > datetime('now')",
-  ).bind(magicToken).first<{ email: string }>()
+  // Soft check: does any unexpired, unused token for this email constant-time
+  // match the submitted token? Fetching by email (non-secret) + comparing
+  // in app code avoids exposing the token to the DB index timing path (M-7).
+  const { results: candidates } = await c.env.DB.prepare(
+    "SELECT token FROM magic_tokens WHERE email = ? AND used = 0 AND expires_at > datetime('now') ORDER BY created_at DESC",
+  ).bind(email).all<{ token: string }>()
 
-  if (!row) {
+  const matched = (candidates ?? []).some(r => timingSafeCompare(r.token, magicToken))
+
+  if (!matched) {
     return c.html(`
       <html><body style="font-family: -apple-system, sans-serif; text-align: center; padding: 80px 20px;">
         <h2>Link expired or already used</h2>
@@ -278,6 +284,7 @@ auth.get('/api/auth/verify', async (c) => {
   <form method="POST" action="/api/auth/verify">
     <input type="hidden" name="token" value="${escapeAttr(magicToken)}" />
     <input type="hidden" name="tenant" value="${escapeAttr(tenantSlug)}" />
+    <input type="hidden" name="email" value="${escapeAttr(email)}" />
     <button type="submit">Sign in</button>
   </form>
 </div>
@@ -288,16 +295,19 @@ auth.get('/api/auth/verify', async (c) => {
 auth.post('/api/auth/verify', async (c) => {
   let magicToken = ''
   let tenantSlug = ''
+  let email = ''
   const ct = c.req.header('Content-Type') ?? ''
   if (ct.includes('application/x-www-form-urlencoded')) {
     const form = await c.req.formData()
     magicToken = String(form.get('token') ?? '')
     tenantSlug = String(form.get('tenant') ?? '')
+    email = String(form.get('email') ?? '')
   } else if (ct.includes('application/json')) {
     try {
-      const body = await c.req.json<{ token?: string; tenant?: string }>()
+      const body = await c.req.json<{ token?: string; tenant?: string; email?: string }>()
       magicToken = body.token ?? ''
       tenantSlug = body.tenant ?? ''
+      email = body.email ?? ''
     } catch { return c.text('Invalid JSON', 400) }
   } else {
     // Some clients POST without Content-Type; try form first, fall back to JSON.
@@ -305,16 +315,29 @@ auth.post('/api/auth/verify', async (c) => {
       const form = await c.req.formData()
       magicToken = String(form.get('token') ?? '')
       tenantSlug = String(form.get('tenant') ?? '')
+      email = String(form.get('email') ?? '')
     } catch {
       return c.text('Missing token', 400)
     }
   }
 
-  if (!magicToken) return c.text('Invalid request', 400)
+  email = email.trim().toLowerCase()
+  if (!magicToken || !email || !emailValid(email)) return c.text('Invalid request', 400)
 
-  const row = await c.env.DB.prepare(
-    "SELECT * FROM magic_tokens WHERE token = ? AND used = 0 AND expires_at > datetime('now')",
-  ).bind(magicToken).first<{ email: string; tenant_id: string | null }>()
+  // M-7: Fetch candidate rows by email + expiry (non-secret), then compare
+  // the submitted token constant-time in application code. This removes the
+  // DB index timing oracle that the previous WHERE token = ? approach exposed.
+  const { results: candidates } = await c.env.DB.prepare(
+    "SELECT id, token, email, tenant_id FROM magic_tokens WHERE email = ? AND used = 0 AND expires_at > datetime('now') ORDER BY created_at DESC",
+  ).bind(email).all<{ id: string; token: string; email: string; tenant_id: string | null }>()
+
+  let row: { id: string; email: string; tenant_id: string | null } | null = null
+  for (const r of candidates ?? []) {
+    if (timingSafeCompare(r.token, magicToken)) {
+      row = { id: r.id, email: r.email, tenant_id: r.tenant_id }
+      break
+    }
+  }
 
   if (!row) {
     return c.html(`
@@ -327,8 +350,9 @@ auth.post('/api/auth/verify', async (c) => {
   }
 
   // Mark token consumed BEFORE issuing the session — even if the rest fails,
-  // the magic link is single-use.
-  await c.env.DB.prepare('UPDATE magic_tokens SET used = 1 WHERE token = ?').bind(magicToken).run()
+  // the magic link is single-use. Use the row id (non-secret PK) rather than
+  // the token itself so the token value never appears in a write path.
+  await c.env.DB.prepare('UPDATE magic_tokens SET used = 1 WHERE id = ?').bind(row.id).run()
 
   // Decide role + tenant scope based on the email and the magic_tokens row.
   const platformAdmin = isPlatformAdminEmail(row.email, c.env)
@@ -367,7 +391,9 @@ auth.post('/api/auth/verify', async (c) => {
   // `_tester_email` cookie. /api/auth/me PUT now reads from verifiedToken.email.
   const sessionToken = await generateToken(sessionTenantId, role, c.env, row.email)
 
-  const maxAge = SESSION_EXPIRY_DAYS * 24 * 60 * 60
+  // M-2: In this verify flow, role is always 'admin' or 'platform' (never
+  // 'viewer') — so cookie Max-Age is always ADMIN_TOKEN_TTL_DAYS (1 day).
+  const maxAge = ADMIN_TOKEN_TTL_DAYS * 24 * 60 * 60
   const secure = !c.req.header('Host')?.includes('localhost')
   // _token holds the signed session — HttpOnly so JS can't read it (defense
   // against XSS exfiltration). _auth and _tester_email are presence flags for

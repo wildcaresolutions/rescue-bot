@@ -1,4 +1,4 @@
-.PHONY: help deps build build-widget test test-worktree test-watchdog test-integration e2e e2e-ui clean check format \
+.PHONY: help deps build build-widget test test-worktree test-watchdog test-integration cf-test-integration e2e e2e-ui clean check format \
         cf-setup cf-dev cf-dev-resolve-config cf-doctor cf-build-web cf-index-docs \
         cf-migrate cf-migrate-test \
         cf-deploy cf-deploy-test cf-deploy-embed cf-deploy-watchdog \
@@ -135,6 +135,10 @@ test-integration:
 	@echo "Running integration tests against $${BASE_URL:-http://localhost:8787} [secrets: $(SECRETS_SRC)]..."
 	@$(SECRETS) sh -c 'cd workers && npm run test:integration'
 	@echo "✓ Integration tests complete"
+
+# Alias used by CI (cf-* naming convention for Cloudflare-touching targets).
+# Delegates to test-integration so both names stay in sync.
+cf-test-integration: test-integration
 
 # Worktree-isolation shell test. Asserts `make cf-dev-resolve-config` returns
 # distinct ports / hashes / state dirs across two git worktrees, so two

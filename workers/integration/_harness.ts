@@ -28,7 +28,17 @@ export const TENANT_ID = process.env.TEST_TENANT_ID ?? 'test-0001-dev-tenant'
 export const FOREIGN_TENANT_ID = 'ffffffff-0000-0000-0000-000000000000'
 
 // Only SIGNING_SECRET is needed for token minting — cast as partial Env.
-const signingEnv = { SIGNING_SECRET: process.env.SIGNING_SECRET ?? 'dev-secret' } as unknown as Env
+// Fail loudly when running against a non-localhost deployment without a
+// SIGNING_SECRET: tokens signed with the wrong secret will 401 on every
+// request and the failure will be confusing without this guard.
+const secret = process.env.SIGNING_SECRET
+if (!secret && !BASE_URL.includes('localhost') && !BASE_URL.includes('127.0.0.1')) {
+  throw new Error(
+    'SIGNING_SECRET is required when running integration tests against a non-localhost BASE_URL. ' +
+    'Set it to the same value deployed to the test worker via make cf-push-secrets-test.',
+  )
+}
+const signingEnv = { SIGNING_SECRET: secret ?? 'dev-secret' } as unknown as Env
 
 // Top-level await: generates short-lived tokens at import time.
 // The tokens are HMAC-signed against SIGNING_SECRET, which must match the

@@ -41,7 +41,7 @@ import {
   runRagSearch,
   updateFeatureFlags,
 } from '../lib/admin-misc'
-import { dbError, badRequest, notFound } from '../lib/errors'
+import { dbError, badRequest, notFound, libError } from '../lib/errors'
 import { logError } from '../lib/logger'
 
 const MAX_SESSION_ID_LEN = 128
@@ -106,8 +106,7 @@ admin.post('/admin/sessions/:sessionId/resolve', async (c) => {
   const notes = typeof body.notes === 'string' ? body.notes.trim().slice(0, 2000) : null
 
   const result = await resolveActionItem(c.env, tenant.id, sessionId, notes)
-  // TODO: migrate to errors.ts helpers (dynamic status from lib function)
-  if ('error' in result) return c.json({ error: result.error }, result.status as 404 | 500)
+  if ('error' in result) return libError(c, result)
   return c.json({ success: true })
 })
 
@@ -122,7 +121,7 @@ admin.get('/admin/photo-feed', async (c) => {
 
   const { since, limit } = c.req.query()
   const result = await loadPhotoFeed(c.env, tenant.id, { since, limit })
-  if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404 | 500)
+  if ('error' in result) return libError(c, result)
   return c.json(result)
 })
 
@@ -134,7 +133,7 @@ admin.get('/admin/photos/:photoId/raw', async (c) => {
 
   const result = await servePhotoAsset(c.env, tenant.id, photoId)
   if (result instanceof Response) return result
-  return c.json({ error: result.error }, result.status as 400 | 404 | 500)
+  return libError(c, result)
 })
 
 admin.post('/admin/photos/:photoId/resolve', async (c) => {
@@ -144,7 +143,7 @@ admin.post('/admin/photos/:photoId/resolve', async (c) => {
   if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo ID')
 
   const result = await resolvePhoto(c.env, tenant.id, photoId)
-  if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404 | 500)
+  if ('error' in result) return libError(c, result)
   return c.json(result)
 })
 
@@ -158,7 +157,7 @@ admin.post('/admin/photos/:photoId/manual-tag', async (c) => {
   try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
 
   const result = await manualTagPhoto(c.env, tenant.id, photoId, body)
-  if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404 | 500)
+  if ('error' in result) return libError(c, result)
   return c.json(result)
 })
 
@@ -172,7 +171,7 @@ admin.post('/admin/photos/:photoId/delete', async (c) => {
   try { body = await c.req.json() } catch { /* allow empty body */ }
 
   const result = await deletePhoto(c.env, tenant.id, photoId, body, (p) => c.executionCtx.waitUntil(p))
-  if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404 | 500)
+  if ('error' in result) return libError(c, result)
   return c.json(result)
 })
 
@@ -189,7 +188,7 @@ admin.post('/admin/feature-flags', async (c) => {
   try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
 
   const result = await updateFeatureFlags(c.env, tenant, body)
-  if ('error' in result) return c.json({ error: result.error }, result.status as 500)
+  if ('error' in result) return libError(c, result)
   return c.json(result)
 })
 
@@ -211,7 +210,7 @@ admin.get('/admin/sessions', async (c) => {
 
   try {
     const result = await loadSessionsList(c.env, tenantId, c.req.query())
-    if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 500)
+    if ('error' in result) return libError(c, result)
     return c.json(result.results)
   } catch (e) {
     return dbError(c, 'feedback/sessions', 'DB error', e)
@@ -226,7 +225,7 @@ admin.get('/admin/sessions/:sessionId', async (c) => {
 
   try {
     const result = await loadSessionDetail(c.env, tenantId, sessionId)
-    if ('error' in result) return c.json({ error: result.error }, result.status as 404 | 500)
+    if ('error' in result) return libError(c, result)
     return c.json(result)
   } catch (e) {
     return dbError(c, 'feedback/session-detail', 'DB error', e)
@@ -311,7 +310,7 @@ admin.post('/admin/domains', async (c) => {
   try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
   try {
     const result = await addDomain(c.env, tenant.id, typeof body.domain === 'string' ? body.domain : '')
-    if ('error' in result) return c.json({ error: result.error }, result.status as 400)
+    if ('error' in result) return libError(c, result)
     return c.json({ success: true })
   } catch {
     return c.json({ error: 'Database error' }, 500)
@@ -395,7 +394,7 @@ admin.post('/admin/evals', async (c) => {
 
   try {
     const result = await createEvalScenario(c.env, tenant!.id, body)
-    if ('error' in result) return c.json({ error: result.error }, result.status as 400)
+    if ('error' in result) return libError(c, result)
     return c.json(result)
   } catch (e) {
     return dbError(c, 'admin/evals', 'DB error', e)
@@ -421,7 +420,7 @@ admin.put('/admin/evals/:id', async (c) => {
   try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
   try {
     const result = await updateEvalScenario(c.env, tenant.id, c.req.param('id'), body)
-    if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404)
+    if ('error' in result) return libError(c, result)
     return c.json(result)
   } catch (e) {
     return dbError(c, 'admin/evals/update', 'DB error', e)
@@ -437,7 +436,7 @@ admin.post('/admin/evals/:id/review', async (c) => {
   try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
   try {
     const result = await reviewEvalScenario(c.env, tenant.id, c.req.param('id'), body.review_status ?? '')
-    if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404)
+    if ('error' in result) return libError(c, result)
     return c.json(result)
   } catch (e) {
     return dbError(c, 'admin/evals/review', 'DB error', e)
@@ -448,7 +447,7 @@ admin.post('/admin/evals/auto-generate', async (c) => {
   const tenant = c.get('tenant')
   if (!tenant) return badRequest(c, 'Tenant required')
   const result = await autoGenerateEvalScenarios(c.env, tenant)
-  if ('error' in result) return c.json({ error: result.error }, result.status as 500)
+  if ('error' in result) return libError(c, result)
   return c.json(result)
 })
 
@@ -514,7 +513,7 @@ admin.post('/admin/rag-search', async (c) => {
   try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
 
   const result = await runRagSearch(c.env, tenant.id, body)
-  if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 500)
+  if ('error' in result) return libError(c, result)
   return c.json(result)
 })
 

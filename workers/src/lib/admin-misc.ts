@@ -6,6 +6,7 @@
  */
 import type { Env, Tenant } from './types'
 import { invalidateTenantCache, invalidateDomainsCache } from './cache'
+import { logError } from './logger'
 import { getAiGatewayToken } from './ai'
 import { searchRAG } from './rag'
 import { BUILTIN_GUIDES } from '../guides'
@@ -54,7 +55,7 @@ export async function updateFeatureFlags(
     invalidateTenantCache(tenant.slug)
     return { feature_flags: current }
   } catch (e) {
-    console.error('[admin/feature-flags] DB error:', e)
+    logError('admin/feature-flags-db-error', { error: e })
     return { error: 'Database error', status: 500 }
   }
 }
@@ -138,7 +139,7 @@ export async function runRagSearch(
       })),
     }
   } catch (e) {
-    console.error('[admin/rag-search] Error:', e)
+    logError('admin/rag-search-error', { error: e })
     return { error: 'RAG search failed: ' + String(e), status: 500 }
   }
 }

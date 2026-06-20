@@ -19,6 +19,7 @@ import { actionsTools } from '../lib/tools/actions'
 import { fetchTools } from '../lib/tools/fetch'
 import type { ToolContext } from '../lib/tools/types'
 import { dbError } from '../lib/errors'
+import { logError } from '../lib/logger'
 
 // M-10: Log copilot token usage the same way chat.ts does for main-chat.
 function copilotUsageTokens(usage: unknown): { promptTokens: number; completionTokens: number } {
@@ -213,7 +214,7 @@ agentApp.post('/admin/agent', async (c) => {
         // invisible to anyone not tailing Workers logs.
         const err = event.error
         const msg = err instanceof Error ? err.message : String(err)
-        console.error('[agent] streamText error:', msg, {
+        logError('agent/streamtext-error', { message: msg,
           model: AGENT_MODEL,
           isApiKeyError: /x-api-key|api key|unauthor/i.test(msg),
           isRateLimit: /rate limit|429/i.test(msg),

@@ -41,7 +41,8 @@ import {
   runRagSearch,
   updateFeatureFlags,
 } from '../lib/admin-misc'
-import { dbError } from '../lib/errors'
+import { dbError, badRequest, notFound } from '../lib/errors'
+import { logError } from '../lib/logger'
 
 const MAX_SESSION_ID_LEN = 128
 function validSessionId(id: string): boolean {
@@ -71,7 +72,7 @@ admin.get('/admin/dashboard', async (c) => {
 
 admin.post('/admin/analyze-backfill', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   return c.json(await backfillSessionAnalysis(c.env, tenant.id))
 })
@@ -80,14 +81,14 @@ admin.post('/admin/analyze-backfill', async (c) => {
 
 admin.post('/admin/triage/test', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   let body: { message?: string }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
 
   const message = typeof body.message === 'string' ? body.message.trim() : ''
-  if (!message) return c.json({ error: 'message required' }, 400)
-  if (message.length > 4000) return c.json({ error: 'message too long' }, 400)
+  if (!message) return badRequest(c, 'message required')
+  if (message.length > 4000) return badRequest(c, 'message too long')
 
   return c.json(await testTriageMessage(c.env, tenant.id, message))
 })
@@ -96,15 +97,16 @@ admin.post('/admin/triage/test', async (c) => {
 
 admin.post('/admin/sessions/:sessionId/resolve', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const { sessionId } = c.req.param()
-  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
+  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
 
   let body: { notes?: string } = {}
   try { body = await c.req.json() } catch { /* no body is fine */ }
   const notes = typeof body.notes === 'string' ? body.notes.trim().slice(0, 2000) : null
 
   const result = await resolveActionItem(c.env, tenant.id, sessionId, notes)
+  // TODO: migrate to errors.ts helpers (dynamic status from lib function)
   if ('error' in result) return c.json({ error: result.error }, result.status as 404 | 500)
   return c.json({ success: true })
 })
@@ -116,7 +118,7 @@ admin.post('/admin/sessions/:sessionId/resolve', async (c) => {
 
 admin.get('/admin/photo-feed', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   const { since, limit } = c.req.query()
   const result = await loadPhotoFeed(c.env, tenant.id, { since, limit })
@@ -126,9 +128,9 @@ admin.get('/admin/photo-feed', async (c) => {
 
 admin.get('/admin/photos/:photoId/raw', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const { photoId } = c.req.param()
-  if (!validSessionId(photoId)) return c.json({ error: 'Invalid photo ID' }, 400)
+  if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo ID')
 
   const result = await servePhotoAsset(c.env, tenant.id, photoId)
   if (result instanceof Response) return result
@@ -137,9 +139,9 @@ admin.get('/admin/photos/:photoId/raw', async (c) => {
 
 admin.post('/admin/photos/:photoId/resolve', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const { photoId } = c.req.param()
-  if (!validSessionId(photoId)) return c.json({ error: 'Invalid photo ID' }, 400)
+  if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo ID')
 
   const result = await resolvePhoto(c.env, tenant.id, photoId)
   if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404 | 500)
@@ -148,12 +150,12 @@ admin.post('/admin/photos/:photoId/resolve', async (c) => {
 
 admin.post('/admin/photos/:photoId/manual-tag', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const { photoId } = c.req.param()
-  if (!validSessionId(photoId)) return c.json({ error: 'Invalid photo ID' }, 400)
+  if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo ID')
 
   let body: { species?: string; urgency?: string; distress_tags?: string[]; condition_tag?: string | null }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
 
   const result = await manualTagPhoto(c.env, tenant.id, photoId, body)
   if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404 | 500)
@@ -162,9 +164,9 @@ admin.post('/admin/photos/:photoId/manual-tag', async (c) => {
 
 admin.post('/admin/photos/:photoId/delete', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const { photoId } = c.req.param()
-  if (!validSessionId(photoId)) return c.json({ error: 'Invalid photo ID' }, 400)
+  if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo ID')
 
   let body: { reason?: string; deleted_by?: string } = {}
   try { body = await c.req.json() } catch { /* allow empty body */ }
@@ -181,10 +183,10 @@ admin.post('/admin/photos/:photoId/delete', async (c) => {
  */
 admin.post('/admin/feature-flags', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   let body: { photo_uploads_enabled?: unknown } = {}
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
 
   const result = await updateFeatureFlags(c.env, tenant, body)
   if ('error' in result) return c.json({ error: result.error }, result.status as 500)
@@ -197,7 +199,7 @@ admin.post('/admin/feature-flags', async (c) => {
  */
 admin.get('/admin/feature-flags', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   return c.json(readFeatureFlags(tenant))
 })
 
@@ -220,7 +222,7 @@ admin.get('/admin/sessions/:sessionId', async (c) => {
   const tenant = c.get('tenant')
   const tenantId = tenant!.id
   const { sessionId } = c.req.param()
-  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
+  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
 
   try {
     const result = await loadSessionDetail(c.env, tenantId, sessionId)
@@ -243,7 +245,7 @@ admin.get('/admin/stats', async (c) => {
 
 admin.get('/admin/stats/timeseries', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const period = c.req.query('period') || '30d'
   try {
     return c.json(await loadTimeseries(c.env, tenant.id, period))
@@ -256,7 +258,7 @@ admin.get('/admin/stats/timeseries', async (c) => {
 
 admin.get('/admin/stats/overview', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const period = c.req.query('period') || '30d'
   try {
     return c.json(await loadOverviewStats(c.env, tenant.id, period))
@@ -267,9 +269,9 @@ admin.get('/admin/stats/overview', async (c) => {
 
 admin.post('/admin/embed', async (c) => {
   let body: { texts?: unknown }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
   if (!Array.isArray(body.texts) || !body.texts.length) {
-    return c.json({ error: 'texts array required' }, 400)
+    return badRequest(c, 'texts array required')
   }
   const texts = (body.texts as unknown[]).slice(0, 100).map(t => String(t).slice(0, 1_000))
   const result = await c.env.AI.run('@cf/baai/bge-base-en-v1.5', { text: texts }) as { data: number[][] }
@@ -285,7 +287,7 @@ admin.post('/admin/report', async (c) => {
     const result = await generateReport(c.env, tenantId, body.dry_run ?? false, body.to)
     return c.json(result, result.success ? 200 : 500)
   } catch (e) {
-    console.error('[admin/report] Error:', e)
+    logError('admin/report-error', { error: e })
     return c.json({ success: false, error: String(e) }, 500)
   }
 })
@@ -294,7 +296,7 @@ admin.post('/admin/report', async (c) => {
 
 admin.get('/admin/domains', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   try {
     return c.json({ domains: await listDomains(c.env, tenant.id) })
   } catch {
@@ -304,9 +306,9 @@ admin.get('/admin/domains', async (c) => {
 
 admin.post('/admin/domains', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   let body: { domain?: string }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
   try {
     const result = await addDomain(c.env, tenant.id, typeof body.domain === 'string' ? body.domain : '')
     if ('error' in result) return c.json({ error: result.error }, result.status as 400)
@@ -318,7 +320,7 @@ admin.post('/admin/domains', async (c) => {
 
 admin.delete('/admin/domains/:id', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   try {
     await removeDomain(c.env, tenant.id, c.req.param('id'))
     return c.json({ success: true })
@@ -346,7 +348,7 @@ admin.delete('/admin/domains/:id', async (c) => {
  */
 admin.get('/admin/setup-state', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   return c.json(await loadSetupState(c.env, tenant))
 })
 
@@ -355,7 +357,7 @@ admin.get('/admin/setup-state', async (c) => {
 // instruction), or throw it away. The live bot only changes here.
 admin.post('/admin/publish', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   try {
     const res = await publishDraft(c.env, tenant)
     if ('conflict' in res) return c.json(res, 409)
@@ -367,7 +369,7 @@ admin.post('/admin/publish', async (c) => {
 
 admin.post('/admin/discard', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   try {
     return c.json(await discardDraft(c.env, tenant))
   } catch (e) {
@@ -389,7 +391,7 @@ admin.get('/admin/evals', async (c) => {
 admin.post('/admin/evals', async (c) => {
   const tenant = c.get('tenant')
   let body: { description?: string; expected_behavior?: string; test_message?: string; auto_generated?: boolean }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
 
   try {
     const result = await createEvalScenario(c.env, tenant!.id, body)
@@ -414,9 +416,9 @@ admin.delete('/admin/evals/:id', async (c) => {
 // and could only be deleted). Resets the verdict to unreviewed.
 admin.put('/admin/evals/:id', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   let body: { description?: string; expected_behavior?: string; test_message?: string }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
   try {
     const result = await updateEvalScenario(c.env, tenant.id, c.req.param('id'), body)
     if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404)
@@ -430,9 +432,9 @@ admin.put('/admin/evals/:id', async (c) => {
 // Overrides the LLM judge; never gated, never auto-overwritten.
 admin.post('/admin/evals/:id/review', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   let body: { review_status?: string }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
   try {
     const result = await reviewEvalScenario(c.env, tenant.id, c.req.param('id'), body.review_status ?? '')
     if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 404)
@@ -444,7 +446,7 @@ admin.post('/admin/evals/:id/review', async (c) => {
 
 admin.post('/admin/evals/auto-generate', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const result = await autoGenerateEvalScenarios(c.env, tenant)
   if ('error' in result) return c.json({ error: result.error }, result.status as 500)
   return c.json(result)
@@ -452,11 +454,11 @@ admin.post('/admin/evals/auto-generate', async (c) => {
 
 admin.post('/admin/evals/:id/run', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const scenarioId = c.req.param('id')
 
   const scenario = await loadEvalScenarioById(c.env, tenant.id, scenarioId)
-  if (!scenario) return c.json({ error: 'Scenario not found' }, 404)
+  if (!scenario) return notFound(c, 'scenario')
 
   // Run eval in background via waitUntil — against the DRAFT overlay so the
   // operator tests pending (unpublished) changes.
@@ -477,13 +479,13 @@ admin.get('/admin/evals/:id/results', async (c) => {
 
 admin.get('/admin/knowledge-base', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   return c.json(buildKnowledgeBaseSummary(tenant))
 })
 
 admin.get('/admin/prompt', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   // "What your bot sees" reflects the operator's unpublished draft.
   return c.json(buildPromptState(overlayTenant(tenant)))
 })
@@ -495,7 +497,7 @@ admin.get('/admin/prompt', async (c) => {
  */
 admin.post('/admin/prompt/dismiss-migration-banner', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   await c.env.DB.prepare(
     'UPDATE tenants SET custom_instruction_locked_pending_review = 0 WHERE id = ?',
   )
@@ -506,10 +508,10 @@ admin.post('/admin/prompt/dismiss-migration-banner', async (c) => {
 
 admin.post('/admin/rag-search', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   let body: { query?: string; top_k?: number }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
 
   const result = await runRagSearch(c.env, tenant.id, body)
   if ('error' in result) return c.json({ error: result.error }, result.status as 400 | 500)
@@ -521,14 +523,13 @@ admin.post('/admin/rag-search', async (c) => {
 admin.post('/api/errors', async (c) => {
   let body: Record<string, unknown> = {}
   try { body = await c.req.json() } catch { /* ignore malformed body */ }
-  console.error('[client-error]', JSON.stringify({
+  logError('client/browser-error', {
     message: clamp(body.message as string, 500),
     stack: clamp(body.stack as string, 1_000),
     url: clamp(body.url as string, 500),
     userAgent: clamp(body.userAgent as string, 200),
     clientIp: c.req.header('CF-Connecting-IP'),
-    timestamp: new Date().toISOString(),
-  }))
+  })
   return c.json({ success: true })
 })
 

@@ -7,6 +7,7 @@
 import type { Env } from './types'
 import { matchTriage, type TenantTriageRule, type TriageMatch } from './match-triage'
 import { parseOrgConfig } from './tenant-loader'
+import { logError } from './logger'
 
 export async function testTriageMessage(
   env: Env,
@@ -20,7 +21,7 @@ export async function testTriageMessage(
     const orgCfg = parseOrgConfig(row?.org_config)
     tenantRules = orgCfg.triage_config
   } catch (e) {
-    console.error('[admin/triage/test] org_config parse error:', e)
+    logError('admin/triage-test/org-config-parse-error', { error: e })
   }
 
   return matchTriage(message, tenantRules)

@@ -17,6 +17,7 @@ import { formatTestResultExplanation } from '../judge-parse'
 import { runEvalScenario } from '../eval-runner'
 import { stageConfigChange, overlayTenant } from '../draft'
 import { updateEvalScenario, reviewEvalScenario, deleteEvalScenario, normalizeTurns } from '../evals-crud'
+import { logError } from '../logger'
 
 export function protocolsTools(ctx: ToolContext) {
   const { env, db, tenantId, freshTenant } = ctx
@@ -115,7 +116,7 @@ export function protocolsTools(ctx: ToolContext) {
         await deleteEvalScenario(env, tenantId, scenario_id)
         return { success: true, scenario_id, message: 'Test case deleted.' }
       } catch (e) {
-        console.error('[delete_test_scenario] error:', e)
+        logError('tools/delete-test-scenario-error', { error: e })
         return { success: false, error: 'Failed to delete test case.' }
       }
     },
@@ -161,7 +162,7 @@ export function protocolsTools(ctx: ToolContext) {
           response_excerpt: (latest.response || '').slice(0, 600),
         }
       } catch (e) {
-        console.error('[run_test_scenario] error:', e)
+        logError('tools/run-test-scenario-error', { error: e })
         return { success: false, error: 'Failed to run test case: ' + (e instanceof Error ? e.message : String(e)) }
       }
     },

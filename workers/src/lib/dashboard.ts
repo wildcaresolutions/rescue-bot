@@ -5,6 +5,7 @@
  * own and the route handler just orchestrates the response shape.
  */
 import type { Env } from './types'
+import { logError } from './logger'
 
 export async function loadDashboardActionItems(env: Env, tenantId: string): Promise<unknown[]> {
   // Action items = recent, unresolved sessions an operator should follow up on:
@@ -155,7 +156,7 @@ export async function resolveActionItem(
     }
     return { ok: true }
   } catch (e) {
-    console.error('[admin/resolve] DB error:', e)
+    logError('admin/resolve-action-item-db-error', { error: e })
     return { error: 'Database error', status: 500 }
   }
 }

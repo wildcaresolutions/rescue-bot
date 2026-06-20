@@ -61,7 +61,7 @@ class PublishDb {
       async run() {
         self.writes.push({ sql, binds })
         if (/UPDATE tenants SET/.test(sql)) self.lastUpdate = { sql, binds }
-        return { success: true }
+        return { success: true, meta: { changes: 1, duration: 0, last_row_id: 0, changed_db: true, size_after: 0 } }
       },
     }
   }
@@ -218,6 +218,7 @@ describe('SPEC 3: publish promotes the draft to live and recompiles correctly', 
     }))
     const res = await publishDraft(envOf(db), db.tenantRow)
     expect(res.published).toBe(true)
+    if ('conflict' in res) throw new Error('unexpected conflict')
     expect(res.first_publish).toBe(true)
     const up = db.lastUpdate!
 
@@ -277,6 +278,7 @@ describe('SPEC 3: publish promotes the draft to live and recompiles correctly', 
       draft_config: JSON.stringify({ phone: 'NEW' }),
     }))
     const res = await publishDraft(envOf(db), db.tenantRow)
+    if ('conflict' in res) throw new Error('unexpected conflict')
     expect(res.first_publish).toBe(false)
   })
 

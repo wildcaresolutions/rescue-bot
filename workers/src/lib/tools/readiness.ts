@@ -43,6 +43,9 @@ export function readinessTools(ctx: ToolContext) {
       // Global publish: promote the draft to live (recompiling the bot
       // instruction) and set the publish markers. Not gated on tests.
       const res = await publishDraft(env, freshTenant)
+      if ('conflict' in res) {
+        return { success: false, error: res.error, message: 'Publish failed: concurrent edit detected. Please retry.' }
+      }
       return { success: true, ...res, message: 'Your changes are now live.' }
     },
   })

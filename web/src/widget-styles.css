@@ -1,6 +1,6 @@
 /* Rescue Bot Widget Styles - Standalone for embedding */
 
-:root {
+:host {
   /* Colors */
   --rbot-primary: #78a12e;
   --rbot-primary-hover: #6a8f28;

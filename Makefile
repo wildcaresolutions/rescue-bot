@@ -1,10 +1,9 @@
-.PHONY: help deps build build-widget test test-worktree test-watchdog e2e e2e-ui clean check format \
+.PHONY: help deps build build-widget test test-worktree test-watchdog test-integration e2e e2e-ui clean check format \
         cf-setup cf-dev cf-dev-resolve-config cf-doctor cf-build-web cf-index-docs \
         cf-migrate cf-migrate-test \
         cf-deploy cf-deploy-test cf-deploy-embed cf-deploy-watchdog \
         cf-push-secrets cf-push-secrets-test cf-push-secrets-watchdog \
         cf-init-config cf-init-org cf-render-config cf-render-watchdog-config cf-verify-stub \
-        cf-test-integration \
         op-doctor secrets-doctor \
         eval eval-site eval-photo eval-photo-dry eval-photo-ingest
 
@@ -91,6 +90,7 @@ help:
 	@echo ""
 	@echo "Code quality:"
 	@echo "  make test              Run unit tests"
+	@echo "  make test-integration  Run integration tests against deployed worker (needs BASE_URL, SIGNING_SECRET, TEST_TENANT_*)"
 	@echo "  make check             Run linters"
 	@echo "  make format            Run formatters"
 	@echo "  make clean             Remove build artifacts"
@@ -123,6 +123,13 @@ test: test-worktree
 		echo "No unit tests configured yet."; \
 		echo "See workers/ — add vitest + @cloudflare/vitest-pool-workers to get started."; \
 	fi
+
+# Integration tests — fire real HTTP at a deployed test worker with a live LLM.
+# Requires env vars: BASE_URL, SIGNING_SECRET, TEST_TENANT_SLUG, TEST_TENANT_ID.
+# See workers/integration/agent.test.ts for details.
+test-integration:
+	@echo "Running integration tests against $${BASE_URL:-http://localhost:8787}..."
+	@cd workers && npm run test:integration
 
 # Worktree-isolation shell test. Asserts `make cf-dev-resolve-config` returns
 # distinct ports / hashes / state dirs across two git worktrees, so two
@@ -437,17 +444,6 @@ cf-deploy-test: cf-migrate-test
 	@echo "Deploying to Cloudflare (test) [secrets: $(SECRETS_SRC)]..."
 	@$(SECRETS) sh -c 'cd workers && npx wrangler deploy --env test'
 	@echo "✓ Deployed (test)"
-
-# Run HTTP integration tests against the deployed test worker.
-# Requires BASE_URL, SIGNING_SECRET, TEST_TENANT_SLUG, TEST_TENANT_ID
-# (set by the CI seed step or exported locally).
-cf-test-integration:
-	@cd workers && \
-		BASE_URL="$(BASE_URL)" \
-		SIGNING_SECRET="$(SIGNING_SECRET)" \
-		TEST_TENANT_SLUG="$(TEST_TENANT_SLUG)" \
-		TEST_TENANT_ID="$(TEST_TENANT_ID)" \
-		npm run test:integration
 
 # Build widget and publish to R2 with versioned URLs
 cf-deploy-embed:

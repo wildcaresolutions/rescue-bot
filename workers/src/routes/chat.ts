@@ -48,6 +48,9 @@ async function maybeDraftOverlay(c: ChatContext, tenant: Tenant): Promise<Tenant
 // ── Constants ─────────────────────────────────────────────────────────────────
 
 const HISTORY_LIMIT = 20
+// Hard cap on user turns per session. A persistent caller cannot drive a session
+// beyond this, preventing runaway AI-Gateway quota consumption.
+const MAX_SESSION_TURNS = 50
 
 const MAX_MESSAGE_LEN = 8_000
 const MAX_CONTENT_LEN = 32_000
@@ -581,6 +584,20 @@ chat.post('/api/sessions/:id', async (c) => {
 
   const tenant = c.get('tenant')
   const tenantId = tenant!.id
+
+  // M-9: Per-session message cap — checked before any expensive work (RAG/LLM).
+  // Counts user-role chat messages so each round-trip (user turn) is counted once.
+  // message_type = 'chat' keeps this consistent with loadChatHistory and
+  // quickAnalyzeSession, which both filter on the same predicate.
+  const turnRow = await c.env.DB.prepare(
+    "SELECT COUNT(*) as count FROM messages WHERE session_id = ? AND tenant_id = ? AND role = 'user' AND message_type = 'chat'"
+  ).bind(sessionId, tenantId).first<{ count: number }>()
+  if ((turnRow?.count ?? 0) >= MAX_SESSION_TURNS) {
+    return c.json({
+      error: 'Session limit reached',
+      message: 'This session has reached its message limit. Please start a new conversation.',
+    }, 429)
+  }
 
   // Admin draft preview: serve this turn from the operator's draft when (and
   // only when) the request is a verified admin preview. Same tenant id, so

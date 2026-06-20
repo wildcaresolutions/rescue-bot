@@ -357,7 +357,9 @@ admin.post('/admin/publish', async (c) => {
   const tenant = c.get('tenant')
   if (!tenant) return c.json({ error: 'Tenant required' }, 400)
   try {
-    return c.json(await publishDraft(c.env, tenant))
+    const res = await publishDraft(c.env, tenant)
+    if ('conflict' in res) return c.json(res, 409)
+    return c.json(res)
   } catch (e) {
     return dbError(c, 'admin/publish', 'Could not publish your changes', e)
   }

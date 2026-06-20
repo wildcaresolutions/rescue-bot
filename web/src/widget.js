@@ -85,14 +85,54 @@ async function _fetchRuntimeConfig() {
   return null
 }
 
-// Inject CSS into page
-const styleEl = document.createElement('style')
-styleEl.textContent = widgetStyles
-document.head.appendChild(styleEl)
+// ── Shadow DOM host ──────────────────────────────────────────────────────────
+// All widget DOM and styles live inside a shadow root attached to a plain div
+// appended to document.body. This isolates widget styles and elements from
+// host-page CSS resets, class-name conflicts, and specificity wars.
+//
+// mode: 'open' so host pages (operators) can reach shadowRoot via
+// hostEl.shadowRoot for diagnostic inspection or testing — intentional for
+// the embeddable use case.
+let _shadowRoot = null
+let _hostEl = null
+
+/**
+ * Scoped querySelector — searches inside the shadow root only.
+ * Returns null if the shadow root hasn't been mounted yet.
+ */
+function _$(sel) { return _shadowRoot ? _shadowRoot.querySelector(sel) : null }
+
+/**
+ * Scoped getElementById — searches inside the shadow root only.
+ * Returns null if the shadow root hasn't been mounted yet.
+ */
+function _byId(id) { return _shadowRoot ? _shadowRoot.getElementById(id) : null }
+
+/**
+ * Create the host element, attach an open shadow root, and inject the base
+ * widget stylesheet into it. Idempotent — safe to call more than once.
+ *
+ * IMPORTANT: the host element must not have transform, filter, opacity, or
+ * will-change set on it. Those properties create a new stacking context that
+ * would trap the fixed-positioned button/pane at a z-index level below
+ * host-page elements. Keep the host element a plain, unstyled container.
+ */
+function mountShadowHost() {
+  if (_shadowRoot) return _shadowRoot
+  _hostEl = document.createElement('div')
+  _hostEl.id = 'rbot-widget-host'
+  document.body.appendChild(_hostEl)
+  _shadowRoot = _hostEl.attachShadow({ mode: 'open' })
+  const styleEl = document.createElement('style')
+  styleEl.textContent = widgetStyles
+  _shadowRoot.appendChild(styleEl)
+  return _shadowRoot
+}
 
 // Apply custom theme colors and size via CSS variable overrides
 let _themeStyleEl = null
 function applyTheme(theme) {
+  if (!_shadowRoot) return
   const vars = []
   if (theme.primaryColor) {
     vars.push(`--rbot-primary: ${theme.primaryColor}`)
@@ -126,7 +166,9 @@ function applyTheme(theme) {
   if (theme.font) {
     vars.push(`--rbot-font: '${theme.font}', var(--rbot-font-fallback, 'DM Sans', sans-serif)`)
     vars.push(`--wc-font: '${theme.font}', var(--wc-font-fallback, 'DM Sans', sans-serif)`)
-    // Dynamically load Google Font if not already loaded
+    // Dynamically load Google Font — must stay in document.head because
+    // @font-face declarations from external stylesheets are document-global
+    // and cannot be scoped inside a shadow root.
     if (theme.font !== 'DM Sans' && !document.querySelector(`link[href*="fonts.googleapis.com"][href*="${encodeURIComponent(theme.font)}"]`)) {
       const link = document.createElement('link')
       link.rel = 'stylesheet'
@@ -150,15 +192,18 @@ function applyTheme(theme) {
   if (vars.length === 0) return
   if (_themeStyleEl) _themeStyleEl.remove()
   _themeStyleEl = document.createElement('style')
-  _themeStyleEl.textContent = `:root { ${vars.join('; ')} }`
-  document.head.appendChild(_themeStyleEl)
+  // `:host` targets the shadow host element; custom properties declared on it
+  // cascade into all shadow-tree descendants — the shadow equivalent of `:root`.
+  _themeStyleEl.textContent = `:host { ${vars.join('; ')} }`
+  _shadowRoot.appendChild(_themeStyleEl)
 }
 
 // Apply size configuration via CSS variables
 function applySizeConfig(config) {
+  if (!_shadowRoot) return
   const sizeStyles = document.createElement('style')
   sizeStyles.textContent = `
-    :root {
+    :host {
       ${config.width ? `--widget-width: ${config.width};` : ''}
       ${config.maxWidth ? `--widget-max-width: ${config.maxWidth};` : ''}
       ${config.height ? `--widget-height: ${config.height};` : ''}
@@ -167,11 +212,12 @@ function applySizeConfig(config) {
       ${config.minHeight ? `--widget-min-height: ${config.minHeight};` : ''}
     }
   `
-  document.head.appendChild(sizeStyles)
+  _shadowRoot.appendChild(sizeStyles)
 }
 
 // Apply custom position overrides for button and/or pane
 function applyPositionConfig(config) {
+  if (!_shadowRoot) return
   const rules = []
   if (config.buttonPosition) {
     const props = Object.entries(config.buttonPosition)
@@ -201,7 +247,7 @@ function applyPositionConfig(config) {
   if (rules.length > 0) {
     const posStyles = document.createElement('style')
     posStyles.textContent = rules.join('\n')
-    document.head.appendChild(posStyles)
+    _shadowRoot.appendChild(posStyles)
   }
 }
 
@@ -210,9 +256,10 @@ let _customStyleEl = null
 function applyCustomCSS(css) {
   if (_customStyleEl) _customStyleEl.remove()
   if (!css) return
+  if (!_shadowRoot) return
   _customStyleEl = document.createElement('style')
   _customStyleEl.textContent = css
-  document.head.appendChild(_customStyleEl)
+  _shadowRoot.appendChild(_customStyleEl)
 }
 
 // Preview mode: accept config overrides via postMessage from admin editor.
@@ -261,25 +308,25 @@ window.addEventListener('message', (event) => {
   if (position) applyPositionConfig(position)
   if (customCSS !== undefined) applyCustomCSS(customCSS)
   if (buttonText !== undefined) {
-    const btn = document.getElementById('rbot-widget-button')
+    const btn = _byId('rbot-widget-button')
     // textContent (not innerHTML — see preamble) defuses the operator-XSS
     // path even on otherwise-malformed input.
     if (btn) btn.textContent = String(buttonText)
   }
   if (headerText !== undefined) {
-    const title = document.querySelector('.rbot-widget-title')
+    const title = _$('.rbot-widget-title')
     const safe = String(headerText) || _runtimeConfig?.name || widgetConfig.agentName
     if (title) title.textContent = safe
     widgetConfig.agentName = safe
   }
   if (welcomeMessage !== undefined) {
-    const input = document.querySelector('.rbot-widget-input')
+    const input = _$('.rbot-widget-input')
     if (input) input.placeholder = welcomeMessage
     widgetConfig.welcomeMessage = welcomeMessage
     // Welcome text is the input placeholder only — no chat bubble.
     // If a stale bubble exists (older widget release that minted one),
     // remove it so the live preview matches the new behavior.
-    const stale = document.getElementById('rbot-widget-welcome-message')
+    const stale = _byId('rbot-widget-welcome-message')
     if (stale) stale.remove()
   }
   if (autoOpen !== undefined) {
@@ -290,9 +337,9 @@ window.addEventListener('message', (event) => {
     // exactly what was happening. Compare against the previous value.
     const prev = window.__rbot_lastAutoOpen
     if (prev !== autoOpen) {
-      const btn = document.getElementById('rbot-widget-button')
+      const btn = _byId('rbot-widget-button')
       if (autoOpen && !isOpen && btn) btn.click()
-      if (!autoOpen && isOpen) { const c = document.querySelector('.rbot-widget-close'); if (c) c.click() }
+      if (!autoOpen && isOpen) { const c = _$('.rbot-widget-close'); if (c) c.click() }
       window.__rbot_lastAutoOpen = autoOpen
     }
   }
@@ -405,7 +452,7 @@ async function initWidget() {
     if (rc && !rc.platform) {
       // Visibility check happens BEFORE any DOM mount. If the widget
       // shouldn't show on this page, bail out cleanly — no button, no pane,
-      // no listeners. CSS injected at module load is harmless without DOM.
+      // no listeners.
       const eo = rc.widget_theme?.embedOptions
       if (_shouldHideForCMS(eo)) return
       // Override widget config with tenant branding
@@ -458,6 +505,10 @@ async function initWidget() {
       widgetConfig.welcomeMessage = wt.welcomeMessage || 'Describe what you\'re seeing'
     }
   }
+
+  // All bail-out checks have passed. Create the shadow host now, before any
+  // style-apply or DOM-creation functions that target _shadowRoot.
+  mountShadowHost()
 
   // Apply data-attribute overrides (highest priority after window.RescueBotChat)
   if (_dataAttrs.primaryColor || _dataAttrs.secondaryColor) {
@@ -516,7 +567,7 @@ function createWidgetUI() {
   button.addEventListener('click', () => {
     isOpen ? closeWidget() : openWidget()
   })
-  document.body.appendChild(button)
+  _shadowRoot.appendChild(button)
 
   // Create widget container (hidden by default)
   const container = document.createElement('div')
@@ -563,7 +614,7 @@ function createWidgetUI() {
       </div>
     </div>
   `
-  document.body.appendChild(container)
+  _shadowRoot.appendChild(container)
   // Set operator-supplied text via safe DOM properties (never innerHTML).
   container.querySelector('.rbot-widget-title').textContent = widgetConfig.agentName
   container.querySelector('#rbot-widget-input').placeholder =
@@ -615,15 +666,18 @@ function createWidgetUI() {
 // so the open chat pane's title could sit UNDER that bar. Measure the bar and
 // expose its height as --rbot-top-inset; the overlay pads its top by that much
 // so the pane (and its header) always clears it. 0 when no bar is present.
+//
+// --rbot-top-inset is set on the shadow host element; custom properties
+// inherit across the shadow boundary so all shadow-tree descendants see it.
 function updateTopInset() {
   let inset = 0
-  const bar = document.getElementById('wpadminbar')
+  const bar = document.getElementById('wpadminbar')  // host-page element, keep on document
   if (bar) {
     const r = bar.getBoundingClientRect()
     // Only count a bar actually pinned to the very top of the viewport.
     if (r.height > 0 && r.top <= 1 && r.bottom > 0) inset = Math.ceil(r.bottom)
   }
-  document.documentElement.style.setProperty('--rbot-top-inset', inset + 'px')
+  if (_hostEl) _hostEl.style.setProperty('--rbot-top-inset', inset + 'px')
 }
 
 // The admin bar height changes at WP's 783px breakpoint (32px ↔ 46px); keep the
@@ -633,22 +687,22 @@ window.addEventListener('resize', () => { if (isOpen) updateTopInset() })
 function openWidget() {
   isOpen = true
   updateTopInset()
-  const container = document.getElementById('rbot-widget-container')
+  const container = _byId('rbot-widget-container')
   container.classList.add('rbot-widget-open')
-  document.getElementById('rbot-widget-button').style.display = 'none'
+  _byId('rbot-widget-button').style.display = 'none'
 }
 
 function closeWidget() {
   isOpen = false
-  const container = document.getElementById('rbot-widget-container')
+  const container = _byId('rbot-widget-container')
   container.classList.remove('rbot-widget-open')
-  document.getElementById('rbot-widget-button').style.display = 'block'
+  _byId('rbot-widget-button').style.display = 'block'
 }
 
 async function initializeChat() {
-  const messagesEl = document.getElementById('rbot-widget-messages')
-  const input = document.getElementById('rbot-widget-input')
-  const sendBtn = document.getElementById('rbot-widget-send')
+  const messagesEl = _byId('rbot-widget-messages')
+  const input = _byId('rbot-widget-input')
+  const sendBtn = _byId('rbot-widget-send')
 
   try {
     // Check for existing session
@@ -710,7 +764,7 @@ async function initializeChat() {
 }
 
 async function createNewSession() {
-  const messagesEl = document.getElementById('rbot-widget-messages')
+  const messagesEl = _byId('rbot-widget-messages')
   const session = await createSession()
   currentSessionId = session.id
   currentSessionToken = session.session_token ?? null
@@ -740,7 +794,7 @@ async function refreshSessionToken() {
  * this tenant. Driven by presence of session_token.
  */
 function applyPhotoUploadVisibility() {
-  const paperclip = document.getElementById('rbot-widget-paperclip')
+  const paperclip = _byId('rbot-widget-paperclip')
   const enabled = Boolean(currentSessionToken)
   if (paperclip) paperclip.hidden = !enabled
   if (paperclip) {
@@ -828,7 +882,7 @@ async function startNewConversation() {
   await createNewSession()
 
   // Focus input
-  const input = document.getElementById('rbot-widget-input')
+  const input = _byId('rbot-widget-input')
   if (input) input.focus()
 }
 
@@ -862,8 +916,8 @@ async function handlePhotoSelected(file) {
   }
 
   isStreaming = true
-  const sendBtn = document.getElementById('rbot-widget-send')
-  const input = document.getElementById('rbot-widget-input')
+  const sendBtn = _byId('rbot-widget-send')
+  const input = _byId('rbot-widget-input')
   if (sendBtn) sendBtn.disabled = true
   if (input) input.disabled = true
 
@@ -992,7 +1046,7 @@ async function handlePhotoSelected(file) {
  * DevTools for the underlying cause.
  */
 function addPhotoErrorMessage(message) {
-  const messagesEl = document.getElementById('rbot-widget-messages')
+  const messagesEl = _byId('rbot-widget-messages')
   if (!messagesEl) return
   const div = document.createElement('div')
   div.className = 'rbot-widget-message rbot-widget-message-system rbot-widget-photo-error'
@@ -1012,7 +1066,7 @@ function addPhotoErrorMessage(message) {
  * Click the X → confirm → server delete → remove bubble + decrement cap.
  */
 function addPhotoBubble(photoId, imgSrc, opts = {}) {
-  const messagesEl = document.getElementById('rbot-widget-messages')
+  const messagesEl = _byId('rbot-widget-messages')
   if (!messagesEl) return null
   const wrap = document.createElement('div')
   const uploadingClass = opts.uploading ? ' rbot-widget-photo-bubble-uploading' : ''
@@ -1060,8 +1114,8 @@ function addPhotoBubble(photoId, imgSrc, opts = {}) {
 async function handleSendMessage() {
   if (isStreaming || !currentSessionId) return
 
-  const input = document.getElementById('rbot-widget-input')
-  const sendBtn = document.getElementById('rbot-widget-send')
+  const input = _byId('rbot-widget-input')
+  const sendBtn = _byId('rbot-widget-send')
   const message = input.value.trim()
 
   if (!message) return
@@ -1118,7 +1172,7 @@ async function handleSendMessage() {
 }
 
 function addMessage(role, content, messageId = null) {
-  const messagesEl = document.getElementById('rbot-widget-messages')
+  const messagesEl = _byId('rbot-widget-messages')
   const messageDiv = document.createElement('div')
   messageDiv.className = `rbot-widget-message rbot-widget-message-${role}`
   if (messageId) {
@@ -1146,12 +1200,12 @@ function addMessage(role, content, messageId = null) {
 function updateMessage(messageEl, content) {
   const contentDiv = messageEl.querySelector('.rbot-widget-message-content')
   contentDiv.innerHTML = renderMarkdown(content)
-  const messagesEl = document.getElementById('rbot-widget-messages')
+  const messagesEl = _byId('rbot-widget-messages')
   messagesEl.scrollTop = messagesEl.scrollHeight
 }
 
 function addSystemMessage(content) {
-  const messagesEl = document.getElementById('rbot-widget-messages')
+  const messagesEl = _byId('rbot-widget-messages')
   const messageDiv = document.createElement('div')
   messageDiv.className = 'rbot-widget-message rbot-widget-message-system'
 
@@ -1165,7 +1219,7 @@ function addSystemMessage(content) {
 }
 
 function addTypingIndicator() {
-  const messagesEl = document.getElementById('rbot-widget-messages')
+  const messagesEl = _byId('rbot-widget-messages')
   const messageDiv = document.createElement('div')
   messageDiv.className = 'rbot-widget-message rbot-widget-message-assistant'
 

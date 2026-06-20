@@ -363,6 +363,31 @@ app.use('/platform/*', async (c, next) => {
 
 // ── Health ────────────────────────────────────────────────────────────────────
 
+// NEW-1: Cache the AI health probe result for 30 s per isolate.
+// Same pattern as rate-limiting state: module-level, not shared across isolates,
+// but prevents worst-case quota drain when the endpoint is hammered by a poller.
+let aiHealthCache: { ok: boolean; ts: number } | null = null
+const AI_HEALTH_TTL_MS = 30_000
+
+async function checkAiHealth(env: Env): Promise<boolean> {
+  const now = Date.now()
+  if (aiHealthCache && now - aiHealthCache.ts < AI_HEALTH_TTL_MS) {
+    return aiHealthCache.ok
+  }
+  try {
+    await Promise.race([
+      env.AI.run('@cf/baai/bge-base-en-v1.5', { text: ['health'] }),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
+    ])
+    aiHealthCache = { ok: true, ts: now }
+    return true
+  } catch (e) {
+    aiHealthCache = { ok: false, ts: now }
+    logError('health/ai-check-failed', { error: e })
+    return false
+  }
+}
+
 app.get('/health', async (c) => {
   // Response shape contract: workers/src/types/health.ts. Mirrored byte-for-byte
   // by infra/watchdog/src/health.ts — update both together. The watchdog probes
@@ -413,20 +438,9 @@ app.get('/health', async (c) => {
     logError('health/media-bucket-check-failed', { error: e })
   }
 
-  // Workers AI — minimal embeddings call to verify the AI binding is live.
-  // M-12: if the binding is unconfigured or the model fails, mark degraded
-  // so health returns 503 instead of 200 while every chat request fails.
-  // 3-second timeout via Promise.race so a slow binding doesn't stall /health.
-  try {
-    const probe = (c.env.AI.run('@cf/baai/bge-base-en-v1.5', { text: 'health' }) as Promise<{ data?: number[][] }>)
-    const timeout = new Promise<never>((_, rej) =>
-      setTimeout(() => rej(new Error('ai probe timeout')), 3000),
-    )
-    const r = await Promise.race([probe, timeout])
-    if (r?.data?.length) checks.ai = 'healthy'
-  } catch (e) {
-    console.error('[health] AI check failed:', e)
-  }
+  // Workers AI — cached probe via checkAiHealth (NEW-1: 30 s TTL prevents
+  // per-hit inference cost when endpoint is polled; see module-level helper).
+  if (await checkAiHealth(c.env)) checks.ai = 'healthy'
 
   const allOk = Object.values(checks).every(s => s === 'healthy')
   const body: HealthResponse = {
@@ -760,7 +774,7 @@ export default {
       ctx.waitUntil(
         env.DB.prepare("DELETE FROM magic_tokens WHERE expires_at < datetime('now')")
           .run()
-          .catch(e => console.error('[scheduled] magic_tokens cleanup failed:', e)),
+          .catch(e => logError('scheduled/magic-tokens-cleanup-failed', { error: e })),
       )
       const { results: tenants } = await env.DB.prepare(
         'SELECT id, message_retention_days, analysis_retention_days, daily_reports_enabled FROM tenants',

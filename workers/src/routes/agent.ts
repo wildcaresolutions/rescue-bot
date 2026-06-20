@@ -203,7 +203,7 @@ agentApp.post('/admin/agent', async (c) => {
         // M-10: Track copilot token usage in usage_log, same as main chat.
         c.executionCtx.waitUntil(
           logCopilotUsage(c.env, tenantId, AGENT_MODEL, event.usage).catch(e =>
-            console.error('[agent] Failed to log copilot usage:', e),
+            logError('agent/copilot-usage-log-failed', { error: e }),
           ),
         )
       },

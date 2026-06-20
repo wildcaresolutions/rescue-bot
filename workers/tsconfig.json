@@ -11,5 +11,6 @@
     "resolveJsonModule": true,
     "allowImportingTsExtensions": false
   },
-  "include": ["src/**/*.ts", "test/**/*.ts", "integration/**/*.ts", "vitest.config.ts", "vitest.integration.config.ts", "../shared/**/*.json"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "vitest.config.ts", "../shared/**/*.json"],
+  "exclude": ["integration/**", "vitest.integration.config.ts"]
 }

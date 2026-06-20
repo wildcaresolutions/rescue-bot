@@ -343,7 +343,7 @@
     <!-- Advanced Theming -->
     <section>
       <h2>Advanced: Custom CSS</h2>
-      <p>For complete control, you can override any widget styles in your own CSS. All widget elements use the <code>rbot-widget-</code> prefix:</p>
+      <p>The widget renders inside a <strong>Shadow DOM</strong>, which means host-page CSS cannot penetrate the shadow boundary and will not affect widget elements. To customize appearance, use the <strong>admin Custom CSS field</strong> (Playbook → Custom CSS) — styles entered there are injected directly inside the shadow root. All widget elements use the <code>rbot-widget-</code> prefix:</p>
       <pre><span class="comment">/* Example: Make the button circular */</span>
 .rbot-widget-button {
   width: 60px;

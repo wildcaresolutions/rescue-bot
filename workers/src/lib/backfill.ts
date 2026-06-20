@@ -8,7 +8,7 @@
  * Triggered from /admin/analyze-backfill (route in admin.ts).
  */
 import type { Env } from './types'
-import { quickAnalyzeSession } from '../routes/chat'
+import { quickAnalyzeSession } from './analyze-session'
 
 export interface BackfillResult {
   candidates: number

@@ -18,6 +18,7 @@ import { z } from 'zod'
 import { BUILTIN_GUIDES } from '../../guides'
 import { searchRAG } from '../rag'
 import { validateAnalyticsSql, ANALYTICS_SCHEMA_DESCRIPTION } from '../safe-sql'
+import { redactPIITextOnly } from '../pii-redact'
 import type { ToolContext } from './types'
 
 export function queriesTools(ctx: ToolContext) {
@@ -64,7 +65,7 @@ export function queriesTools(ctx: ToolContext) {
         // that does not match the caller, drop it and log a security alert.
         // This provides defense-in-depth against any validator bypass that
         // somehow passes — the row level is always safe regardless.
-        const safeRows = rows.filter((r) => {
+        const tenantFilteredRows = rows.filter((r) => {
           if (r && typeof r === 'object' && 'tenant_id' in r) {
             const match = (r as Record<string, unknown>).tenant_id === tenantId
             if (!match) {
@@ -77,7 +78,26 @@ export function queriesTools(ctx: ToolContext) {
           }
           return true
         })
-        const dropped = rows.length - safeRows.length
+        const dropped = rows.length - tenantFilteredRows.length
+
+        // M-3: Redact PII from results before they enter the LLM context.
+        // contact_info columns are replaced wholesale; all other string
+        // columns have regex-based PII patterns stripped.
+        const safeRows = tenantFilteredRows.map((r) => {
+          if (!r || typeof r !== 'object') return r
+          const redacted: Record<string, unknown> = {}
+          for (const [col, val] of Object.entries(r as Record<string, unknown>)) {
+            if (col === 'contact_info') {
+              redacted[col] = '[redacted — contact info not available in analytics]'
+            } else if (typeof val === 'string') {
+              redacted[col] = redactPIITextOnly(val)
+            } else {
+              redacted[col] = val
+            }
+          }
+          return redacted
+        })
+
         return {
           question,
           sql: v.sql,

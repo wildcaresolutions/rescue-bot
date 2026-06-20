@@ -24,7 +24,8 @@ import {
   sanitizeVisionField,
   type PhotoMetadata,
 } from '../lib/vision'
-import { dbError } from '../lib/errors'
+import { dbError, badRequest, notFound, unauthorized, forbidden } from '../lib/errors'
+import { logWarn, logError } from '../lib/logger'
 import { overlayTenant } from '../lib/draft'
 import { resolveSession, tenantCookiePrefix } from '../lib/auth'
 
@@ -124,7 +125,7 @@ async function buildRecentPhotoContext(
     ).bind(sessionId, tenantId).all() as { results: Row[] }
     rows = results
   } catch (e) {
-    console.warn('[chat] photo context load failed:', e)
+    logWarn('chat/photo-context-load-failed', { error: e })
     return ''
   }
   if (!rows.length) return ''
@@ -200,7 +201,7 @@ async function loadChatHistory(
     ).bind(sessionId, tenantId, HISTORY_LIMIT).all() as { results: Array<{ role: string; content: string }> }
     return results.map(r => ({ role: r.role as 'user' | 'assistant', content: r.content }))
   } catch (e) {
-    console.error('[chat] Failed to load history — starting fresh:', e)
+    logError('chat/load-history-failed', { error: e })
     return []
   }
 }
@@ -253,7 +254,7 @@ async function runMainChat(
         .bind(userMsgId, opts.linkPhotoId).run()
     }
   } catch (e) {
-    console.error('[chat] Failed to persist user message:', e)
+    logError('chat/persist-user-message-failed', { error: e })
     return new Response('Failed to record message', { status: 500 })
   }
 
@@ -275,7 +276,7 @@ async function runMainChat(
       onUsage: (u: unknown) => { capturedUsage = u },
     })
   } catch (e) {
-    console.error('[chat] AI Gateway stream open failed:', e)
+    logError('chat/ai-gateway-stream-open-failed', { error: e })
     return new Response('Assistant temporarily unavailable', { status: 502 })
   }
 
@@ -299,7 +300,7 @@ async function runMainChat(
           controller.enqueue(encoder.encode(value))
         }
       } catch (e) {
-        console.error('[chat] AI Gateway stream read failed:', e)
+        logError('chat/ai-gateway-stream-read-failed', { error: e })
       } finally {
         try { reader.releaseLock() } catch { /* already released */ }
         controller.close()
@@ -320,11 +321,11 @@ async function runMainChat(
               ? (/iPad|Tablet/i.test(ua) ? 'tablet' : 'mobile') : 'desktop'
             await quickAnalyzeSession(c.env.DB, tenantId, sessionId, deviceType)
           } catch (e) {
-            console.error('[chat] Failed to persist assistant message or analyze:', e)
+            logError('chat/persist-assistant-message-failed', { error: e })
           }
           if (capturedUsage) {
             await logUsage(c.env, tenantId, modelName, capturedUsage).catch(e =>
-              console.error('[chat] Failed to log usage:', e))
+              logError('chat/log-usage-failed', { error: e }))
           }
         })())
       }
@@ -356,7 +357,7 @@ chat.post('/api/sessions', async (c) => {
     try {
       session_token = await mintSessionToken(c.env, id, tenant.id)
     } catch (e) {
-      console.warn('[sessions/post] session token mint failed (continuing):', e)
+      logWarn('sessions/session-token-mint-failed', { error: e })
     }
   }
 
@@ -365,7 +366,7 @@ chat.post('/api/sessions', async (c) => {
 
 chat.get('/api/sessions/:id', async (c) => {
   const sessionId = c.req.param('id')
-  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
+  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
 
   const tenant = c.get('tenant')
   const tenantId = tenant!.id
@@ -428,24 +429,24 @@ chat.get('/api/sessions/:id', async (c) => {
  */
 chat.post('/api/sessions/:id/photo', async (c) => {
   const sessionId = c.req.param('id')
-  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
+  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
 
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const tenantId = tenant.id
 
   if (!photoUploadsEnabled(tenant)) {
-    return c.json({ error: 'Photo uploads not enabled for this tenant' }, 403)
+    return forbidden(c, 'Photo uploads not enabled for this tenant')
   }
   if (!(await validateSessionToken(c.env, c.req.raw, sessionId, tenantId))) {
-    return c.json({ error: 'Invalid session token' }, 401)
+    return unauthorized(c, 'Invalid session token')
   }
 
   let formData: FormData
   try {
     formData = await c.req.formData()
   } catch {
-    return c.json({ error: 'Expected multipart/form-data with photo field' }, 400)
+    return badRequest(c, 'Expected multipart/form-data with photo field')
   }
 
   const fileEntry = formData.get('photo')
@@ -453,7 +454,7 @@ chat.post('/api/sessions/:id/photo', async (c) => {
   // FormDataEntryValue is `File | string`. We need a Blob-like with .size,
   // .type, and .stream(). string entries fail the typeof check.
   if (!fileEntry || typeof fileEntry === 'string') {
-    return c.json({ error: 'photo field must be a file' }, 400)
+    return badRequest(c, 'photo field must be a file')
   }
   const file = fileEntry as Blob & { type?: string; name?: string }
   const kind: 'image' | 'video' = kindRaw === 'video' ? 'video' : 'image'
@@ -477,7 +478,7 @@ chat.post('/api/sessions/:id/photo', async (c) => {
   // client's file.type is discarded for storage purposes.
   const sniff = await validateUploadKind(file, kind)
   if (!sniff.ok) {
-    return c.json({ error: `photo content rejected: ${sniff.reason}` }, 400)
+    return badRequest(c, `photo content rejected: ${sniff.reason}`)
   }
   const contentType = sniff.type!.mime
 
@@ -506,7 +507,7 @@ chat.post('/api/sessions/:id/photo', async (c) => {
       httpMetadata: { contentType },
     })
   } catch (e) {
-    console.error('[photo-upload] R2 put failed:', e)
+    logError('photo-upload/r2-put-failed', { error: e })
     return c.json({ error: 'Failed to store photo' }, 500)
   }
 
@@ -517,7 +518,7 @@ chat.post('/api/sessions/:id/photo', async (c) => {
        ) VALUES (?, ?, ?, ?, ?, ?, ?, 'processing')`,
     ).bind(photoId, sessionId, tenantId, key, kind, now, now).run()
   } catch (e) {
-    console.error('[photo-upload] DB insert failed:', e)
+    logError('photo-upload/db-insert-failed', { error: e })
     // Roll back R2 — orphaned bytes aren't a security issue but waste storage.
     c.executionCtx.waitUntil(c.env.MEDIA_BUCKET.delete(key).catch(() => {}))
     return c.json({ error: 'Failed to record photo' }, 500)
@@ -533,15 +534,15 @@ chat.post('/api/sessions/:id/photo', async (c) => {
 chat.delete('/api/sessions/:id/photo/:photoId', async (c) => {
   const sessionId = c.req.param('id')
   const photoId = c.req.param('photoId')
-  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
-  if (!validSessionId(photoId)) return c.json({ error: 'Invalid photo ID' }, 400)
+  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
+  if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo ID')
 
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
   const tenantId = tenant.id
 
   if (!(await validateSessionToken(c.env, c.req.raw, sessionId, tenantId))) {
-    return c.json({ error: 'Invalid session token' }, 401)
+    return unauthorized(c, 'Invalid session token')
   }
 
   const row = await c.env.DB.prepare(
@@ -551,7 +552,7 @@ chat.delete('/api/sessions/:id/photo/:photoId', async (c) => {
     .bind(photoId, sessionId, tenantId)
     .first<{ r2_key: string; thumbnail_key: string | null; deleted_at: number | null }>()
 
-  if (!row) return c.json({ error: 'Not found' }, 404)
+  if (!row) return notFound(c, 'photo')
   if (row.deleted_at !== null) return new Response(null, { status: 204 })
 
   try {
@@ -560,7 +561,7 @@ chat.delete('/api/sessions/:id/photo/:photoId', async (c) => {
       row.thumbnail_key ? c.env.MEDIA_BUCKET.delete(row.thumbnail_key) : Promise.resolve(),
     ])
   } catch (e) {
-    console.error('[photo-delete] R2 delete failed:', e)
+    logError('photo-delete/r2-delete-failed', { error: e })
     return c.json({ error: 'Failed to delete photo' }, 500)
   }
 
@@ -580,7 +581,7 @@ chat.delete('/api/sessions/:id/photo/:photoId', async (c) => {
 
 chat.post('/api/sessions/:id', async (c) => {
   const sessionId = c.req.param('id')
-  if (!validSessionId(sessionId)) return c.json({ error: 'Invalid session ID' }, 400)
+  if (!validSessionId(sessionId)) return badRequest(c, 'Invalid session ID')
 
   const tenant = c.get('tenant')
   const tenantId = tenant!.id
@@ -609,7 +610,7 @@ chat.post('/api/sessions/:id', async (c) => {
   try {
     body = await c.req.json()
   } catch {
-    return c.json({ error: 'Invalid JSON body' }, 400)
+    return badRequest(c, 'Invalid JSON body')
   }
 
   const userMessage = typeof body?.message === 'string' ? body.message.trim() : ''
@@ -623,9 +624,9 @@ chat.post('/api/sessions/:id', async (c) => {
     return handlePhotoMessage(c, sessionId, tenantId, photoId, userMessage)
   }
 
-  if (!userMessage) return c.json({ error: 'message required' }, 400)
+  if (!userMessage) return badRequest(c, 'message required')
   if (userMessage.length > MAX_MESSAGE_LEN) {
-    return c.json({ error: `Message too long (max ${MAX_MESSAGE_LEN} characters)` }, 400)
+    return badRequest(c, `Message too long (max ${MAX_MESSAGE_LEN} characters)`)
   }
 
   return runMainChat(c, {
@@ -719,20 +720,20 @@ async function handlePhotoMessage(
   photoId: string,
   userMessage: string,
 ): Promise<Response> {
-  if (!validSessionId(photoId)) return c.json({ error: 'Invalid photo_id' }, 400)
+  if (!validSessionId(photoId)) return badRequest(c, 'Invalid photo_id')
   const tenant = c.get('tenant')!
 
   if (!photoUploadsEnabled(tenant)) {
-    return c.json({ error: 'Photo uploads not enabled for this tenant' }, 403)
+    return forbidden(c, 'Photo uploads not enabled for this tenant')
   }
   if (!(await validateSessionToken(c.env, c.req.raw, sessionId, tenantId))) {
-    return c.json({ error: 'Invalid session token' }, 401)
+    return unauthorized(c, 'Invalid session token')
   }
   // userMessage is optional in vision flow — citizen can upload a photo with
   // no text and the bot speaks first ("photo opens the conversation"). Cap
   // length defensively.
   if (userMessage.length > MAX_MESSAGE_LEN) {
-    return c.json({ error: `Message too long (max ${MAX_MESSAGE_LEN} characters)` }, 400)
+    return badRequest(c, `Message too long (max ${MAX_MESSAGE_LEN} characters)`)
   }
 
   // Look up the photo. Must belong to session + tenant + have an uploaded_at
@@ -753,7 +754,7 @@ async function handlePhotoMessage(
       message_id: string | null
     }>()
 
-  if (!photoRow) return c.json({ error: 'Photo not found' }, 404)
+  if (!photoRow) return notFound(c, 'photo')
   if (photoRow.deleted_at !== null) return c.json({ error: 'Photo deleted' }, 410)
   if (photoRow.message_id) {
     return c.json({ error: 'Photo has already been attached to a chat turn' }, 409)
@@ -793,11 +794,11 @@ async function handlePhotoMessage(
     c.executionCtx.waitUntil(
       recognition.usage
         ? logUsage(c.env, tenantId, recognition.model, recognition.usage)
-          .catch(e => console.error('[chat/photo] Failed to log vision usage:', e))
+          .catch(e => logError('chat/photo-log-vision-usage-failed', { error: e }))
         : Promise.resolve(),
     )
   } catch (e) {
-    console.error('[chat/photo] metadata extraction failed:', e)
+    logError('chat/photo-metadata-extraction-failed', { error: e })
   }
 
   if (metadata) {
@@ -822,12 +823,12 @@ async function handlePhotoMessage(
         )
         .run()
     } catch (e) {
-      console.error('[chat/photo] persist photo metadata failed:', e)
+      logError('chat/photo-persist-metadata-failed', { error: e })
     }
   } else {
     await c.env.DB.prepare(`UPDATE photos SET metadata_status = 'metadata_failed' WHERE id = ?`)
       .bind(photoId).run()
-      .catch((e) => console.error('[chat/photo] mark metadata_failed failed:', e))
+      .catch((e) => logError('chat/photo-mark-metadata-failed', { error: e }))
   }
 
   return runMainChat(c, {
@@ -849,12 +850,12 @@ chat.post('/api/messages', async (c) => {
   const tenantId = tenant!.id
 
   let body: Record<string, unknown>
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
 
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
   const role = typeof body.role === 'string' ? body.role : ''
-  if (!sessionId || !validSessionId(sessionId)) return c.json({ error: 'Valid sessionId required' }, 400)
-  if (role !== 'user' && role !== 'assistant') return c.json({ error: 'role must be user or assistant' }, 400)
+  if (!sessionId || !validSessionId(sessionId)) return badRequest(c, 'Valid sessionId required')
+  if (role !== 'user' && role !== 'assistant') return badRequest(c, 'role must be user or assistant')
 
   const messageId = typeof body.messageId === 'string' && body.messageId
     ? body.messageId.slice(0, 128) : `msg-${crypto.randomUUID()}`
@@ -891,13 +892,13 @@ chat.post('/api/feedback', async (c) => {
   const tenantId = tenant!.id
 
   let body: Record<string, unknown>
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON body' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON body') }
 
   const sessionId = typeof body.sessionId === 'string' ? body.sessionId : ''
-  if (!sessionId || !validSessionId(sessionId)) return c.json({ error: 'Valid sessionId required' }, 400)
+  if (!sessionId || !validSessionId(sessionId)) return badRequest(c, 'Valid sessionId required')
 
   const rating = body.rating
-  if (rating !== 0 && rating !== 1) return c.json({ error: 'rating must be 0 or 1' }, 400)
+  if (rating !== 0 && rating !== 1) return badRequest(c, 'rating must be 0 or 1')
 
   const testerName = clamp(body.testerName as string, MAX_TEXT_FIELD_LEN)
   const isTester = testerName ? 1 : 0

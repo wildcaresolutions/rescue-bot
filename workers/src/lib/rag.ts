@@ -1,5 +1,6 @@
 import type { Env } from './types'
 import { SPECIES_CATALOG } from './species-catalog'
+import { logWarn } from './logger'
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -228,12 +229,26 @@ export async function searchRAG(
 
   let vecResults = await Promise.all(vecQueries)
   let totalMatches = vecResults.reduce((sum, r) => sum + r.matches.length, 0)
+  let usedFallback = false
 
-  // Legacy fallback: pre-multi-tenant generic vectors have no tenant_id
-  // metadata, so the scoped query returns zero. Retry unfiltered, but only
-  // accept rows that are explicitly shared/tenant-owned or legacy generic
-  // docs. Legacy site/* rows are org-specific and must not cross tenants.
+  // ⚠️ SECURITY — Fail-open legacy fallback. Risk: if the post-filter
+  // predicate below is ever broken by a refactor, cross-tenant RAG chunks
+  // could be returned to the wrong tenant. The correct long-term fix is to
+  // RE-INDEX all legacy vectors with `tenant_id` metadata so the scoped
+  // query finds them without this unfiltered fallback path.
+  //
+  // Until re-indexing is done, we keep the fallback but instrument it:
+  // any chunk that would be DROPPED because its metaTenant is neither
+  // 'shared' nor the current tenantId (i.e. a real cross-tenant leak)
+  // emits a logWarn so the failure is loud rather than silent.
+  //
+  // DO NOT REMOVE this block without first confirming all production
+  // Vectorize vectors carry tenant_id metadata (run:
+  //   node workers/scripts/audit-vector-metadata.js
+  // — or check that the scoped query above returns > 0 for all active
+  // tenants after a full re-index).
   if (totalMatches === 0) {
+    usedFallback = true
     const fallbackQueries: Array<Promise<VectorizeMatches>> = [
       env.VECTORIZE.query(origVec, { topK, returnMetadata: 'all' }),
     ]
@@ -264,6 +279,16 @@ export async function searchRAG(
       const metaTenant = meta.tenant_id
       const isLegacySharedGeneric = !metaTenant && meta.source?.startsWith('generic/')
       if (metaTenant !== 'shared' && metaTenant !== tenantId && !isLegacySharedGeneric) {
+        // If we're in the unfiltered fallback path and dropping a chunk whose
+        // tenant doesn't match, emit a warning so a broken filter predicate
+        // is detected immediately rather than silently discarding data.
+        if (usedFallback) {
+          logWarn('rag/fallback-cross-tenant-drop', {
+            tenant_id: tenantId,
+            dropped_tenant: metaTenant ?? null,
+            source: meta.source ?? null,
+          })
+        }
         continue
       }
       // Override mode: keep the operator's tenant-scoped chunks for this

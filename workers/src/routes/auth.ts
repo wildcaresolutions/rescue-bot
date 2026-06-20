@@ -16,6 +16,8 @@ import {
 import { sendEmail } from '../lib/email'
 import { getAuthFromEmail, getPlatformName } from '../lib/platform'
 import { verifyTurnstile } from '../lib/turnstile'
+import { badRequest, notFound, unauthorized } from '../lib/errors'
+import { logError, logInfo } from '../lib/logger'
 
 const TOKEN_EXPIRY_MINUTES = 15
 
@@ -118,11 +120,11 @@ export async function issueMagicLink(
 /** Request a magic link. Sends an email with a login token. */
 auth.post('/api/auth/request', async (c) => {
   let body: { email?: string; turnstile_token?: string }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
 
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   if (!email || !emailValid(email)) {
-    return c.json({ error: 'Valid email required' }, 400)
+    return badRequest(c, 'Valid email required')
   }
 
   // Turnstile (skip in local dev when DEV_AUTH_BYPASS is on).
@@ -130,7 +132,7 @@ auth.post('/api/auth/request', async (c) => {
     const ip = c.req.header('CF-Connecting-IP') ?? c.req.header('X-Forwarded-For') ?? null
     const t = await verifyTurnstile(body.turnstile_token, ip, c.env.TURNSTILE_SECRET_KEY)
     if (!t.ok) {
-      console.error('[auth/request] turnstile rejected:', t)
+      logError('auth/turnstile-rejected', { reason: t.reason, details: t.details })
       // 'missing_secret' is an env misconfiguration on our side — surface as 503
       // so we notice. Other failures are client-side; respond 400.
       if (t.reason === 'missing_secret' || t.reason === 'network') {
@@ -217,7 +219,7 @@ auth.post('/api/auth/request', async (c) => {
   // magic-link URL in the worker log AND in the response so the operator
   // doesn't have to dig through /var/folders to find it.
   if (isDevAuthBypass(c.env)) {
-    console.log(`[auth/request] DEV magic link for ${email}: ${loginUrl}`)
+    logInfo('auth/dev-magic-link', { email, loginUrl })
     return c.json({
       success: true,
       message: 'Development mode: email "sent" but use the link below directly.',
@@ -478,20 +480,20 @@ auth.post('/api/auth/verify', async (c) => {
 /** Add a user to a tenant (admin only). */
 auth.post('/api/auth/users', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   let body: { email?: string; role?: string }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
 
   const email = typeof body.email === 'string' ? body.email.trim().toLowerCase() : ''
   if (!email || !emailValid(email)) {
-    return c.json({ error: 'Valid email required' }, 400)
+    return badRequest(c, 'Valid email required')
   }
 
   // Refuse to insert a platform admin into tenant_users — they're a hidden
   // role and shouldn't appear in tenant-visible user lists.
   if (isPlatformAdminEmail(email, c.env)) {
-    return c.json({ error: 'This email is reserved' }, 400)
+    return badRequest(c, 'This email is reserved')
   }
 
   const role = body.role === 'viewer' ? 'viewer' : 'admin'
@@ -541,7 +543,7 @@ auth.post('/api/auth/users', async (c) => {
 /** List users for a tenant (admin only). Platform admins never appear here. */
 auth.get('/api/auth/users', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   const { results } = await c.env.DB.prepare(
     'SELECT id, email, role, created_at FROM tenant_users WHERE tenant_id = ? ORDER BY created_at',
@@ -553,7 +555,7 @@ auth.get('/api/auth/users', async (c) => {
 /** Remove a user from a tenant (admin only). */
 auth.delete('/api/auth/users/:userId', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   const userId = c.req.param('userId')
   await c.env.DB.prepare(
@@ -584,11 +586,11 @@ async function resolveCallerEmail(
 /** Get current user's profile. Platform admins are stored in platform_users. */
 auth.get('/api/auth/me', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   const cookiePrefix = tenantCookiePrefix(tenant.slug)
   const decodedEmail = await resolveCallerEmail(c, cookiePrefix)
-  if (!decodedEmail) return c.json({ error: 'Not signed in' }, 401)
+  if (!decodedEmail) return unauthorized(c, 'Not signed in')
 
   const platformAdmin = isPlatformAdminEmail(decodedEmail, c.env)
 
@@ -609,7 +611,7 @@ auth.get('/api/auth/me', async (c) => {
     'SELECT email, display_name, avatar_url, role FROM tenant_users WHERE tenant_id = ? AND email = ?',
   ).bind(tenant.id, decodedEmail).first<{ email: string; display_name: string | null; avatar_url: string | null; role: string }>()
 
-  if (!user) return c.json({ error: 'User not found' }, 404)
+  if (!user) return notFound(c, 'user')
 
   return c.json({
     email: user.email,
@@ -623,7 +625,7 @@ auth.get('/api/auth/me', async (c) => {
 /** Update current user's profile. */
 auth.put('/api/auth/me', async (c) => {
   const tenant = c.get('tenant')
-  if (!tenant) return c.json({ error: 'Tenant required' }, 400)
+  if (!tenant) return badRequest(c, 'Tenant required')
 
   const cookiePrefix = tenantCookiePrefix(tenant.slug)
   // Audit ralph-1 C4: identity for writes comes from the signed session
@@ -631,12 +633,12 @@ auth.put('/api/auth/me', async (c) => {
   // verifiedToken.email and falls back to the legacy cookie only for v1
   // tokens still in flight.
   const decodedEmail = await resolveCallerEmail(c, cookiePrefix)
-  if (!decodedEmail) return c.json({ error: 'Not signed in' }, 401)
+  if (!decodedEmail) return unauthorized(c, 'Not signed in')
 
   const platformAdmin = isPlatformAdminEmail(decodedEmail, c.env)
 
   let body: { display_name?: string; avatar_url?: string | null }
-  try { body = await c.req.json() } catch { return c.json({ error: 'Invalid JSON' }, 400) }
+  try { body = await c.req.json() } catch { return badRequest(c, 'Invalid JSON') }
 
   const displayName = typeof body.display_name === 'string' ? body.display_name.trim().slice(0, 100) : null
   // avatar_url: accept null to clear, or a trimmed URL up to 1024 chars. We
@@ -645,7 +647,7 @@ auth.put('/api/auth/me', async (c) => {
   if (typeof body.avatar_url === 'string') {
     const trimmed = body.avatar_url.trim().slice(0, 1024)
     if (trimmed && !/^https?:\/\//i.test(trimmed)) {
-      return c.json({ error: 'avatar_url must be an http(s) URL' }, 400)
+      return badRequest(c, 'avatar_url must be an http(s) URL')
     }
     avatarUrl = trimmed || null
   }

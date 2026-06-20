@@ -9,6 +9,7 @@
  */
 import type { Env } from './types'
 import { quickAnalyzeSession } from './analyze-session'
+import { logError } from './logger'
 
 export interface BackfillResult {
   candidates: number
@@ -32,7 +33,7 @@ export async function backfillSessionAnalysis(env: Env, tenantId: string): Promi
       analyzed++
     } catch (e) {
       failed++
-      console.error('[backfill] session', session_id, e)
+      logError('backfill/session-analyze-failed', { session_id, error: e })
     }
   }
 

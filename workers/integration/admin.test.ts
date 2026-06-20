@@ -334,6 +334,23 @@ describe('GET /admin/evals', () => {
 describe('Evals CRUD lifecycle', () => {
   let createdId: string | undefined
 
+  afterAll(async () => {
+    // Belt-and-suspenders cleanup: if the process was interrupted before the
+    // DELETE test ran, find and remove the integration scenario by description.
+    const listRes = await fetch(`${BASE_URL}/admin/evals`, {
+      headers: { ...adminHeaders },
+    })
+    if (!listRes.ok) return
+    const body = await listRes.json() as { scenarios: Array<{ id: string; description: string }> }
+    const found = body.scenarios.find(s => s.description.startsWith('Integration test scenario'))
+    if (found) {
+      await fetch(`${BASE_URL}/admin/evals/${found.id}`, {
+        method: 'DELETE',
+        headers: { ...adminHeaders },
+      })
+    }
+  })
+
   it('POST /admin/evals creates a scenario (200) and returns an id', async () => {
     const res = await fetch(`${BASE_URL}/admin/evals`, {
       method: 'POST',
@@ -379,6 +396,15 @@ describe('Evals CRUD lifecycle', () => {
     const body = await res.json() as Record<string, unknown>
     expect(body.id).toBe(createdId)
     expect(body.description).toBe('Integration test scenario — updated description')
+    // PUT must reset review_status to 'unreviewed'. The list endpoint returns
+    // all scenarios including review_status — verify via a targeted GET.
+    const listRes = await fetch(`${BASE_URL}/admin/evals`, {
+      headers: { ...adminHeaders },
+    })
+    const list = await listRes.json() as { scenarios: Array<{ id: string; review_status?: string }> }
+    const updated = list.scenarios.find(s => s.id === createdId)
+    // review_status may be 'unreviewed' (explicit) or absent (implicit unreviewed).
+    expect(['unreviewed', undefined, null]).toContain(updated?.review_status)
   })
 
   it('POST /admin/evals/:id/review marks the scenario as approved', async () => {

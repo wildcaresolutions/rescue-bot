@@ -27,22 +27,7 @@ export const TENANT_SLUG = process.env.TEST_TENANT_SLUG ?? 'test-org'
 export const TENANT_ID = process.env.TEST_TENANT_ID ?? 'test-0001-dev-tenant'
 export const FOREIGN_TENANT_ID = 'ffffffff-0000-0000-0000-000000000000'
 
-// Warn loudly when required env vars are missing so a CI misconfiguration
-// surfaces immediately rather than silently targeting localhost.
-if (!process.env.SIGNING_SECRET) {
-  console.warn(
-    '[integration harness] SIGNING_SECRET is not set — falling back to dev-secret.\n' +
-    'Tokens will be rejected by any deployed worker. Set SIGNING_SECRET to the\n' +
-    'deployed worker\'s SIGNING_SECRET binding before running integration tests.',
-  )
-}
-if (!process.env.BASE_URL) {
-  console.warn(
-    '[integration harness] BASE_URL is not set — targeting http://localhost:8787.\n' +
-    'Run `make cf-dev` first, or set BASE_URL to a deployed test worker URL.',
-  )
-}
-
+// Only SIGNING_SECRET is needed for token minting — cast as partial Env.
 const signingEnv = { SIGNING_SECRET: process.env.SIGNING_SECRET ?? 'dev-secret' } as unknown as Env
 
 // Top-level await: generates short-lived tokens at import time.

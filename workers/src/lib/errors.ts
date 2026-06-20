@@ -28,6 +28,7 @@
  */
 
 import type { Context } from 'hono'
+import type { ContentfulStatusCode } from 'hono/utils/http-status'
 import type { Variables, Env } from './types'
 import { logError } from './logger'
 
@@ -97,4 +98,18 @@ export function badRequest(c: C, reason: string): Response {
  */
 export function tooManyRequests(c: C, reason = 'Rate limit exceeded'): Response {
   return c.json({ error: reason }, 429)
+}
+
+/**
+ * Dynamic-status error. Use when a lib function returns
+ * `{ error: string; status: number }` and the status is variable.
+ *
+ * Eliminates the ~15 copies of:
+ *   `if ('error' in result) return c.json({ error: result.error }, result.status as StatusCode)`
+ * in admin.ts.
+ *
+ *   if ('error' in result) return libError(c, result)
+ */
+export function libError(c: C, result: { error: string; status: number }): Response {
+  return c.json({ error: result.error }, result.status as ContentfulStatusCode)
 }

@@ -69,12 +69,44 @@ export async function listDomains(env: Env, tenantId: string): Promise<unknown[]
   return results
 }
 
+/**
+ * Normalize and validate a raw domain string submitted by the operator.
+ * Returns `{ domain }` on success, or `{ error }` on failure.
+ *
+ * Exported for unit testing without needing a D1 mock.
+ */
+export function normalizeDomain(raw: string): { domain: string } | { error: string } {
+  const stripped = raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
+  if (!stripped) return { error: 'Domain required' }
+  if (stripped.includes('*')) return { error: 'Wildcard domains are not supported' }
+  let hostname: string
+  try {
+    hostname = new URL('https://' + stripped).hostname
+  } catch {
+    return { error: 'Invalid domain' }
+  }
+  // Reject if the parsed hostname differs from our normalized input (e.g., the
+  // input contained a port, userinfo, or other junk that URL normalization
+  // silently drops — those shouldn't be stored as-is).
+  if (hostname !== stripped) return { error: 'Invalid domain' }
+  const labels = hostname.split('.')
+  // Empty label means a trailing dot or double dot — structurally invalid.
+  if (labels.some(l => l.length === 0)) return { error: 'Invalid domain' }
+  // Require at least two non-empty labels (e.g. example.com). Bare TLDs
+  // like "com" or "net" would CORS-allow every matching origin via the
+  // `originHost.endsWith('.' + d)` matcher in isOriginAllowed.
+  if (labels.length < 2) {
+    return { error: 'Enter a full domain like example.com (bare TLDs are not allowed)' }
+  }
+  return { domain: hostname }
+}
+
 export async function addDomain(env: Env, tenantId: string, raw: string): Promise<{ ok: true } | { error: string; status: number }> {
-  const domain = raw.trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '')
-  if (!domain) return { error: 'Domain required', status: 400 }
+  const result = normalizeDomain(raw)
+  if ('error' in result) return { error: result.error, status: 400 }
   await env.DB.prepare(
     'INSERT OR IGNORE INTO allowed_domains (tenant_id, domain) VALUES (?, ?)',
-  ).bind(tenantId, domain).run()
+  ).bind(tenantId, result.domain).run()
   invalidateDomainsCache(tenantId)
   return { ok: true }
 }

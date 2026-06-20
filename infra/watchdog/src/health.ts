@@ -19,7 +19,8 @@ export type HealthResponse = {
   vectorize: HealthStatus
   storage: HealthStatus
   media_storage: HealthStatus
+  ai: HealthStatus
 }
 
-export const HEALTH_CHECK_KEYS = ['database', 'vectorize', 'storage', 'media_storage'] as const
+export const HEALTH_CHECK_KEYS = ['database', 'vectorize', 'storage', 'media_storage', 'ai'] as const
 export type HealthCheckKey = (typeof HEALTH_CHECK_KEYS)[number]

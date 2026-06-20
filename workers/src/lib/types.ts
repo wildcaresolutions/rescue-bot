@@ -109,6 +109,7 @@ export interface Tenant {
 export type Variables = {
   tenant: Tenant | null
   authToken: string | null
+  originAllowed?: boolean
 }
 
 export type AppType = Hono<{ Bindings: Env; Variables: Variables }>

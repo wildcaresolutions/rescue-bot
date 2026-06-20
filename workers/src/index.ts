@@ -13,6 +13,7 @@ import platform from './routes/platform'
 import agent from './routes/agent'
 import authRoutes from './routes/auth'
 import type { HealthResponse, HealthStatus, HealthCheckKey } from './types/health'
+import { getCachedDomains, cacheDomains } from './lib/cache'
 import { parseOrgConfig } from './lib/tenant-loader'
 import { overlayTenant, hasDraft } from './lib/draft'
 
@@ -197,11 +198,18 @@ async function isOriginAllowed(origin: string, tenant: Tenant | null, db: D1Data
   if (!tenant) return false
 
   try {
-    const { results } = await db.prepare(
-      'SELECT domain FROM allowed_domains WHERE tenant_id = ?',
-    ).bind(tenant.id).all()
-    for (const row of results) {
-      const d = row.domain as string
+    // L-7: use cross-request domains cache to avoid a D1 round-trip on every
+    // CORS-eligible request. Cache is invalidated when domains are added or
+    // removed via the admin API (admin-misc.ts: addDomain/removeDomain).
+    let domains = getCachedDomains(tenant.id)
+    if (domains === null) {
+      const { results } = await db.prepare(
+        'SELECT domain FROM allowed_domains WHERE tenant_id = ?',
+      ).bind(tenant.id).all()
+      domains = results.map(r => r.domain as string)
+      cacheDomains(tenant.id, domains)
+    }
+    for (const d of domains) {
       if (originHost === d || originHost.endsWith('.' + d)) return true
     }
   } catch { /* fail closed */ }
@@ -209,12 +217,32 @@ async function isOriginAllowed(origin: string, tenant: Tenant | null, db: D1Data
   return false
 }
 
+/**
+ * M-6: within-request memoization for isOriginAllowed.
+ *
+ * For a normal cross-origin POST to /api/sessions the auth middleware runs
+ * during next() (computing + caching the boolean), then the CORS post-next
+ * header block reads the cached value — eliminating the second D1 query.
+ * Origin and tenant are constant per request, so the boolean is safe to memo.
+ */
+async function isOriginAllowedCached(
+  c: { get: (k: 'originAllowed') => boolean | undefined; set: (k: 'originAllowed', v: boolean) => void; env: { DB: D1Database } },
+  origin: string,
+  tenant: Tenant | null,
+): Promise<boolean> {
+  const cached = c.get('originAllowed')
+  if (cached !== undefined) return cached
+  const result = await isOriginAllowed(origin, tenant, c.env.DB)
+  c.set('originAllowed', result)
+  return result
+}
+
 app.use('*', async (c, next) => {
   const origin = c.req.header('Origin')
 
   if (c.req.method === 'OPTIONS') {
     const tenant = c.get('tenant')
-    const allowed = origin ? await isOriginAllowed(origin, tenant, c.env.DB) : false
+    const allowed = origin ? await isOriginAllowedCached(c, origin, tenant) : false
 
     return new Response(null, {
       status: 204,
@@ -231,7 +259,7 @@ app.use('*', async (c, next) => {
 
   if (origin) {
     const tenant = c.get('tenant')
-    const allowed = await isOriginAllowed(origin, tenant, c.env.DB)
+    const allowed = await isOriginAllowedCached(c, origin, tenant)
 
     if (allowed) {
       c.res.headers.set('Access-Control-Allow-Origin', origin)
@@ -293,7 +321,7 @@ app.use('/api/*', async (c, next) => {
     if (isDevAuthBypass(c.env)) return next()
     const origin = c.req.header('Origin')
     if (!origin) return c.json({ error: 'Origin header required' }, 403)
-    const allowed = await isOriginAllowed(origin, tenant, c.env.DB)
+    const allowed = await isOriginAllowedCached(c, origin, tenant)
     if (allowed) return next()
     // Allow the admin's own preview iframe: its Origin is the tenant admin
     // host (e.g. wildcare.wildcaresolutions.org), which we deliberately don't
@@ -373,6 +401,7 @@ app.get('/health', async (c) => {
     vectorize: 'unhealthy',
     storage: 'unhealthy',
     media_storage: 'unhealthy',
+    ai: 'unhealthy',
   }
 
   // D1
@@ -407,6 +436,21 @@ app.get('/health', async (c) => {
     checks.media_storage = 'healthy'
   } catch (e) {
     console.error('[health] MEDIA_BUCKET check failed:', e)
+  }
+
+  // Workers AI — minimal embeddings call to verify the AI binding is live.
+  // M-12: if the binding is unconfigured or the model fails, mark degraded
+  // so health returns 503 instead of 200 while every chat request fails.
+  // 3-second timeout via Promise.race so a slow binding doesn't stall /health.
+  try {
+    const probe = (c.env.AI.run('@cf/baai/bge-base-en-v1.5', { text: 'health' }) as Promise<{ data?: number[][] }>)
+    const timeout = new Promise<never>((_, rej) =>
+      setTimeout(() => rej(new Error('ai probe timeout')), 3000),
+    )
+    const r = await Promise.race([probe, timeout])
+    if (r?.data?.length) checks.ai = 'healthy'
+  } catch (e) {
+    console.error('[health] AI check failed:', e)
   }
 
   const allOk = Object.values(checks).every(s => s === 'healthy')
@@ -727,18 +771,28 @@ export default {
 
     const isReportCron = cron === '0 14 * * *'
     try {
+      // Cleanup expired auth tokens — fire-and-forget, not blocking.
       ctx.waitUntil(
         env.DB.prepare('DELETE FROM citizen_session_tokens WHERE expires_at < ?')
           .bind(Date.now())
           .run()
           .catch(e => console.error('[scheduled] Session-token cleanup failed:', e)),
       )
+      // M-14: purge expired magic link tokens (accumulate indefinitely otherwise;
+      // previously cleaned only when the same email requested a new token).
+      ctx.waitUntil(
+        env.DB.prepare("DELETE FROM magic_tokens WHERE expires_at < datetime('now')")
+          .run()
+          .catch(e => console.error('[scheduled] magic_tokens cleanup failed:', e)),
+      )
       const { results: tenants } = await env.DB.prepare(
         'SELECT id, message_retention_days, analysis_retention_days, daily_reports_enabled FROM tenants',
       ).all()
-      for (const t of tenants) {
-        // Reports — only on the 14:00 UTC tick AND only for tenants who
-        // explicitly opted in via the admin console toggle (default is OFF).
+
+      // L-15: process tenant retention in sequential batches of 10 to avoid
+      // spawning hundreds of concurrent D1 writes on large deployments.
+      // Reports remain fire-and-forget (ctx.waitUntil) inside each tenant task.
+      const retentionTasks = tenants.map(t => async () => {
         if (isReportCron && (t.daily_reports_enabled as number) === 1) {
           ctx.waitUntil(
             generateReport(env, t.id as string, false).catch(e =>
@@ -746,22 +800,24 @@ export default {
             ),
           )
         }
-        // Data retention: purge old messages and scrub PII from old analysis.
-        // Runs on both crons — idempotent, low cost.
         const msgDays = (t.message_retention_days as number) || 90
         const analysisDays = (t.analysis_retention_days as number) || 30
-        ctx.waitUntil(
-          Promise.all([
-            env.DB.prepare(
-              `DELETE FROM messages WHERE tenant_id = ? AND timestamp < ?`,
-            ).bind(t.id, Date.now() - msgDays * 86_400_000).run(),
-            env.DB.prepare(
-              `UPDATE session_analysis SET contact_info = NULL WHERE tenant_id = ? AND contact_info IS NOT NULL AND analyzed_at < datetime('now', '-' || ? || ' days')`,
-            ).bind(t.id, analysisDays).run(),
-            runPhotoRetention(env, t.id as string),
-          ]).catch(e => console.error(`[scheduled] Retention cleanup failed for tenant ${t.id}:`, e)),
-        )
-      }
+        await Promise.all([
+          env.DB.prepare(
+            `DELETE FROM messages WHERE tenant_id = ? AND timestamp < ?`,
+          ).bind(t.id, Date.now() - msgDays * 86_400_000).run(),
+          env.DB.prepare(
+            `UPDATE session_analysis SET contact_info = NULL WHERE tenant_id = ? AND contact_info IS NOT NULL AND analyzed_at < datetime('now', '-' || ? || ' days')`,
+          ).bind(t.id, analysisDays).run(),
+          runPhotoRetention(env, t.id as string),
+        ]).catch(e => console.error(`[scheduled] Retention cleanup failed for tenant ${t.id}:`, e))
+      })
+
+      ctx.waitUntil((async () => {
+        for (let i = 0; i < retentionTasks.length; i += 10) {
+          await Promise.all(retentionTasks.slice(i, i + 10).map(fn => fn()))
+        }
+      })())
     } catch (e) {
       console.error('[scheduled] Failed to query tenants for reports:', e)
     }

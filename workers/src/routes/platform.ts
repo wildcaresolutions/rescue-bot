@@ -1,7 +1,7 @@
 import { Hono } from 'hono'
 import type { Env, Tenant, Variables } from '../lib/types'
 import { hashPassword, generateToken, verifyToken, isDevAuthBypass, resolveSession, tenantCookiePrefix } from '../lib/auth'
-import { invalidateTenantCache } from '../lib/cache'
+import { invalidateTenantCache, invalidateDomainsCache } from '../lib/cache'
 import { clamp } from '../lib/utils'
 import type { OrgConfig, BotOverrides } from '../lib/compile-instruction'
 import { verifyTurnstile } from '../lib/turnstile'
@@ -493,6 +493,7 @@ platform.post('/platform/applications/:id/approve', async (c) => {
       await c.env.DB.prepare(
         'INSERT OR IGNORE INTO allowed_domains (tenant_id, domain) VALUES (?, ?)',
       ).bind(tenantId, application.hosting_domain).run()
+      invalidateDomainsCache(tenantId)
     }
 
     await c.env.DB.prepare(

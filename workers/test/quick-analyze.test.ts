@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { quickAnalyzeSession } from '../src/routes/chat'
+import { quickAnalyzeSession } from '../src/lib/analyze-session'
 
 // ── FakeDb ────────────────────────────────────────────────────────────────────
 //

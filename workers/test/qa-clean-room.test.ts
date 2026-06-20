@@ -61,7 +61,7 @@ class PublishDb {
       async run() {
         self.writes.push({ sql, binds })
         if (/UPDATE tenants SET/.test(sql)) self.lastUpdate = { sql, binds }
-        return { success: true }
+        return { success: true, meta: { changes: 1, duration: 0, last_row_id: 0, changed_db: true, size_after: 0 } }
       },
     }
   }

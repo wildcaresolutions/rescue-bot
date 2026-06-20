@@ -72,7 +72,12 @@ test.afterAll(async () => {
 
 async function launcherVisible(page: Page): Promise<boolean> {
   return await page.evaluate(() => {
-    const btn = document.getElementById('rbot-widget-button')
+    // PR #100 moved all widget DOM into an open shadow root on #rbot-widget-host.
+    // Standard document.getElementById() does not pierce shadow roots, so we
+    // traverse: host → shadowRoot → button.
+    const host = document.getElementById('rbot-widget-host')
+    if (!host || !host.shadowRoot) return false
+    const btn = host.shadowRoot.getElementById('rbot-widget-button')
     if (!btn) return false
     const cs = getComputedStyle(btn)
     return cs.display !== 'none' && cs.visibility !== 'hidden'

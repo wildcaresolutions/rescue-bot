@@ -49,6 +49,11 @@ export interface Env {
   // When "true", server-side auth gate + Turnstile checks short-circuit.
   // Set in [vars] of the default (local dev) wrangler config.
   DEV_AUTH_BYPASS?: string
+  // CF native Rate Limiting bindings (per-colo, eventually-consistent).
+  // See wrangler.template.toml [[ratelimits]] blocks.
+  RL_IP_CHAT: RateLimit
+  RL_IP_SESSION: RateLimit
+  RL_TENANT: RateLimit
 }
 
 // ── Tenant types ──────────────────────────────────────────────────────────────

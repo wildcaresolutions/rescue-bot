@@ -110,6 +110,8 @@ class StubD1 {
 
 // ── Fake Env / context ─────────────────────────────────────────────────────────
 
+const stubRateLimit: RateLimit = { limit: async () => ({ success: true }) }
+
 function makeEnv(overrides: Partial<Env> = {}): Env {
   return {
     SIGNING_SECRET: 'test-signing-secret',
@@ -119,6 +121,9 @@ function makeEnv(overrides: Partial<Env> = {}): Env {
     DEV_AUTH_BYPASS: '',
     ENVIRONMENT: 'test',
     DB: new StubD1() as unknown as D1Database,
+    RL_IP_CHAT: stubRateLimit,
+    RL_IP_SESSION: stubRateLimit,
+    RL_TENANT: stubRateLimit,
     ...overrides,
   } as unknown as Env
 }
@@ -545,4 +550,78 @@ describe('Router — middleware chain integration', () => {
 
 beforeEach(() => {
   // Each test starts with a fresh env; nothing to reset between tests today.
+})
+
+// ── Rate limiting rejection path ─────────────────────────────────────────────
+
+describe('Rate limiting middleware', () => {
+  const denyRateLimit: RateLimit = { limit: async () => ({ success: false }) }
+
+  it('returns 429 with Retry-After when RL_IP_CHAT rejects a chat POST', async () => {
+    const env = makeEnv({ RL_IP_CHAT: denyRateLimit })
+    const res = await request(
+      'https://wildcare.wildcaresolutions.org/api/sessions/sess-abc/messages',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
+        body: '{}',
+      },
+      env,
+    )
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('60')
+    const body = await res.json() as { error: string }
+    expect(body.error).toMatch(/rate limit/i)
+  })
+
+  it('returns 429 with Retry-After when RL_IP_SESSION rejects a session create', async () => {
+    const env = makeEnv({ RL_IP_SESSION: denyRateLimit })
+    const res = await request(
+      'https://wildcare.wildcaresolutions.org/api/sessions',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
+        body: '{}',
+      },
+      env,
+    )
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('60')
+    const body = await res.json() as { error: string }
+    expect(body.error).toMatch(/rate limit/i)
+  })
+
+  it('returns 429 with scope:tenant when RL_TENANT rejects a chat POST', async () => {
+    const env = makeEnv({ RL_TENANT: denyRateLimit })
+    const res = await request(
+      'https://wildcare.wildcaresolutions.org/api/sessions/sess-abc/messages',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
+        body: '{}',
+      },
+      env,
+    )
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('60')
+    const body = await res.json() as { error: string; scope: string }
+    expect(body.scope).toBe('tenant')
+  })
+
+  it('returns 429 with scope:tenant when RL_TENANT rejects a session create', async () => {
+    const env = makeEnv({ RL_TENANT: denyRateLimit })
+    const res = await request(
+      'https://wildcare.wildcaresolutions.org/api/sessions',
+      {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Origin: 'https://discoverwildcare.org' },
+        body: '{}',
+      },
+      env,
+    )
+    expect(res.status).toBe(429)
+    expect(res.headers.get('Retry-After')).toBe('60')
+    const body = await res.json() as { error: string; scope: string }
+    expect(body.scope).toBe('tenant')
+  })
 })

@@ -1,4 +1,5 @@
 import { Hono } from 'hono'
+import type { Context } from 'hono'
 import type { Env, Tenant, Variables } from './lib/types'
 import {
   resolveSession, isDevAuthBypass, tenantCookiePrefix, PLATFORM_COOKIE_PREFIX,
@@ -16,6 +17,7 @@ import type { HealthResponse, HealthStatus, HealthCheckKey } from './types/healt
 import { getCachedDomains, cacheDomains } from './lib/cache'
 import { parseOrgConfig } from './lib/tenant-loader'
 import { overlayTenant, hasDraft } from './lib/draft'
+import { logWarn } from './lib/logger'
 
 // Sentinel tenantId for platform-admin sessions (admin.<root>).
 const PLATFORM_TENANT_ID = 'platform'
@@ -33,45 +35,18 @@ export type { Env }
 //     org might see 5-10 chats/min at peak; 60 leaves comfortable headroom
 //     while still capping a runaway loop.
 //
-// Module-level map survives across requests within a warm Worker isolate.
-// Resets on cold start, which is acceptable for the IP layer (sustained
-// attacks keep the isolate warm) and conservative for the tenant layer
-// (a cold start gives a tenant a "fresh minute" sooner than they should
-// get one; bounded by isolate eviction cadence, typically minutes).
-//
-// Audit P3-29 noted this in-memory approach doesn't survive across
-// isolates — a multi-isolate attacker can dodge the limit. Durable Object-
-// backed counters are the right next step; tracked as future work. The
-// in-memory layer remains useful for the common single-isolate case and
-// for short-term burst protection.
+// Rate limiting uses CF's native binding (per-colo, eventually-consistent).
+// This is intentionally not globally exact — it's a cost-DoS guard, not a
+// billing meter. See design doc: fix/rate-limiting PR.
 
-const RATE_WINDOW_MS = 60_000           // 1 minute
-const RATE_LIMIT_CHAT = 15              // max chat messages per IP per minute
-const RATE_LIMIT_SESSION = 10           // max session creates per IP per minute
-const RATE_LIMIT_TENANT_CHAT = 60       // max chat messages per TENANT per minute (P3-29)
 const PHOTO_RESERVATION_TTL_MS = 15 * 60_000
 const PHOTO_STANDARD_RETENTION_MS = 30 * 86_400_000
 const PHOTO_CLINICAL_RETENTION_MS = 90 * 86_400_000
 
-const rateLimitMap = new Map<string, number[]>()
-
-function checkRateLimit(ip: string, limit: number): boolean {
-  const now = Date.now()
-  const key = `${ip}:${limit}`
-  const timestamps = rateLimitMap.get(key) || []
-  const recent = timestamps.filter(t => now - t < RATE_WINDOW_MS)
-  if (recent.length >= limit) return false
-  recent.push(now)
-  rateLimitMap.set(key, recent)
-  // Prevent memory leak: prune old entries periodically
-  if (rateLimitMap.size > 10_000) {
-    for (const [k, v] of rateLimitMap) {
-      const filtered = v.filter(t => now - t < RATE_WINDOW_MS)
-      if (filtered.length === 0) rateLimitMap.delete(k)
-      else rateLimitMap.set(k, filtered)
-    }
-  }
-  return true
+function clientIp(c: Context<{ Bindings: Env; Variables: Variables }>): string {
+  return c.req.header('CF-Connecting-IP')
+    || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim()
+    || 'unknown'
 }
 
 async function deletePhotoObjects(env: Env, row: { r2_key: string; thumbnail_key?: string | null }) {
@@ -582,49 +557,51 @@ app.get('/assets/*', async (c) => {
   return new Response(object.body, { headers })
 })
 
+// Fail-open helper: if the binding throws (misconfigured namespace, transient
+// platform fault), allow the request and log — this is a cost-DoS guard, not
+// an auth gate. A misconfigured binding should not take the service down.
+async function rlCheck(binding: RateLimit, key: string): Promise<boolean> {
+  try {
+    return (await binding.limit({ key })).success
+  } catch (err) {
+    logWarn('rate-limit-binding-error', { key, error: String(err) })
+    return true  // fail open
+  }
+}
+
 // ── Rate limiting middleware for public chat endpoints ────────────────────────
 
+// POST /api/sessions/* — chat messages (per-IP + per-tenant)
 app.use('/api/sessions/*', async (c, next) => {
   if (c.req.method !== 'POST') return next()
-  const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || 'unknown'
-  if (!checkRateLimit(ip, RATE_LIMIT_CHAT)) {
-    return c.json({ error: 'Rate limit exceeded. Please wait before sending more messages.' }, 429)
+  const ip = clientIp(c)
+  if (!(await rlCheck(c.env.RL_IP_CHAT, ip))) {
+    return c.json({ error: 'Rate limit exceeded. Please wait before sending more messages.' }, 429,
+      { 'Retry-After': '60' })
   }
-  // Per-tenant ceiling (audit P3-29). One client hitting from many IPs
-  // would dodge the IP-layer; the tenant layer caps aggregate volume per
-  // tenant per minute. Slipping past both requires hitting a fresh tenant
-  // AND a fresh IP simultaneously, which a real attacker can't engineer
-  // at scale against a multi-tenant SaaS.
   const tenant = c.get('tenant')
   if (tenant) {
-    const tenantKey = `tenant:${tenant.id}:chat`
-    if (!checkRateLimit(tenantKey, RATE_LIMIT_TENANT_CHAT)) {
-      return c.json({
-        error: 'Tenant rate limit exceeded. The org is sending too many chat messages too quickly; try again in a minute.',
-        scope: 'tenant',
-      }, 429)
+    if (!(await rlCheck(c.env.RL_TENANT, `chat:${tenant.id}`))) {
+      return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429,
+        { 'Retry-After': '60' })
     }
   }
   return next()
 })
 
+// POST /api/sessions — session creation (per-IP + per-tenant)
 app.use('/api/sessions', async (c, next) => {
   if (c.req.method !== 'POST') return next()
-  const ip = c.req.header('CF-Connecting-IP') || c.req.header('X-Forwarded-For')?.split(',')[0]?.trim() || 'unknown'
-  if (!checkRateLimit(ip, RATE_LIMIT_SESSION)) {
-    return c.json({ error: 'Rate limit exceeded. Please wait before creating new sessions.' }, 429)
+  const ip = clientIp(c)
+  if (!(await rlCheck(c.env.RL_IP_SESSION, ip))) {
+    return c.json({ error: 'Rate limit exceeded. Please wait before creating new sessions.' }, 429,
+      { 'Retry-After': '60' })
   }
-  // Per-tenant session-create ceiling (audit P3-29). Same shape as the
-  // per-tenant chat limit — defends against an attacker spreading across
-  // IPs to burn one tenant's session budget.
   const tenant = c.get('tenant')
   if (tenant) {
-    const tenantKey = `tenant:${tenant.id}:session`
-    if (!checkRateLimit(tenantKey, RATE_LIMIT_TENANT_CHAT)) {
-      return c.json({
-        error: 'Tenant rate limit exceeded. The org is creating sessions too quickly; try again in a minute.',
-        scope: 'tenant',
-      }, 429)
+    if (!(await rlCheck(c.env.RL_TENANT, `sess:${tenant.id}`))) {
+      return c.json({ error: 'Tenant rate limit exceeded. Try again in a minute.', scope: 'tenant' }, 429,
+        { 'Retry-After': '60' })
     }
   }
   return next()

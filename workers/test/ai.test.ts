@@ -18,6 +18,8 @@ import type { Env } from '../src/lib/types'
 
 const FAKE_CLOUDFLARE_TOKEN = ['cfut', 'secret', 'token'].join('_')
 
+const stubRateLimit: RateLimit = { limit: async () => ({ success: true }) }
+
 function env(overrides: Partial<Env> = {}): Env {
   return {
     AI: {} as Env['AI'],
@@ -32,6 +34,9 @@ function env(overrides: Partial<Env> = {}): Env {
     ENVIRONMENT: 'dev',
     REPORT_FROM_EMAIL: '',
     SIGNING_SECRET: '',
+    RL_IP_CHAT: stubRateLimit,
+    RL_IP_SESSION: stubRateLimit,
+    RL_TENANT: stubRateLimit,
     ...overrides,
   }
 }

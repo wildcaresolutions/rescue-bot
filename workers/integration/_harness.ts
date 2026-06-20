@@ -84,9 +84,8 @@ export const noAuthHeaders: Record<string, string> = {
 }
 
 /**
- * Headers for unauthenticated requests (public chat path).
- * Includes X-Tenant-Slug so tenant resolution succeeds;
- * omits Authorization so /admin/* routes return 401, not 400.
+ * Headers for public chat API requests (no auth, includes Origin for CORS).
+ * Used by chat.test.ts which tests /api/sessions/* endpoints.
  */
 export const chatHeaders: Record<string, string> = {
   'X-Tenant-Slug': TENANT_SLUG,

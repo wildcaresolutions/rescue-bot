@@ -2254,6 +2254,26 @@ function dispatchToolResult(toolResult) {
     appendChangeChip(summarizeConfigUpdate(result) || 'Org info updated.')
     _kbDirty = true
   }
+  else if (toolName === 'manage_referrals') {
+    // Referrals stage into org_config.referrals[]. Without this case the
+    // Playbook tab never set _kbDirty, so checkSetupCompletion() re-fetched
+    // config but SKIPPED renderKbView() — the new referral was staged yet
+    // invisible in the form until a publish forced a full re-render. Mark
+    // dirty so the Referrals section reflects the staged change live.
+    //
+    // NOTE: we deliberately do NOT add manage_referrals to
+    // PROMPT_MUTATING_TOOLS below. That set fires notifyTenantConfigChanged()
+    // per tool result, and the copilot commonly adds SEVERAL referrals in one
+    // turn — those per-result async /api/config refetches race and a stale
+    // earlier snapshot can clobber a newer one. The _kbDirty path does a
+    // single ordered refetch at stream end (checkSetupCompletion), which also
+    // refreshes the global publish bar via setTenantConfig.
+    if (result?.success) {
+      const verb = result.action === 'add' ? 'Added' : result.action === 'update' ? 'Updated' : result.action === 'remove' ? 'Removed' : 'Changed'
+      appendChangeChip(`${verb} referral: ${result.name || ''}`.trim())
+      _kbDirty = true
+    }
+  }
   else if (toolName === 'update_colors') {
     const c = result?.applied || {}
     const parts = []

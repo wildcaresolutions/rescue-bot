@@ -290,8 +290,7 @@ describe('testTriageMessage', () => {
       const stmt = realPrepare(sql)
       return {
         ...stmt,
-        // @ts-expect-error - intentionally broken for test
-        bind: (..._args: unknown[]) => ({ first: async () => { throw new Error('DB down') } }),
+        bind: (..._args: unknown[]) => ({ first: async () => { throw new Error('DB down') } } as any),
       }
     }
     // Should not throw; returns default-rule result for a benign message

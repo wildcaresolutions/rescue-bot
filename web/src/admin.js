@@ -122,6 +122,7 @@ async function renderAdminPortal() {
   const orgName = config.name || 'WildCare Bot'
   const hasProtocols = !!config.onboarded
 
+  // pi-lens-ignore: no-inner-html, no-inner-html-js
   app.innerHTML = `
     <div class="admin-container">
       <header class="admin-header">
@@ -293,7 +294,8 @@ async function renderAdminPortal() {
       // Use the URL with an <img>; if it fails to load, fall back to initials
       // by clearing the img and putting text content back.
       const initials = getInitials(profile.display_name, profile.email)
-      el.innerHTML = `<img src="${esc(profile.avatar_url)}" alt="" onerror="this.parentNode.removeChild(this)">${initials}`
+      // pi-lens-ignore: no-inner-html, no-inner-html-js
+      el.innerHTML = `<img src="${esc(profile.avatar_url)}" alt="" onerror="this.parentNode.removeChild(this)">${esc(initials)}`
       el.style.backgroundColor = avatarColor(profile.email || '')
     } else {
       el.textContent = getInitials(profile.display_name, profile.email)
@@ -314,21 +316,22 @@ async function renderAdminPortal() {
       // hazards. (An earlier inline `onerror="this.outerHTML='<svg ...>'"`
       // broke because the SVG contains double quotes that closed the
       // attribute and rendered as visible "'\">" text in the header.)
-      btn.innerHTML = ''
+      btn.innerHTML = ''  // pi-lens-ignore: no-inner-html, no-inner-html-js
       const img = document.createElement('img')
       img.src = profile.avatar_url
       img.alt = ''
       img.addEventListener('error', () => {
         btn.classList.remove('has-avatar')
-        btn.innerHTML = PROFILE_BTN_SVG
+        btn.innerHTML = PROFILE_BTN_SVG  // pi-lens-ignore: no-inner-html, no-inner-html-js
       })
       btn.appendChild(img)
     } else if (profile.display_name || profile.email) {
       btn.classList.add('has-avatar')
-      btn.innerHTML = `<span class="profile-btn-initials" style="background:${avatarColor(profile.email || '')}">${getInitials(profile.display_name, profile.email)}</span>`
+      // pi-lens-ignore: no-inner-html, no-inner-html-js
+      btn.innerHTML = `<span class="profile-btn-initials" style="background:${avatarColor(profile.email || '')}">${esc(getInitials(profile.display_name, profile.email))}</span>`
     } else {
       btn.classList.remove('has-avatar')
-      btn.innerHTML = PROFILE_BTN_SVG
+      btn.innerHTML = PROFILE_BTN_SVG  // pi-lens-ignore: no-inner-html, no-inner-html-js
     }
   }
 
@@ -696,7 +699,7 @@ function updateGlobalPublishBar() {
         : '&#9679; Unpublished changes'
     // On Preview, make clear the widget below is running the draft you're editing.
     if (hasDraft && activeView === 'preview') text += ' — the preview is running them'
-    label.innerHTML = text
+    label.innerHTML = text  // pi-lens-ignore: no-inner-html, no-inner-html-js
   }
   // Discard only makes sense when there's actually a draft to throw away.
   const discardBtn = document.getElementById('gpbDiscard')
@@ -865,6 +868,7 @@ function renderAgentMessages() {
 
   const agentMessages = getAgentMessages()
   if (agentMessages.length === 0) {
+    // pi-lens-ignore: no-inner-html, no-inner-html-js
     container.innerHTML = `
       <div class="agent-msg system">
         <p>Hello! I'm your setup assistant. I can help you configure your rescue bot, generate custom protocols, and create test cases.</p>
@@ -873,7 +877,7 @@ function renderAgentMessages() {
     return
   }
 
-  container.innerHTML = agentMessages.map(m => {
+  container.innerHTML = agentMessages.map(m => {  // pi-lens-ignore: no-inner-html, no-inner-html-js
     if (m.role === 'user') {
       return `<div class="agent-msg user"><div class="agent-bubble user-bubble">${escapeHtml(m.content).replace(/\n/g, '<br>')}</div></div>`
     } else if (m.role === 'brand-result') {
@@ -929,6 +933,7 @@ function showCandidateRolePopover(dot, ev) {
 
   const popover = document.createElement('div')
   popover.className = 'brand-candidate-popover'
+  // pi-lens-ignore: no-inner-html, no-inner-html-js
   popover.innerHTML = `
     <div class="brand-candidate-popover-title">
       <span class="brand-candidate-popover-swatch" style="background:${escapeHtml(hex)}"></span>
@@ -1106,7 +1111,7 @@ async function sendAgentMessage(injectedText = null, options = {}) {
   const container = document.getElementById('agentMessages')
   const typingEl = document.createElement('div')
   typingEl.className = 'agent-msg assistant'
-  typingEl.innerHTML = '<div class="agent-bubble assistant-bubble agent-typing"><span></span><span></span><span></span></div>'
+  typingEl.innerHTML = '<div class="agent-bubble assistant-bubble agent-typing"><span></span><span></span><span></span></div>'  // pi-lens-ignore: no-inner-html, no-inner-html-js
   container.appendChild(typingEl)
   container.scrollTop = container.scrollHeight
 
@@ -1175,13 +1180,13 @@ async function sendAgentMessage(injectedText = null, options = {}) {
               typingEl.remove()
               assistantEl = document.createElement('div')
               assistantEl.className = 'agent-msg assistant'
-              assistantEl.innerHTML = '<div class="agent-bubble assistant-bubble"></div>'
+              assistantEl.innerHTML = '<div class="agent-bubble assistant-bubble"></div>'  // pi-lens-ignore: no-inner-html, no-inner-html-js
               container.appendChild(assistantEl)
               bubble = assistantEl.querySelector('.agent-bubble')
             }
 
             if (bubble) {
-              bubble.innerHTML = safeMarkdown(fullContent)
+              bubble.innerHTML = safeMarkdown(fullContent)  // pi-lens-ignore: no-inner-html, no-inner-html-js
               container.scrollTop = container.scrollHeight
             }
           } else if (type === 'b') {
@@ -1229,21 +1234,23 @@ async function sendAgentMessage(injectedText = null, options = {}) {
         if (!assistantEl) {
           assistantEl = document.createElement('div')
           assistantEl.className = 'agent-msg assistant'
-          assistantEl.innerHTML = '<div class="agent-bubble assistant-bubble"></div>'
+          assistantEl.innerHTML = '<div class="agent-bubble assistant-bubble"></div>'  // pi-lens-ignore: no-inner-html, no-inner-html-js
           container.appendChild(assistantEl)
           bubble = assistantEl.querySelector('.agent-bubble')
         }
+        // pi-lens-ignore: no-inner-html, no-inner-html-js
         bubble.innerHTML = `<em style="color: var(--color-storm)">${escapeHtml(fallbackText)}</em>`
         getAgentMessages().push({ role: 'assistant', content: fallbackText })
       } else if (!hadToolResult) {
         if (!assistantEl) {
           assistantEl = document.createElement('div')
           assistantEl.className = 'agent-msg assistant'
-          assistantEl.innerHTML = '<div class="agent-bubble assistant-bubble"></div>'
+          assistantEl.innerHTML = '<div class="agent-bubble assistant-bubble"></div>'  // pi-lens-ignore: no-inner-html, no-inner-html-js
           container.appendChild(assistantEl)
           bubble = assistantEl.querySelector('.agent-bubble')
         }
         const emptyText = defaultAgentFallbackText()
+        // pi-lens-ignore: no-inner-html, no-inner-html-js
         bubble.innerHTML = `<em style="color: var(--color-storm)">${escapeHtml(emptyText)}</em>`
         getAgentMessages().push({ role: 'assistant', content: emptyText })
       } else if (assistantEl) {
@@ -1274,6 +1281,7 @@ async function sendAgentMessage(injectedText = null, options = {}) {
       const errEl = document.createElement('div')
       errEl.className = 'agent-msg system'
       if (code === 'AGENT_NOT_CONFIGURED') {
+        // pi-lens-ignore: no-inner-html, no-inner-html-js
         errEl.innerHTML = `<strong>Admin assistant not configured.</strong><br>${escapeHtml(serverMsg)}<br><br>The citizen chat bot keeps working — only this in-admin assistant requires the extra config.`
       } else if (res.status === 503) {
         errEl.textContent = serverMsg || 'Assistant temporarily unavailable. Try again in a moment.'
@@ -2159,6 +2167,7 @@ function appendChangeChip(content) {
   if (!container) return
   const wrapper = document.createElement('div')
   wrapper.className = 'agent-msg change-chip'
+  // pi-lens-ignore: no-inner-html, no-inner-html-js
   wrapper.innerHTML = `<span class="agent-change-chip">${escapeHtml(content)}</span>`
   container.appendChild(wrapper)
   container.scrollTop = container.scrollHeight
@@ -2286,7 +2295,7 @@ function dispatchToolResult(toolResult) {
     const container = document.getElementById('agentMessages')
     if (container) {
       const wrapper = document.createElement('div')
-      wrapper.innerHTML = renderBrandApprovalCardHTML(result)
+      wrapper.innerHTML = renderBrandApprovalCardHTML(result)  // pi-lens-ignore: no-inner-html, no-inner-html-js
       const cardEl = wrapper.firstElementChild
       if (cardEl) {
         container.appendChild(cardEl)
@@ -2308,7 +2317,7 @@ function dispatchToolResult(toolResult) {
     const container = document.getElementById('agentMessages')
     if (container) {
       const wrapper = document.createElement('div')
-      wrapper.innerHTML = renderWebsiteHarvestCardHTML(result)
+      wrapper.innerHTML = renderWebsiteHarvestCardHTML(result)  // pi-lens-ignore: no-inner-html, no-inner-html-js
       const cardEl = wrapper.firstElementChild
       if (cardEl) {
         container.appendChild(cardEl)
@@ -2407,7 +2416,7 @@ function showCopilotToast(msg) {
   if (!container) return
   const toast = document.createElement('div')
   toast.className = 'agent-msg system copilot-toast'
-  toast.innerHTML = '<p>' + msg + '</p>'
+  toast.innerHTML = '<p>' + escapeHtml(msg) + '</p>'  // pi-lens-ignore: no-inner-html, no-inner-html-js
   container.appendChild(toast)
   container.scrollTop = container.scrollHeight
   setTimeout(() => {
@@ -2479,6 +2488,7 @@ function showSetupCompleteTransition() {
   // them opened a separate breakout window.
   const transitionEl = document.createElement('div')
   transitionEl.className = 'agent-msg system setup-complete-transition'
+  // pi-lens-ignore: no-inner-html, no-inner-html-js
   transitionEl.innerHTML = `
     <div class="setup-complete-card">
       <h3>Your rescue bot is ready!</h3>

@@ -117,9 +117,17 @@ async function clearHistory(): Promise<void> {
 }
 
 async function discardDraft(): Promise<void> {
-  // Best-effort; ignore failures (draft may already be empty)
-  await fetch(`${BASE_URL}/admin/discard`, { method: 'POST', headers: adminHeaders })
-    .catch(() => { /* ignore */ })
+  // Best-effort: staged drafts left behind would pollute subsequent tests, but
+  // a failed discard (e.g. transient 5xx) should not mask the real test result.
+  // Log a warning so teardown failures are visible without being fatal.
+  const res = await fetch(`${BASE_URL}/admin/discard`, { method: 'POST', headers: adminHeaders })
+    .catch((e: unknown) => {
+      console.warn('discardDraft: fetch failed —', e)
+      return null
+    })
+  if (res && !res.ok) {
+    console.warn(`discardDraft: HTTP ${res.status} — continuing (best-effort cleanup)`)
+  }
 }
 
 /**
@@ -144,12 +152,6 @@ async function pollEvalResults(
   }
   return []
 }
-
-// Clear copilot history before every test — accumulated context from prior
-// turns shifts model behaviour non-deterministically (mirrors agent.test.ts).
-beforeEach(async () => {
-  await clearHistory()
-})
 
 // ── A. brand-extract — POST /admin/onboarding/brand-extract ──────────────────
 
@@ -215,6 +217,12 @@ describe('POST /admin/onboarding/brand-extract', () => {
 // ── B. brand-extract — via copilot tools ─────────────────────────────────────
 
 describe('brand-extract via copilot (fetch_url / extract_brand_colors tool)', () => {
+  // Clear copilot history before each copilot test — accumulated context from
+  // prior turns shifts model behaviour non-deterministically.
+  beforeEach(async () => {
+    await clearHistory()
+  })
+
   it('fetching example.com produces a 200 stream with text', async () => {
     const res = await streamCopilot(
       'Fetch https://example.com and tell me the primary color',
@@ -326,6 +334,10 @@ describe('POST /admin/onboarding/website-harvest', () => {
 // ── D. website-harvest — via copilot harvest_website_info tool ────────────────
 
 describe('website-harvest via copilot (harvest_website_info tool)', () => {
+  beforeEach(async () => {
+    await clearHistory()
+  })
+
   it('if harvest_website_info fires for example.com, result has a success field', async () => {
     try {
       const res = await streamCopilot(
@@ -377,6 +389,11 @@ describe('eval-runner via POST /admin/evals/:id/run + GET /admin/evals/:id/resul
 
   afterAll(async () => {
     if (!createdId) return
+    // Brief pause before deletion to let any in-flight waitUntil eval jobs
+    // finish writing their result row.  eval_results has a FK on
+    // eval_scenarios(id); deleting the scenario while a background job is
+    // still INSERTing causes a silent FK violation logged in the worker.
+    await new Promise(r => setTimeout(r, 3000))
     await fetch(`${BASE_URL}/admin/evals/${createdId}`, {
       method: 'DELETE',
       headers: adminHeaders,
@@ -418,11 +435,12 @@ describe('eval-runner via POST /admin/evals/:id/run + GET /admin/evals/:id/resul
     async () => {
       if (!createdId) return
 
-      // Fire the run (independent of the prior test to keep tests isolated)
-      await fetch(`${BASE_URL}/admin/evals/${createdId}/run`, {
-        method: 'POST',
-        headers: adminHeaders,
-      })
+      // The prior test ('POST run → 200 { status:"started" }') already fired
+      // the run.  Do NOT re-trigger here — that would race with afterAll's
+      // DELETE (the second waitUntil job tries to INSERT eval_results after
+      // the scenario row is gone, causing a FK violation in the worker log).
+      // Tests execute sequentially (vitest.integration.config) so the prior
+      // test's waitUntil job is already in-flight when we start polling.
 
       // Poll until the background LLM judge has persisted a result row.
       // The eval involves a real bot chat + judge round-trip — allow up to
@@ -451,8 +469,10 @@ describe('eval-runner via POST /admin/evals/:id/run + GET /admin/evals/:id/resul
   )
 
   it('GET /admin/evals/:id/results with no auth → 401', async () => {
-    if (!createdId) return
-    const res = await fetch(`${BASE_URL}/admin/evals/${createdId}/results`, {
+    // 401 is returned by the /admin/* middleware before any DB lookup, so the
+    // scenario does not need to exist.  Use a hardcoded ID to avoid a
+    // false-green when beforeAll scenario creation fails (createdId undefined).
+    const res = await fetch(`${BASE_URL}/admin/evals/any-id-for-auth-check/results`, {
       headers: noAuthHeaders,
     })
     expect(res.status).toBe(401)
@@ -510,7 +530,10 @@ describe('GET /admin/setup-state — onboarding state machine', () => {
 
   it('after POST /admin/publish, setup-state still returns a valid next_action', async () => {
     // publishDraft is idempotent — promoting the live config to itself is safe.
-    await fetch(`${BASE_URL}/admin/publish`, { method: 'POST', headers: adminHeaders })
+    // Accept 409 (conflict): two concurrent publish calls can race on tests
+    // that share a deployment; neither race outcome is an error for this check.
+    const publishRes = await fetch(`${BASE_URL}/admin/publish`, { method: 'POST', headers: adminHeaders })
+    expect([200, 409]).toContain(publishRes.status)
 
     const res = await fetch(`${BASE_URL}/admin/setup-state`, { headers: adminHeaders })
     expect(res.status).toBe(200)
@@ -558,6 +581,10 @@ describe('GET /admin/bot-status — complement coverage (database / totalMessage
 // ── H. setup-readiness — copilot get_setup_readiness tool ────────────────────
 
 describe('setup-readiness via copilot (get_setup_readiness tool)', () => {
+  beforeEach(async () => {
+    await clearHistory()
+  })
+
   it('get_setup_readiness tool fires and result has is_ready + blockers array', async () => {
     const res = await streamCopilot(
       'Use get_setup_readiness to check whether setup is complete and what steps remain.',

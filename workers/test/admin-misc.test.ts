@@ -269,6 +269,14 @@ describe('removeDomain', () => {
     expect(deleteIdx).toBeGreaterThan(-1)
     expect(db.allBinds[deleteIdx]).toEqual(['domain-row-99', 'tenant-id-1'])
   })
+
+  it('propagates DB errors (no internal try/catch)', async () => {
+    const db = new AdminFakeD1()
+    db.runThrow = new Error('D1_ERROR: connection lost')
+    const env = fakeEnv(db)
+
+    await expect(removeDomain(env, 'tenant-id-1', 'domain-row-99')).rejects.toThrow('D1_ERROR: connection lost')
+  })
 })
 
 // ── Feature flags ─────────────────────────────────────────────────────────────
@@ -351,8 +359,9 @@ describe('buildKnowledgeBaseSummary', () => {
     expect(protocols.has_custom_instruction).toBe(true)
     expect(typeof protocols.instruction_preview).toBe('string')
     const stats = summary.stats as Record<string, unknown>
-    expect(typeof stats.total_documents).toBe('number')
-    expect(typeof stats.total_characters).toBe('number')
+    // BUILTIN_GUIDES is an empty-array stub in the test environment (no make cf-setup)
+    expect(stats.total_documents).toBe(0)
+    expect(stats.total_characters).toBe(0)
   })
 
   it('custom_protocols.has_custom_instruction is false when null', () => {

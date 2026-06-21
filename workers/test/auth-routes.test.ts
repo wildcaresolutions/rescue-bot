@@ -409,6 +409,25 @@ describe('POST /api/auth/request', () => {
     expect(body.error).toMatch(/captcha/i)
   })
 
+  it('missing turnstile_token in body → 400 missing_token (verifyTurnstile fires before email check)', async () => {
+    // turnstilePass() is still active (beforeEach), but verifyTurnstile returns
+    // {ok:false, reason:'missing_token'} without calling fetch when token is absent.
+    const db = new FakeD1()
+    const env = makeEnv(db)
+    const app = makeApp(TENANT)
+
+    const res = await appReq(app, '/api/auth/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      // No turnstile_token field
+      body: JSON.stringify({ email: 'user@example.org' }),
+    }, env)
+
+    expect(res.status).toBe(400)
+    const body = await res.json() as Record<string, unknown>
+    expect(String(body.error)).toMatch(/captcha/i)
+  })
+
   it('missing TURNSTILE_SECRET_KEY → 503 service unavailable', async () => {
     const db = new FakeD1()
     const env = makeEnv(db, { TURNSTILE_SECRET_KEY: '' })
@@ -440,6 +459,33 @@ describe('POST /api/auth/request', () => {
     expect(body.success).toBe(true)
     expect(typeof body.dev_login_url).toBe('string')
     expect(db.sqls.some(s => s.includes('INSERT INTO magic_tokens'))).toBe(true)
+  })
+
+  it('platform-admin email at tenant subdomain bypasses tenant_users check → 200 dev_login_url', async () => {
+    // When a tenant IS present AND the email is a platform admin, the handler
+    // skips the tenant_users lookup entirely (line ~154 in auth.ts) and issues
+    // the magic link against the tenant’s id.
+    const db = new FakeD1()
+    // tenantUserRow is null — if the handler checked it the non-member branch
+    // would fire and return generic200 without issuing a link. But platform
+    // admins bypass this check entirely, so we expect a real link.
+    db.tenantUserRow = null
+    const env = makeEnv(db, { PLATFORM_ADMIN_EMAILS: 'ops@example.org' })
+    const app = makeApp(TENANT)   // tenant IS set
+
+    const res = await appReq(app, '/api/auth/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Host': 'localhost:8787' },
+      body: JSON.stringify({ email: 'ops@example.org', turnstile_token: 'tok' }),
+    }, env)
+
+    expect(res.status).toBe(200)
+    const body = await res.json() as Record<string, unknown>
+    expect(body.success).toBe(true)
+    expect(typeof body.dev_login_url).toBe('string')
+    // Magic link was issued (INSERT), NOT the generic no-link message
+    expect(db.sqls.some(s => s.includes('INSERT INTO magic_tokens'))).toBe(true)
+    expect(body.message).not.toMatch(/If this email has access/i)
   })
 })
 
@@ -571,7 +617,7 @@ describe('POST /api/auth/verify', () => {
     expect(db.sqls.some(s => s.includes('UPDATE magic_tokens SET used = 1'))).toBe(true)
   })
 
-  it('valid token via form-urlencoded → 200, cookies set', async () => {
+  it('valid token via form-urlencoded → 200, all three cookies set', async () => {
     const db = dbWithToken()
     const env = makeEnv(db)
     const app = makeApp(TENANT)
@@ -592,7 +638,10 @@ describe('POST /api/auth/verify', () => {
 
     expect(res.status).toBe(200)
     const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('Set-Cookie') ?? '']
-    expect(setCookies.join(' ')).toContain('_token=')
+    const combined = setCookies.join(' ')
+    expect(combined).toContain('_token=')
+    expect(combined).toContain('_auth=')
+    expect(combined).toContain('_tester_email=')
   })
 
   it('unknown / expired token → 200 HTML with "expired" text, no Set-Cookie', async () => {
@@ -610,9 +659,59 @@ describe('POST /api/auth/verify', () => {
     expect(res.status).toBe(200)
     const html = await res.text()
     expect(html.toLowerCase()).toContain('expired')
-    // No session cookie should be issued
-    const cookieHeader = res.headers.get('Set-Cookie') ?? ''
-    expect(cookieHeader).not.toContain('_token=')
+    // No session cookie should be issued — use getSetCookie() for safety
+    const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : []
+    expect(setCookies.some(c => c.includes('_token='))).toBe(false)
+  })
+
+  it('platform-admin token (tenant_id=null) → 200 with wc_platform_* cookies + /platform-admin redirect', async () => {
+    const PLAT_TOKEN = 'platform-magic-tok-xyz'
+    const db = new FakeD1()
+    db.magicCandidates = [{
+      id: 'ptok-1',
+      token: PLAT_TOKEN,
+      email: 'admin@example.org',
+      tenant_id: null,     // null marks a platform-admin login
+    }]
+    const env = makeEnv(db, { PLATFORM_ADMIN_EMAILS: 'admin@example.org' })
+    const app = makeApp(TENANT)
+
+    const res = await appReq(app, '/api/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Host': 'localhost:8787' },
+      body: JSON.stringify({ token: PLAT_TOKEN, email: 'admin@example.org' }),
+    }, env)
+
+    expect(res.status).toBe(200)
+    const html = await res.text()
+    expect(html).toContain('/platform-admin')
+    // Cookies must use the PLATFORM_COOKIE_PREFIX, not the tenant prefix
+    const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('Set-Cookie') ?? '']
+    const combined = setCookies.join(' ')
+    expect(combined).toContain('wc_platform_token=')
+    expect(combined).toContain('wc_platform_auth=')
+  })
+
+  it('token with null tenant_id for non-platform-admin → 400 No tenant associated', async () => {
+    const db = new FakeD1()
+    db.magicCandidates = [{
+      id: 'tok-notenant',
+      token: 'orphan-token',
+      email: 'user@example.org',
+      tenant_id: null,
+    }]
+    const env = makeEnv(db)    // no PLATFORM_ADMIN_EMAILS set
+    const app = makeApp(TENANT)
+
+    const res = await appReq(app, '/api/auth/verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: 'orphan-token', email: 'user@example.org' }),
+    }, env)
+
+    expect(res.status).toBe(400)
+    const text = await res.text()
+    expect(text.toLowerCase()).toContain('tenant')
   })
 
   it('token already used (filtered by used=0 → empty candidates) → 200 expired HTML', async () => {
@@ -1033,6 +1132,43 @@ describe('POST /api/auth/users', () => {
 
     expect(res.status).toBe(500)
     expect((await res.json() as Record<string, unknown>).error).toMatch(/database error/i)
+  })
+
+  it('role=\'viewer\' is preserved in the INSERT bind', async () => {
+    const db = new FakeD1()
+    const env = makeEnv(db)
+    const app = makeApp(TENANT)
+
+    await appReq(app, '/api/auth/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Host': 'localhost:8787' },
+      body: JSON.stringify({ email: 'viewer@example.org', role: 'viewer' }),
+    }, env)
+
+    // The INSERT bind should include 'viewer' as the 4th argument
+    const insertIdx = db.sqls.findIndex(s => s.includes('INSERT INTO tenant_users'))
+    expect(insertIdx).toBeGreaterThan(-1)
+    expect(db.allBinds[insertIdx]).toEqual(
+      expect.arrayContaining(['viewer@example.org', 'viewer']),
+    )
+  })
+
+  it('missing role defaults to \'admin\' in the INSERT bind', async () => {
+    const db = new FakeD1()
+    const env = makeEnv(db)
+    const app = makeApp(TENANT)
+
+    await appReq(app, '/api/auth/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Host': 'localhost:8787' },
+      body: JSON.stringify({ email: 'defaultrole@example.org' }),
+    }, env)
+
+    const insertIdx = db.sqls.findIndex(s => s.includes('INSERT INTO tenant_users'))
+    expect(insertIdx).toBeGreaterThan(-1)
+    expect(db.allBinds[insertIdx]).toEqual(
+      expect.arrayContaining(['defaultrole@example.org', 'admin']),
+    )
   })
 })
 

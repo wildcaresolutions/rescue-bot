@@ -32,10 +32,16 @@ import type { Env, Variables, Tenant } from '../src/lib/types'
 
 // ── Fake ExecutionContext ─────────────────────────────────────────────────────
 
-const fakeCtx: ExecutionContext = {
+/** Safe multi-value cookie reader: falls back to the single Set-Cookie header. */
+function getSetCookies(headers: Headers): string[] {
+  return (headers as Headers & { getSetCookie?(): string[] }).getSetCookie?.()
+    ?? [headers.get('Set-Cookie') ?? ''].filter(s => s.length > 0)
+}
+
+const fakeCtx = {
   waitUntil(_p: Promise<unknown>) {},
   passThroughOnException() {},
-}
+} as unknown as ExecutionContext
 
 // ── Stub Tenant ───────────────────────────────────────────────────────────────
 
@@ -70,6 +76,7 @@ const TENANT: Tenant = {
   feature_flags: null,
   draft_config: null,
   draft_updated_at: null,
+  daily_reports_enabled: 0,
   created_at: '',
   updated_at: '',
 }
@@ -197,14 +204,12 @@ async function bearerFor(tenantId: string, email: string, env: Env): Promise<str
 const realFetch = globalThis.fetch
 
 function turnstilePass() {
-  // @ts-expect-error overriding global
   globalThis.fetch = vi.fn(async () =>
     new Response(JSON.stringify({ success: true }), { status: 200 }),
   )
 }
 
 function turnstileFail() {
-  // @ts-expect-error overriding global
   globalThis.fetch = vi.fn(async () =>
     new Response(
       JSON.stringify({ success: false, 'error-codes': ['invalid-input-response'] }),
@@ -596,7 +601,7 @@ describe('POST /api/auth/verify', () => {
     }, env)
 
     expect(res.status).toBe(200)
-    const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('Set-Cookie') ?? '']
+    const setCookies = getSetCookies(res.headers)
     const combined = setCookies.join(' ')
     expect(combined).toContain('_token=')
     expect(combined).toContain('_auth=')
@@ -637,7 +642,7 @@ describe('POST /api/auth/verify', () => {
     }, env)
 
     expect(res.status).toBe(200)
-    const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('Set-Cookie') ?? '']
+    const setCookies = getSetCookies(res.headers)
     const combined = setCookies.join(' ')
     expect(combined).toContain('_token=')
     expect(combined).toContain('_auth=')
@@ -660,7 +665,7 @@ describe('POST /api/auth/verify', () => {
     const html = await res.text()
     expect(html.toLowerCase()).toContain('expired')
     // No session cookie should be issued — use getSetCookie() for safety
-    const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : []
+    const setCookies = getSetCookies(res.headers)
     expect(setCookies.some(c => c.includes('_token='))).toBe(false)
   })
 
@@ -686,7 +691,7 @@ describe('POST /api/auth/verify', () => {
     const html = await res.text()
     expect(html).toContain('/platform-admin')
     // Cookies must use the PLATFORM_COOKIE_PREFIX, not the tenant prefix
-    const setCookies = res.headers.getSetCookie ? res.headers.getSetCookie() : [res.headers.get('Set-Cookie') ?? '']
+    const setCookies = getSetCookies(res.headers)
     const combined = setCookies.join(' ')
     expect(combined).toContain('wc_platform_token=')
     expect(combined).toContain('wc_platform_auth=')

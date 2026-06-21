@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import { BUILTIN_GUIDES } from '../src/guides'
 import {
   normalizeDomain,
   listDomains,
@@ -359,9 +360,8 @@ describe('buildKnowledgeBaseSummary', () => {
     expect(protocols.has_custom_instruction).toBe(true)
     expect(typeof protocols.instruction_preview).toBe('string')
     const stats = summary.stats as Record<string, unknown>
-    // BUILTIN_GUIDES is an empty-array stub in the test environment (no make cf-setup)
-    expect(stats.total_documents).toBe(0)
-    expect(stats.total_characters).toBe(0)
+    expect(stats.total_documents).toBe(BUILTIN_GUIDES.length)
+    expect(stats.total_characters).toBe(BUILTIN_GUIDES.reduce((sum: number, g: { text: string }) => sum + g.text.length, 0))
   })
 
   it('custom_protocols.has_custom_instruction is false when null', () => {

@@ -44,7 +44,7 @@ async function logCopilotUsage(
   ).bind(tenantId, today, model, promptTokens, completionTokens).run()
 }
 
-const AGENT_MODEL = 'claude-sonnet-4-6'
+const AGENT_MODEL = 'claude-sonnet-5'
 const AGENT_HISTORY_LIMIT = 20
 
 const agentApp = new Hono<{ Bindings: Env; Variables: Variables }>()

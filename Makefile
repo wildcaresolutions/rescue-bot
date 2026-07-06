@@ -18,6 +18,11 @@
 # agnostic to where the values came from.
 #
 # Run `make secrets-doctor` to see which path is active right now.
+# pi-lens treats Makefiles as shell and lints them with a shell parser,
+# which cannot read GNU Make directives (ifneq/else/endif) and emits fatal
+# parse errors at this first `ifneq`. The pi-lens-ignore below drops those
+# false positives (it must sit on the line directly above the `ifneq`).
+# pi-lens-ignore: SC1073,SC1065,SC1064,SC1072
 ifneq ($(wildcard .env.op),)
   SECRETS     := op run --env-file=.env.op --
   SECRETS_SRC := 1Password (.env.op)
@@ -297,7 +302,9 @@ dev: cf-render-config
 	echo ""; \
 	echo "  Test tenant login: test@test.com (no password in dev)"; \
 	echo ""
-	@PORT=$$(cat workers/.dev.port); cd workers && $(SECRETS) npx wrangler dev --port $$PORT --persist-to $(STATE_DIR)
+	@# $(SECRETS) must resolve in the repo-root cwd where .env / .env.op live,
+	@# so cd-into-workers happens INSIDE the child shell (see cf-migrate note).
+	@PORT=$$(cat workers/.dev.port); $(SECRETS) sh -c "cd workers && npx wrangler dev --port $$PORT --persist-to $(STATE_DIR)"
 
 # Start local dev server. Worktree-aware: picks a free port, isolates wrangler
 # state per worktree so two `make cf-dev`s in two worktrees don't collide.
@@ -351,7 +358,9 @@ cf-dev: cf-render-config
 	echo "  URL:       http://localhost:$$PORT"; \
 	echo "  Stop:      make cf-stop"; \
 	echo ""
-	@PORT=$$(cat workers/.dev.port); cd workers && $(SECRETS) npx wrangler dev --port $$PORT --persist-to $(STATE_DIR)
+	@# $(SECRETS) must resolve in the repo-root cwd where .env / .env.op live,
+	@# so cd-into-workers happens INSIDE the child shell (see cf-migrate note).
+	@PORT=$$(cat workers/.dev.port); $(SECRETS) sh -c "cd workers && npx wrangler dev --port $$PORT --persist-to $(STATE_DIR)"
 
 # Show what cf-dev would auto-bootstrap on next run. Read-only — no side
 # effects. Use this when cf-dev fails or you want to know what the worktree

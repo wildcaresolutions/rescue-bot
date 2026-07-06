@@ -42,6 +42,12 @@ endif
 # than cf-dev reads from.
 WORKTREE_HASH := $(shell git rev-parse --show-toplevel 2>/dev/null | shasum -a 256 | cut -c1-8)
 STATE_DIR     := .wrangler/state-$(WORKTREE_HASH)
+# cf-dev writes the free port it picked to workers/.dev.port (unique per
+# worktree). Eval/health targets read it so they hit THIS worktree's server
+# instead of a hardcoded 8787. Falls back to 8787 when .dev.port is absent
+# (back-compat / external server). Override with DEV_PORT=NNNN.
+DEV_PORT      ?= $(shell cat workers/.dev.port 2>/dev/null || echo 8787)
+DEV_URL       := http://localhost:$(DEV_PORT)
 EVAL_GRADER   ?= file://evals/cf-gateway-grader.js
 EVAL_JUDGE_MODEL ?= workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast
 
@@ -500,8 +506,8 @@ cf-push-secrets-watchdog:
 # Requires `make cf-dev` running in another terminal.
 
 _check-dev-running:
-	@if ! curl -s http://localhost:8787/health > /dev/null 2>&1; then \
-		echo "ERROR: Dev server not running."; \
+	@if ! curl -s $(DEV_URL)/health > /dev/null 2>&1; then \
+		echo "ERROR: Dev server not running at $(DEV_URL)."; \
 		echo "Start it in another terminal with: make cf-dev"; \
 		exit 1; \
 	fi
@@ -528,13 +534,15 @@ _check-eval-deps:
 # *_BYOK_ALIAS values come from org.env (non-secret config); AI_GATEWAY_TOKEN
 # comes from the active SECRETS source.
 eval: _check-dev-running _check-eval-gateway _check-eval-deps
-	@echo "Running generic evals against http://localhost:8787 [secrets: $(SECRETS_SRC)]..."
+	@echo "Running generic evals against $(DEV_URL) [secrets: $(SECRETS_SRC)]..."
 	@CLOUDFLARE_ACCOUNT_ID=$${CLOUDFLARE_ACCOUNT_ID:-$${ACCOUNT_ID:-$$(grep "^ACCOUNT_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
 	CLOUDFLARE_GATEWAY_ID=$${CLOUDFLARE_GATEWAY_ID:-$${AI_GATEWAY_ID:-$$(grep "^AI_GATEWAY_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
 	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=$${AI_GATEWAY_ANTHROPIC_BYOK_ALIAS:-$$(grep "^AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=" org.env 2>/dev/null | cut -d= -f2-)}; \
 	CLOUDFLARE_ACCOUNT_ID="$$CLOUDFLARE_ACCOUNT_ID" \
 	CLOUDFLARE_GATEWAY_ID="$${CLOUDFLARE_GATEWAY_ID:-default}" \
 	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS="$$AI_GATEWAY_ANTHROPIC_BYOK_ALIAS" \
+	WORKERS_BASE="$(DEV_URL)" \
+	EVAL_ORIGIN="$(DEV_URL)" \
 	EVAL_JUDGE_MODEL="$(EVAL_JUDGE_MODEL)" \
 		$(SECRETS) ./evals/node_modules/.bin/promptfoo eval --grader $(EVAL_GRADER)
 	@echo "View results: ./evals/node_modules/.bin/promptfoo view"
@@ -545,13 +553,15 @@ eval-site: _check-dev-running _check-eval-gateway _check-eval-deps
 		echo "ERROR: site/promptfooconfig.yaml not found"; \
 		exit 1; \
 	fi
-	@echo "Running site-specific evals against http://localhost:8787 [secrets: $(SECRETS_SRC)]..."
+	@echo "Running site-specific evals against $(DEV_URL) [secrets: $(SECRETS_SRC)]..."
 	@CLOUDFLARE_ACCOUNT_ID=$${CLOUDFLARE_ACCOUNT_ID:-$${ACCOUNT_ID:-$$(grep "^ACCOUNT_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
 	CLOUDFLARE_GATEWAY_ID=$${CLOUDFLARE_GATEWAY_ID:-$${AI_GATEWAY_ID:-$$(grep "^AI_GATEWAY_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
 	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=$${AI_GATEWAY_ANTHROPIC_BYOK_ALIAS:-$$(grep "^AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=" org.env 2>/dev/null | cut -d= -f2-)}; \
 	CLOUDFLARE_ACCOUNT_ID="$$CLOUDFLARE_ACCOUNT_ID" \
 	CLOUDFLARE_GATEWAY_ID="$${CLOUDFLARE_GATEWAY_ID:-default}" \
 	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS="$$AI_GATEWAY_ANTHROPIC_BYOK_ALIAS" \
+	WORKERS_BASE="$(DEV_URL)" \
+	EVAL_ORIGIN="$(DEV_URL)" \
 	EVAL_JUDGE_MODEL="$(EVAL_JUDGE_MODEL)" \
 		$(SECRETS) ./evals/node_modules/.bin/promptfoo eval -c site/promptfooconfig.yaml --grader $(EVAL_GRADER)
 	@echo "View results: ./evals/node_modules/.bin/promptfoo view"

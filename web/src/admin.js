@@ -60,7 +60,6 @@ import {
 import {
   renderTestView,
   loadEvalScenarios,
-  openGeneralRescueRules,
   evalResultsCache,
   bindTestCases,
 } from './admin/test-cases.js'
@@ -1025,23 +1024,6 @@ async function applyCandidateAsRole(dot, hex, role) {
   appendChangeChip(`${role.charAt(0).toUpperCase() + role.slice(1)}: ${hex}`)
 }
 
-function looksLikePlaybookRuleQuestion(text) {
-  const t = String(text || '').toLowerCase()
-  return /\b(playbook|rule|rules|protocol|instructions?)\b/.test(t)
-    && /\b(where|how|add|set|edit|change|put|find|fix)\b/.test(t)
-}
-
-function answerPlaybookRuleQuestion(text) {
-  const input = document.getElementById('agentInput')
-  if (input) input.value = ''
-  getAgentMessages().push({ role: 'user', content: text })
-  renderAgentMessages()
-  openGeneralRescueRules()
-  expandAgent()
-  appendAssistantMessage('I opened Playbook. Use **General Rescue Rules** for instructions that apply across many calls, like: “For in-area injured wildlife calls, include the public phone number and hours after safety steps.” On a failed test, **Add Contact Rule** saves that rule for you.')
-  setAgentInputPlaceholder('Ask for help writing a rescue rule')
-}
-
 function defaultAgentFallbackText() {
   const isOnboarding = !getTenantConfig()?.onboarded
   // If we know tests are all passing AND the operator is mid-onboarding,
@@ -1085,10 +1067,12 @@ async function sendAgentMessage(injectedText = null, options = {}) {
   const safeInjected = typeof injectedText === 'string' ? injectedText : null
   const text = safeInjected || input.value.trim()
   if (!text || isAgentStreaming()) return
-  if (!safeInjected && looksLikePlaybookRuleQuestion(text)) {
-    answerPlaybookRuleQuestion(text)
-    return
-  }
+  // NOTE: we intentionally do NOT deterministically intercept
+  // "playbook/rule/protocol" phrasings here. That heuristic used to hijack
+  // genuine edit requests like "change the protocol for opossums" with a
+  // canned "I opened Playbook…" reply, forcing the operator to re-send
+  // ("try again") before the LLM engaged. The copilot LLM navigates,
+  // explains, AND performs the edit via its tools, so let it handle these.
   if (!options.skipOnboardingInterceptor && !safeInjected && shouldHandleDeterministicOnboardingInput(text)) {
     await handleOnboardingPendingMessage(text)
     return

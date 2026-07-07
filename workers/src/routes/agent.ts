@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import { streamText, stepCountIs } from 'ai'
+import { streamText, isStepCount } from 'ai'
 import type { Env, Tenant, Variables } from '../lib/types'
 import { invalidateTenantCache } from '../lib/cache'
 import { BrandExtractor } from '../lib/brand-extract'
@@ -163,7 +163,7 @@ agentApp.post('/admin/agent', async (c) => {
       // Pass the active view so the agent knows which tab the user is on —
       // it can navigate proactively instead of giving instructions ("go to
       // Test Cases") that the user has to follow manually.
-      system: buildSystemPrompt(c.env, freshTenant, context, testState),
+      instructions: buildSystemPrompt(c.env, freshTenant, context, testState),
       messages: conversationMessages,
       tools: {
         update_config: cfgTools.update_config,
@@ -198,8 +198,8 @@ agentApp.post('/admin/agent', async (c) => {
         extract_brand_colors: fTools.extract_brand_colors,
         fetch_url: fTools.fetch_url,
       },
-      stopWhen: stepCountIs(7),
-      onFinish: (event) => {
+      stopWhen: isStepCount(7),
+      onEnd: (event) => {
         // M-10: Track copilot token usage in usage_log, same as main chat.
         c.executionCtx.waitUntil(
           logCopilotUsage(c.env, tenantId, AGENT_MODEL, event.usage).catch(e =>
@@ -229,7 +229,7 @@ agentApp.post('/admin/agent', async (c) => {
     }),
   )
 
-  return buildAgentStream(result.fullStream)
+  return buildAgentStream(result.stream)
 })
 
 // ── Agent conversation history ───────────────────────────────────────────────

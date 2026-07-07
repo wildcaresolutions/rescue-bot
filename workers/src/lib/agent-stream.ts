@@ -15,7 +15,7 @@
  */
 
 /**
- * Shape we consume from `streamText().fullStream`. Kept loose — the
+ * Shape we consume from `streamText().stream`. Kept loose — the
  * stream parts are discriminated by `type` and we only read the fields
  * the protocol cares about.
  */

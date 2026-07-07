@@ -18,6 +18,11 @@
 # agnostic to where the values came from.
 #
 # Run `make secrets-doctor` to see which path is active right now.
+# pi-lens treats Makefiles as shell and lints them with a shell parser,
+# which cannot read GNU Make directives (ifneq/else/endif) and emits fatal
+# parse errors at this first `ifneq`. The pi-lens-ignore below drops those
+# false positives (it must sit on the line directly above the `ifneq`).
+# pi-lens-ignore: SC1073,SC1065,SC1064,SC1072
 ifneq ($(wildcard .env.op),)
   SECRETS     := op run --env-file=.env.op --
   SECRETS_SRC := 1Password (.env.op)
@@ -42,6 +47,12 @@ endif
 # than cf-dev reads from.
 WORKTREE_HASH := $(shell git rev-parse --show-toplevel 2>/dev/null | shasum -a 256 | cut -c1-8)
 STATE_DIR     := .wrangler/state-$(WORKTREE_HASH)
+# cf-dev writes the free port it picked to workers/.dev.port (unique per
+# worktree). Eval/health targets read it so they hit THIS worktree's server
+# instead of a hardcoded 8787. Falls back to 8787 when .dev.port is absent
+# (back-compat / external server). Override with DEV_PORT=NNNN.
+DEV_PORT      ?= $(shell cat workers/.dev.port 2>/dev/null || echo 8787)
+DEV_URL       := http://localhost:$(DEV_PORT)
 EVAL_GRADER   ?= file://evals/cf-gateway-grader.js
 EVAL_JUDGE_MODEL ?= workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast
 
@@ -291,7 +302,9 @@ dev: cf-render-config
 	echo ""; \
 	echo "  Test tenant login: test@test.com (no password in dev)"; \
 	echo ""
-	@PORT=$$(cat workers/.dev.port); cd workers && $(SECRETS) npx wrangler dev --port $$PORT --persist-to $(STATE_DIR)
+	@# $(SECRETS) must resolve in the repo-root cwd where .env / .env.op live,
+	@# so cd-into-workers happens INSIDE the child shell (see cf-migrate note).
+	@PORT=$$(cat workers/.dev.port); $(SECRETS) sh -c "cd workers && npx wrangler dev --port $$PORT --persist-to $(STATE_DIR)"
 
 # Start local dev server. Worktree-aware: picks a free port, isolates wrangler
 # state per worktree so two `make cf-dev`s in two worktrees don't collide.
@@ -345,7 +358,9 @@ cf-dev: cf-render-config
 	echo "  URL:       http://localhost:$$PORT"; \
 	echo "  Stop:      make cf-stop"; \
 	echo ""
-	@PORT=$$(cat workers/.dev.port); cd workers && $(SECRETS) npx wrangler dev --port $$PORT --persist-to $(STATE_DIR)
+	@# $(SECRETS) must resolve in the repo-root cwd where .env / .env.op live,
+	@# so cd-into-workers happens INSIDE the child shell (see cf-migrate note).
+	@PORT=$$(cat workers/.dev.port); $(SECRETS) sh -c "cd workers && npx wrangler dev --port $$PORT --persist-to $(STATE_DIR)"
 
 # Show what cf-dev would auto-bootstrap on next run. Read-only — no side
 # effects. Use this when cf-dev fails or you want to know what the worktree
@@ -500,8 +515,8 @@ cf-push-secrets-watchdog:
 # Requires `make cf-dev` running in another terminal.
 
 _check-dev-running:
-	@if ! curl -s http://localhost:8787/health > /dev/null 2>&1; then \
-		echo "ERROR: Dev server not running."; \
+	@if ! curl -s $(DEV_URL)/health > /dev/null 2>&1; then \
+		echo "ERROR: Dev server not running at $(DEV_URL)."; \
 		echo "Start it in another terminal with: make cf-dev"; \
 		exit 1; \
 	fi
@@ -528,13 +543,15 @@ _check-eval-deps:
 # *_BYOK_ALIAS values come from org.env (non-secret config); AI_GATEWAY_TOKEN
 # comes from the active SECRETS source.
 eval: _check-dev-running _check-eval-gateway _check-eval-deps
-	@echo "Running generic evals against http://localhost:8787 [secrets: $(SECRETS_SRC)]..."
+	@echo "Running generic evals against $(DEV_URL) [secrets: $(SECRETS_SRC)]..."
 	@CLOUDFLARE_ACCOUNT_ID=$${CLOUDFLARE_ACCOUNT_ID:-$${ACCOUNT_ID:-$$(grep "^ACCOUNT_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
 	CLOUDFLARE_GATEWAY_ID=$${CLOUDFLARE_GATEWAY_ID:-$${AI_GATEWAY_ID:-$$(grep "^AI_GATEWAY_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
 	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=$${AI_GATEWAY_ANTHROPIC_BYOK_ALIAS:-$$(grep "^AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=" org.env 2>/dev/null | cut -d= -f2-)}; \
 	CLOUDFLARE_ACCOUNT_ID="$$CLOUDFLARE_ACCOUNT_ID" \
 	CLOUDFLARE_GATEWAY_ID="$${CLOUDFLARE_GATEWAY_ID:-default}" \
 	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS="$$AI_GATEWAY_ANTHROPIC_BYOK_ALIAS" \
+	WORKERS_BASE="$(DEV_URL)" \
+	EVAL_ORIGIN="$(DEV_URL)" \
 	EVAL_JUDGE_MODEL="$(EVAL_JUDGE_MODEL)" \
 		$(SECRETS) ./evals/node_modules/.bin/promptfoo eval --grader $(EVAL_GRADER)
 	@echo "View results: ./evals/node_modules/.bin/promptfoo view"
@@ -545,13 +562,15 @@ eval-site: _check-dev-running _check-eval-gateway _check-eval-deps
 		echo "ERROR: site/promptfooconfig.yaml not found"; \
 		exit 1; \
 	fi
-	@echo "Running site-specific evals against http://localhost:8787 [secrets: $(SECRETS_SRC)]..."
+	@echo "Running site-specific evals against $(DEV_URL) [secrets: $(SECRETS_SRC)]..."
 	@CLOUDFLARE_ACCOUNT_ID=$${CLOUDFLARE_ACCOUNT_ID:-$${ACCOUNT_ID:-$$(grep "^ACCOUNT_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
 	CLOUDFLARE_GATEWAY_ID=$${CLOUDFLARE_GATEWAY_ID:-$${AI_GATEWAY_ID:-$$(grep "^AI_GATEWAY_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
 	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=$${AI_GATEWAY_ANTHROPIC_BYOK_ALIAS:-$$(grep "^AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=" org.env 2>/dev/null | cut -d= -f2-)}; \
 	CLOUDFLARE_ACCOUNT_ID="$$CLOUDFLARE_ACCOUNT_ID" \
 	CLOUDFLARE_GATEWAY_ID="$${CLOUDFLARE_GATEWAY_ID:-default}" \
 	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS="$$AI_GATEWAY_ANTHROPIC_BYOK_ALIAS" \
+	WORKERS_BASE="$(DEV_URL)" \
+	EVAL_ORIGIN="$(DEV_URL)" \
 	EVAL_JUDGE_MODEL="$(EVAL_JUDGE_MODEL)" \
 		$(SECRETS) ./evals/node_modules/.bin/promptfoo eval -c site/promptfooconfig.yaml --grader $(EVAL_GRADER)
 	@echo "View results: ./evals/node_modules/.bin/promptfoo view"

@@ -43,6 +43,7 @@ MAIN_CHAT_MODEL = "{{MAIN_CHAT_MODEL}}"
 PHOTO_RECOGNIZER_MODEL = "{{PHOTO_RECOGNIZER_MODEL}}"
 PLATFORM_NAME = "{{PLATFORM_NAME}}"
 PLATFORM_EMBED_HOST = "{{PLATFORM_EMBED_HOST}}"
+PLATFORM_ADMIN_EMAILS = "{{PLATFORM_ADMIN_EMAILS}}"
 ENVIRONMENT = "dev"
 EMAIL_OVERRIDE_TO = "mark@bluesnoop.com"
 EMAIL_SUBJECT_PREFIX = "[DEV]"
@@ -146,6 +147,7 @@ MAIN_CHAT_MODEL = "{{MAIN_CHAT_MODEL}}"
 PHOTO_RECOGNIZER_MODEL = "{{PHOTO_RECOGNIZER_MODEL}}"
 PLATFORM_NAME = "{{PLATFORM_NAME}}"
 PLATFORM_EMBED_HOST = "{{PLATFORM_EMBED_HOST}}"
+PLATFORM_ADMIN_EMAILS = "{{PLATFORM_ADMIN_EMAILS}}"
 ENVIRONMENT = "test"
 EMAIL_OVERRIDE_TO = "mark@bluesnoop.com"
 EMAIL_SUBJECT_PREFIX = "[TEST]"
@@ -246,6 +248,7 @@ MAIN_CHAT_MODEL = "{{MAIN_CHAT_MODEL}}"
 PHOTO_RECOGNIZER_MODEL = "{{PHOTO_RECOGNIZER_MODEL}}"
 PLATFORM_NAME = "{{PLATFORM_NAME}}"
 PLATFORM_EMBED_HOST = "{{PLATFORM_EMBED_HOST}}"
+PLATFORM_ADMIN_EMAILS = "{{PLATFORM_ADMIN_EMAILS}}"
 ENVIRONMENT = "production"
 # Empty in prod so sendEmail() sends to real recipients with no subject prefix.
 EMAIL_OVERRIDE_TO = ""
@@ -305,5 +308,7 @@ crons = ["0 3 * * *", "0 14 * * *"]
 #   npx wrangler secret put AI_GATEWAY_TOKEN --env production
 #   npx wrangler secret put AI_GATEWAY_TOKEN --env test
 # Required: AI_GATEWAY_TOKEN, SIGNING_SECRET, REPORT_FROM_EMAIL,
-#           TURNSTILE_SECRET_KEY, PLATFORM_ADMIN_EMAILS
+#           TURNSTILE_SECRET_KEY
+#           (PLATFORM_ADMIN_EMAILS is a plaintext [vars] value, not a secret —
+#           it's just the notification recipient list; set it in org.env.)
 # ─────────────────────────────────────────────────────────────────────────────

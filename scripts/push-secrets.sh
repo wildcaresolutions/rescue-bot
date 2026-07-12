@@ -16,7 +16,11 @@ TARGET="${2:-main}"
 case "$TARGET" in
   main)
     CWD="workers"
-    KEYS=(REPORT_FROM_EMAIL PLATFORM_FROM_EMAIL SIGNING_SECRET TURNSTILE_SECRET_KEY PLATFORM_ADMIN_EMAILS AI_GATEWAY_TOKEN)
+    # NOTE: PLATFORM_ADMIN_EMAILS is intentionally NOT here — it's a plaintext
+    # [vars] value (the new-application notification recipient list), set in
+    # org.env and rendered into wrangler.toml by gen-wrangler.js. It is not
+    # sensitive, so it doesn't belong in the encrypted-secret push path.
+    KEYS=(REPORT_FROM_EMAIL PLATFORM_FROM_EMAIL SIGNING_SECRET TURNSTILE_SECRET_KEY AI_GATEWAY_TOKEN)
     ENV_FLAG=(--env "$WRANGLER_ENV")
     ;;
   watchdog)

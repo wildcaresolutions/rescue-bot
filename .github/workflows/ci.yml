@@ -180,6 +180,10 @@ jobs:
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
           PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
+          # Plaintext [vars] now (was a wrangler secret). Also the platform-admin
+          # login allowlist (lib/auth.ts:isPlatformAdminEmail) — an empty render
+          # would lock every platform admin out, so it MUST be passed here.
+          PLATFORM_ADMIN_EMAILS: ${{ secrets.PLATFORM_ADMIN_EMAILS }}
           MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
           PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
       # No smoke tests on the test env — smoke runs against prod only (after
@@ -213,6 +217,10 @@ jobs:
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
           PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
+          # Plaintext [vars] now (was a wrangler secret). Also the platform-admin
+          # login allowlist (lib/auth.ts:isPlatformAdminEmail) — an empty render
+          # would lock every platform admin out, so it MUST be passed here.
+          PLATFORM_ADMIN_EMAILS: ${{ secrets.PLATFORM_ADMIN_EMAILS }}
           MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
           PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
           # Lets deploy-embed.js purge the embed CDN's rolling keys (v1.js /
@@ -254,6 +262,7 @@ jobs:
           PROD_TURNSTILE_SITE_KEY: ${{ secrets.PROD_TURNSTILE_SITE_KEY }}
           PLATFORM_NAME: ${{ secrets.PLATFORM_NAME }}
           PLATFORM_EMBED_HOST: ${{ secrets.PLATFORM_EMBED_HOST }}
+          PLATFORM_ADMIN_EMAILS: ${{ secrets.PLATFORM_ADMIN_EMAILS }}
       - name: Seed smoke.wildcaresolutions.org into allowed_domains
         # Idempotent INSERT OR IGNORE — safe to run on every push. Ensures the
         # smoke subdomain is always allowed before the CORS tests run, without

@@ -1,5 +1,5 @@
 import { Hono } from 'hono'
-import type { Env, Tenant, Variables } from '../lib/types'
+import type { Env, Variables } from '../lib/types'
 import { hashPassword, generateToken, verifyToken, isDevAuthBypass, resolveSession, tenantCookiePrefix } from '../lib/auth'
 import { invalidateTenantCache, invalidateDomainsCache } from '../lib/cache'
 import { clamp } from '../lib/utils'
@@ -158,6 +158,45 @@ platform.post('/platform/apply', async (c) => {
           </div>
         `,
     })
+
+    // Notify the platform admins that a new application landed. Without this,
+    // applications sat silently in the `applications` table until someone
+    // happened to open /platform/applications — new orgs were left waiting
+    // for days. Best-effort and awaited (like the applicant confirmation): a
+    // mail failure must NOT fail the public submit, and sendEmail never throws.
+    const adminRecipients = c.env.PLATFORM_ADMIN_EMAILS
+      ?.split(',').map(s => s.trim()).filter(Boolean) ?? []
+    if (adminRecipients.length) {
+      const reqHost = c.req.header('Host') ?? 'localhost:8787'
+      const reviewUrl = `https://${reqHost}/platform#applications`
+      const row = (label: string, value: string) =>
+        value ? `<tr><td style="padding:4px 12px 4px 0;color:#999;">${label}</td><td style="padding:4px 0;color:#333;">${escapeHtml(value)}</td></tr>` : ''
+      const adminResult = await sendEmail(c.env, {
+        from: { name: platformName, email: getAuthFromEmail(c.env) },
+        to: adminRecipients,
+        subject: `New ${platformName} application: ${orgName}`,
+        html: `
+          <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 520px; margin: 0 auto; padding: 32px 20px;">
+            <h2 style="color: #333; margin-bottom: 8px;">New application</h2>
+            <p style="color: #666; margin-bottom: 16px;"><strong>${escapeHtml(orgName)}</strong> just applied to join ${platformName}.</p>
+            <table style="font-size: 14px; border-collapse: collapse; margin-bottom: 24px;">
+              ${row('Organization', orgName)}
+              ${row('Contact', contactName)}
+              ${row('Email', contactEmail)}
+              ${row('Phone', clamp(body.contact_phone as string, 32) ?? '')}
+              ${row('Website', clamp(body.website as string, 512) ?? '')}
+              ${row('Service area', clamp(body.service_area as string, 512) ?? '')}
+              ${row('Use case', clamp(body.use_case as string, 2000) ?? '')}
+            </table>
+            <a href="${reviewUrl}" style="display: inline-block; background: #6B7F5E; color: white; padding: 12px 32px; border-radius: 6px; text-decoration: none; font-weight: 600;">Review application</a>
+          </div>`,
+      })
+      if (adminResult.sent === false && adminResult.reason !== 'no_binding') {
+        logError('platform/apply-admin-notify-failed', { adminResult })
+      }
+    } else {
+      logError('platform/apply-no-admin-recipients', { note: 'PLATFORM_ADMIN_EMAILS unset — no new-application notification sent' })
+    }
 
     return c.json({ success: true, id }, 201)
   } catch (e) {

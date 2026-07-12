@@ -66,6 +66,12 @@ export const PLACEHOLDERS = [
   // out of the box. Set to `embed.<org-domain>` once the R2 bucket
   // (`{{ORG_SLUG}}-embed`) is bound to that hostname via R2 Custom Domains.
   'PLATFORM_EMBED_HOST',
+  // Comma-separated list of platform-admin emails notified when a new org
+  // submits the public /platform/apply form. NOT a secret — just a routing
+  // list — so it lives in [vars] (org.env), not wrangler secrets. Empty is
+  // tolerated (renders ""), in which case /platform/apply logs
+  // `apply-no-admin-recipients` and sends no notification.
+  'PLATFORM_ADMIN_EMAILS',
   // Watchdog Worker (infra/watchdog/) — only required when rendering the
   // watchdog template, which is optional for forking orgs. Forks that don't
   // run `make cf-deploy-watchdog` can leave these empty in org.env.
@@ -81,6 +87,7 @@ const OPTIONAL_PLACEHOLDERS = new Set([
   'PHOTO_RECOGNIZER_MODEL',
   'PLATFORM_NAME',
   'PLATFORM_EMBED_HOST',
+  'PLATFORM_ADMIN_EMAILS',
   'WATCHDOG_KV_ID',
   'WATCHDOG_HEALTH_URL_TEST',
   'WATCHDOG_HEALTH_URL_PROD',

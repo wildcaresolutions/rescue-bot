@@ -76,7 +76,9 @@ const devVars = [
   // local dev so the form works without real keys. Real secret is set in
   // prod/test envs via `make cf-push-secrets[-test]`.
   'TURNSTILE_SECRET_KEY=1x0000000000000000000000000000000AA',
-  `PLATFORM_ADMIN_EMAILS=${envVars.PLATFORM_ADMIN_EMAILS ?? 'mark@bluesnoop.com'}`,
+  // PLATFORM_ADMIN_EMAILS is no longer emitted here — it's a plaintext
+  // wrangler [vars] value now (rendered from org.env into wrangler.toml by
+  // gen-wrangler.js), so `wrangler dev` picks it up from there.
   // Auth bypass: wrangler.template.toml base [vars] now defaults DEV_AUTH_BYPASS=""
   // so a bare `wrangler deploy` ships fail-closed. Set it here (gitignored
   // .dev.vars) so `wrangler dev` still bypasses auth for local development.

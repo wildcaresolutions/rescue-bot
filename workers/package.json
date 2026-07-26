@@ -18,13 +18,13 @@
     "zod": "^4.4.1"
   },
   "devDependencies": {
-    "@cloudflare/vitest-pool-workers": "^0.18.0",
+    "@cloudflare/vitest-pool-workers": "^0.18.8",
     "@cloudflare/workers-types": "5.20260712.1",
     "@types/node": "26.0.1",
     "pg": "^8.20.0",
     "typescript": "6.0.3",
     "vitest": "4.1.10",
-    "wrangler": "^4.107.0"
+    "wrangler": "^4.114.0"
   },
   "overrides": {
     "esbuild": "^0.28.1",

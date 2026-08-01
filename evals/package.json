@@ -5,7 +5,7 @@
   "type": "module",
   "dependencies": {
     "dotenv": "^16.3.1",
-    "promptfoo": "^0.121.9"
+    "promptfoo": "^0.121.20"
   },
   "overrides": {
     "@anthropic-ai/sdk": "^0.92.0",

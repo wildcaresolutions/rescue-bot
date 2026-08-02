@@ -14,7 +14,7 @@
     "@ai-sdk/anthropic": "4.0.12",
     "@ai-sdk/openai": "4.0.8",
     "ai": "7.0.22",
-    "hono": "4.12.29",
+    "hono": "4.12.32",
     "zod": "^4.4.1"
   },
   "devDependencies": {

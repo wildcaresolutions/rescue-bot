@@ -24,7 +24,7 @@
     "pg": "^8.20.0",
     "typescript": "6.0.3",
     "vitest": "4.1.10",
-    "wrangler": "^4.115.0"
+    "wrangler": "^4.119.0"
   },
   "overrides": {
     "esbuild": "^0.28.1",

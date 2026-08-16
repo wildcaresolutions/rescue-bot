@@ -11,7 +11,7 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "4.0.33",
+    "@ai-sdk/anthropic": "4.0.38",
     "@ai-sdk/openai": "4.0.32",
     "ai": "7.0.55",
     "hono": "4.13.1",

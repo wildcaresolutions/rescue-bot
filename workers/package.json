@@ -13,7 +13,7 @@
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.44",
     "@ai-sdk/openai": "4.0.50",
-    "ai": "7.0.70",
+    "ai": "7.0.83",
     "hono": "4.13.5",
     "zod": "^4.4.1"
   },

@@ -15,7 +15,7 @@
     "@ai-sdk/openai": "4.0.57",
     "ai": "7.0.97",
     "hono": "4.13.5",
-    "zod": "^4.5.4"
+    "zod": "^4.6.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",

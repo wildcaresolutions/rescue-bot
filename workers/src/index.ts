@@ -18,6 +18,7 @@ import { getCachedDomains, cacheDomains } from './lib/cache'
 import { parseOrgConfig } from './lib/tenant-loader'
 import { overlayTenant, hasDraft } from './lib/draft'
 import { logWarn, logError } from './lib/logger'
+import { checkAiHealth } from './lib/ai-health'
 
 // Sentinel tenantId for platform-admin sessions (admin.<root>).
 const PLATFORM_TENANT_ID = 'platform'
@@ -362,31 +363,6 @@ app.use('/platform/*', async (c, next) => {
 })
 
 // ── Health ────────────────────────────────────────────────────────────────────
-
-// NEW-1: Cache the AI health probe result for 30 s per isolate.
-// Same pattern as rate-limiting state: module-level, not shared across isolates,
-// but prevents worst-case quota drain when the endpoint is hammered by a poller.
-let aiHealthCache: { ok: boolean; ts: number } | null = null
-const AI_HEALTH_TTL_MS = 30_000
-
-async function checkAiHealth(env: Env): Promise<boolean> {
-  const now = Date.now()
-  if (aiHealthCache && now - aiHealthCache.ts < AI_HEALTH_TTL_MS) {
-    return aiHealthCache.ok
-  }
-  try {
-    await Promise.race([
-      env.AI.run('@cf/baai/bge-base-en-v1.5', { text: ['health'] }),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 3000)),
-    ])
-    aiHealthCache = { ok: true, ts: now }
-    return true
-  } catch (e) {
-    aiHealthCache = { ok: false, ts: now }
-    logError('health/ai-check-failed', { error: e })
-    return false
-  }
-}
 
 app.get('/health', async (c) => {
   // Response shape contract: workers/src/types/health.ts. Mirrored byte-for-byte

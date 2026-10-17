@@ -17,6 +17,7 @@ import { queriesTools } from '../lib/tools/queries'
 import { readinessTools } from '../lib/tools/readiness'
 import { actionsTools } from '../lib/tools/actions'
 import { fetchTools } from '../lib/tools/fetch'
+import { webSearchTools } from '../lib/tools/web-search'
 import type { ToolContext } from '../lib/tools/types'
 import { dbError } from '../lib/errors'
 import { logError } from '../lib/logger'
@@ -151,6 +152,10 @@ agentApp.post('/admin/agent', async (c) => {
   const rTools = readinessTools(toolCtx)
   const aTools = actionsTools(toolCtx)
   const fTools = fetchTools(toolCtx)
+  let webTools: ReturnType<typeof webSearchTools>
+  try { webTools = webSearchTools(c.env, c.req.raw.signal) } catch {
+    return c.json({ error: 'COPILOT_WEB_SEARCH must be parallel or disabled' }, 500)
+  }
 
   // Snapshot test state so the agent knows whether Step 4 (Test Cases) is
   // complete — operators run tests via the UI as often as via chat, and
@@ -159,6 +164,7 @@ agentApp.post('/admin/agent', async (c) => {
   const testState = await loadTestSummary(c.env.DB, freshTenant.id)
 
   const result = streamText({
+      abortSignal: c.req.raw.signal,
       model: anthropic(AGENT_MODEL),
       // Pass the active view so the agent knows which tab the user is on —
       // it can navigate proactively instead of giving instructions ("go to
@@ -166,6 +172,7 @@ agentApp.post('/admin/agent', async (c) => {
       instructions: buildSystemPrompt(c.env, freshTenant, context, testState),
       messages: conversationMessages,
       tools: {
+        ...webTools,
         update_config: cfgTools.update_config,
         update_org_info: cfgTools.update_org_info,
         manage_referrals: cfgTools.manage_referrals,

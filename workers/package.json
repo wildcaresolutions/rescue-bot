@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.80",
+    "@ai-sdk/mcp": "2.0.83",
     "@ai-sdk/openai": "4.0.94",
     "ai": "7.0.141",
     "hono": "4.13.13",

@@ -92,7 +92,7 @@ See `web/src/admin.js:consumeAgentStream` for the parser.
 
 ## Agent tools
 
-The copilot has 27 tools registered in `workers/src/routes/agent.ts`, defined in `workers/src/lib/tools/*.ts`:
+The copilot tools are registered in `workers/src/routes/agent.ts`, defined in `workers/src/lib/tools/*.ts`:
 
 - **config**: `update_config`, `update_org_info`, `update_colors`, `get_config`, `update_widget_theme`, `update_custom_css`
 - **protocols**: `save_protocols`, `create_test_scenario`, `list_test_scenarios`, `run_test_scenario`
@@ -101,7 +101,18 @@ The copilot has 27 tools registered in `workers/src/routes/agent.ts`, defined in
 - **readiness**: `get_setup_readiness`, `publish_widget`
 - **actions**: `navigate_to_tab`, `resolve_action_item`, `get_embed_code`
 - **fetch**: `extract_brand_colors`, `fetch_url`, `harvest_website_info`
+- **web-search**: `web_search`, `web_fetch` for operator-requested public research
 
 `run_analytics_query` accepts plain-English questions + a single SELECT. The validator at `lib/safe-sql.ts` rejects mutations, multi-statement, comments, hard-coded tenant ids, JOINs, comma-joins, UNION/WITH/CTEs, and unscoped queries. `:tenant_id` is server-bound; results capped at 100 rows.
 
-All outbound HTTP from copilot tools (`fetch_url`, `harvest_website_info`, `extract_brand_colors`) routes through `lib/safe-url.ts:safeFetch` — https-only, blocks private IPs, re-validates redirects.
+Direct website requests from `fetch_url`, `harvest_website_info`, and `extract_brand_colors` route through `lib/safe-url.ts:safeFetch`: HTTPS only, private IPs blocked, redirects revalidated.
+
+### Public web research
+
+Ask the authenticated admin copilot to find public rehabilitation directories or read a source page before preparing a referral. It can use [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) for free search and page excerpts without an account or API key. Anonymous search uses Fast mode and is subject to service limits. This is the default web-search provider for a fresh installation; citizen chat continues to use the approved knowledge base.
+
+`web_search` accepts an `objective` and one to three `search_queries`. `web_fetch` accepts up to five public HTTPS `urls` and an optional `objective` (200 characters). Page URLs are validated with the existing outbound URL guard before being sent to the fixed `https://search.parallel.ai/mcp` endpoint. Research results include source URLs and are capped at 25,000 characters. Each call has a 15-second deadline and follows request cancellation. Failures are returned to the copilot without switching providers.
+
+No setup is needed. To disable both research tools, set the Worker variable `COPILOT_WEB_SEARCH = "disabled"` in the applicable environment's `[vars]` table in `workers/wrangler.template.toml`, then regenerate the deployment configuration. `"parallel"` explicitly selects the default; unknown values produce a configuration error. This is a persistent outbound-research control. Existing `fetch_url` (including raw HTML), website harvesting, saved tenant settings, admin authorization, and knowledge-base search retain their behavior.
+
+Search terms and requested URLs are sent to Parallel. Only use public research terms and public URLs; never include citizen details, private protocols, or private links. The copilot is instructed to treat page text as untrusted evidence, cite exact URLs, and obtain operator confirmation of intake policies before changing referrals or protocols. Public search results do not replace approved rescue guidance.

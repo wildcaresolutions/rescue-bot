@@ -19,6 +19,7 @@ export interface Env {
   MAIN_CHAT_MODEL?: string
   EVAL_JUDGE_MODEL?: string
   PHOTO_RECOGNIZER_MODEL?: string
+  COPILOT_WEB_SEARCH?: string
   REPORT_FROM_EMAIL: string
   SIGNING_SECRET: string
   ENVIRONMENT?: string

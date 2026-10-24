@@ -173,6 +173,15 @@ async function request(
 // ── Tests ───────────────────────────────────────────────────────────────────────
 
 describe('Router — middleware chain integration', () => {
+  it('requires admin authorization for copilot research', async () => {
+    const res = await request('https://wildcare.wildcaresolutions.org/admin/agent', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ messages: [{ role: 'user', content: 'Find a wildlife directory' }] }),
+    })
+    expect(res.status).toBe(401)
+  })
+
   describe('/health', () => {
     it('returns 200 when DB and Vectorize stubs respond', async () => {
       // /health probes DB+Vectorize+R2; without those bindings it 503s. We

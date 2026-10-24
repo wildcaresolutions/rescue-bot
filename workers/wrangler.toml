@@ -45,6 +45,13 @@ PLATFORM_NAME = "REPLACE_VIA_GEN_WRANGLER"
 PLATFORM_EMBED_HOST = "REPLACE_VIA_GEN_WRANGLER"
 PLATFORM_ADMIN_EMAILS = "REPLACE_VIA_GEN_WRANGLER"
 ENVIRONMENT = "dev"
+# Admin-copilot public web research (web_search / web_fetch). OFF unless
+# org.env names a provider: the tools send operator search terms and URLs to a
+# third party, so a fork opts in deliberately. Empty registers no tools and
+# makes no outbound research calls. Only supported provider today: "parallel"
+# (Parallel Search MCP — keyless, anonymous). A value naming no known provider
+# makes /admin/agent return 500 rather than silently guessing.
+COPILOT_WEB_SEARCH = "REPLACE_VIA_GEN_WRANGLER"
 EMAIL_OVERRIDE_TO = "mark@bluesnoop.com"
 EMAIL_SUBJECT_PREFIX = "[DEV]"
 # Local dev: bypass Turnstile + magic-link auth so devs aren't blocked. Flip
@@ -149,6 +156,8 @@ PLATFORM_NAME = "REPLACE_VIA_GEN_WRANGLER"
 PLATFORM_EMBED_HOST = "REPLACE_VIA_GEN_WRANGLER"
 PLATFORM_ADMIN_EMAILS = "REPLACE_VIA_GEN_WRANGLER"
 ENVIRONMENT = "test"
+# Admin-copilot public web research. OFF unless org.env opts in ("parallel").
+COPILOT_WEB_SEARCH = "REPLACE_VIA_GEN_WRANGLER"
 EMAIL_OVERRIDE_TO = "mark@bluesnoop.com"
 EMAIL_SUBJECT_PREFIX = "[TEST]"
 DEV_AUTH_BYPASS = ""
@@ -250,6 +259,8 @@ PLATFORM_NAME = "REPLACE_VIA_GEN_WRANGLER"
 PLATFORM_EMBED_HOST = "REPLACE_VIA_GEN_WRANGLER"
 PLATFORM_ADMIN_EMAILS = "REPLACE_VIA_GEN_WRANGLER"
 ENVIRONMENT = "production"
+# Admin-copilot public web research. OFF unless org.env opts in ("parallel").
+COPILOT_WEB_SEARCH = "REPLACE_VIA_GEN_WRANGLER"
 # Empty in prod so sendEmail() sends to real recipients with no subject prefix.
 EMAIL_OVERRIDE_TO = ""
 EMAIL_SUBJECT_PREFIX = ""

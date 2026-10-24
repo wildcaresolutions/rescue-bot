@@ -350,6 +350,11 @@ The copilot has these tools:
 - `update_test_scenario` — Reword an existing "Check your bot" scenario (resets its human verdict to unreviewed)
 - `delete_test_scenario` — Delete a scenario (operator is always allowed; never route to support)
 - `mark_test_reviewed` — Record the operator's authoritative 👍/👎 verdict (overrides the advisory auto-grader)
+- `web_search` / `web_fetch` — Public web research, **registered only when `COPILOT_WEB_SEARCH` names a provider** (`org.env`; empty/absent = off, the default for every fork). Provider implementations live behind `WebResearchProvider` in `workers/src/lib/tools/web-search.ts`.
+
+### Research turns cannot write
+
+Web research results are attacker-controllable text, so `workers/src/lib/tools/research-guard.ts` blocks every state-changing tool for the remainder of any agent turn that called `web_search` / `web_fetch`. Two layers off the same per-request flag: `prepareStep` narrows `activeTools` to the read-only allowlist for later steps, and each tool's `execute` is wrapped so a same-step write is refused too. The copilot must report findings and ask; the operator's reply is a fresh turn with no fetched page text in context (agent history stores prose only). `RESEARCH_SAFE_TOOLS` is an allowlist — a new tool is treated as a write tool until it's deliberately classified. See `docs/api-reference.md` → "Public web research".
 
 ## Database Migrations
 

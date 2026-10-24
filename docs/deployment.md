@@ -68,6 +68,8 @@ OPS_EMAIL=ops@myrehab.org                      # watchdog alert recipient
 REPORT_FROM_EMAIL=noreply@myrehab.org          # sender for tenant reports
 ```
 
+`org.env` also carries `COPILOT_WEB_SEARCH`, which is **empty (off) by default**. Setting it to `parallel` opts the deployment into the admin copilot's public web research tools (`web_search` / `web_fetch`), which send operator search terms and requested URLs to a third-party service. Leave it empty and those tools are never registered and make no outbound calls. See [api-reference.md → Public web research](api-reference.md#public-web-research-opt-in-off-by-default).
+
 Push to Cloudflare:
 
 ```bash

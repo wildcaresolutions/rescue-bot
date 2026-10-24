@@ -101,18 +101,43 @@ The copilot tools are registered in `workers/src/routes/agent.ts`, defined in `w
 - **readiness**: `get_setup_readiness`, `publish_widget`
 - **actions**: `navigate_to_tab`, `resolve_action_item`, `get_embed_code`
 - **fetch**: `extract_brand_colors`, `fetch_url`, `harvest_website_info`
-- **web-search**: `web_search`, `web_fetch` for operator-requested public research
+- **web-search**: `web_search`, `web_fetch` for operator-requested public research — registered only when `COPILOT_WEB_SEARCH` opts in (see below)
 
 `run_analytics_query` accepts plain-English questions + a single SELECT. The validator at `lib/safe-sql.ts` rejects mutations, multi-statement, comments, hard-coded tenant ids, JOINs, comma-joins, UNION/WITH/CTEs, and unscoped queries. `:tenant_id` is server-bound; results capped at 100 rows.
 
 Direct website requests from `fetch_url`, `harvest_website_info`, and `extract_brand_colors` route through `lib/safe-url.ts:safeFetch`: HTTPS only, private IPs blocked, redirects revalidated.
 
-### Public web research
+### Public web research (opt-in, off by default)
 
-Ask the authenticated admin copilot to find public rehabilitation directories or read a source page before preparing a referral. It can use [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) for free search and page excerpts without an account or API key. Anonymous search uses Fast mode and is subject to service limits. This is the default web-search provider for a fresh installation; citizen chat continues to use the approved knowledge base.
+The admin copilot can research public sources — find rehabilitation directories, read a source page before preparing a referral — through two extra tools, `web_search` and `web_fetch`. **Neither is registered unless the deployment opts in**, because both send operator search terms and URLs to a third-party service, and rescue-bot is forked and self-hosted by organizations that should decide that for themselves. With the flag off there are no research tools and no outbound research requests at all.
 
-`web_search` accepts an `objective` and one to three `search_queries`. `web_fetch` accepts up to five public HTTPS `urls` and an optional `objective` (200 characters). Page URLs are validated with the existing outbound URL guard before being sent to the fixed `https://search.parallel.ai/mcp` endpoint. Research results include source URLs and are capped at 25,000 characters. Each call has a 15-second deadline and follows request cancellation. Failures are returned to the copilot without switching providers.
+Turn it on by setting the Worker variable `COPILOT_WEB_SEARCH` in the applicable environment's `[vars]` table in `workers/wrangler.template.toml`, then regenerating the deployment configuration (`make cf-render-config`):
 
-No setup is needed. To disable both research tools, set the Worker variable `COPILOT_WEB_SEARCH = "disabled"` in the applicable environment's `[vars]` table in `workers/wrangler.template.toml`, then regenerate the deployment configuration. `"parallel"` explicitly selects the default; unknown values produce a configuration error. This is a persistent outbound-research control. Existing `fetch_url` (including raw HTML), website harvesting, saved tenant settings, admin authorization, and knowledge-base search retain their behavior.
+| `COPILOT_WEB_SEARCH` | Behavior |
+|---|---|
+| unset, `""`, `"disabled"`, `"off"`, `"false"` | **Default.** Tools not registered, no network calls. |
+| `"parallel"` | [Parallel Search MCP](https://docs.parallel.ai/integrations/mcp/search-mcp) — keyless anonymous search and page excerpts. Anonymous search uses Fast mode and is subject to service limits. |
+| anything else | Configuration error: `/admin/agent` returns 500 instead of silently guessing. |
 
-Search terms and requested URLs are sent to Parallel. Only use public research terms and public URLs; never include citizen details, private protocols, or private links. The copilot is instructed to treat page text as untrusted evidence, cite exact URLs, and obtain operator confirmation of intake policies before changing referrals or protocols. Public search results do not replace approved rescue guidance.
+Providers implement the `WebResearchProvider` interface in `workers/src/lib/tools/web-search.ts` and are selected by the id they register under, so another provider can be added without touching the route.
+
+`web_search` accepts an `objective` and one to three `search_queries`. `web_fetch` accepts up to five public HTTPS `urls` and an optional `objective` (200 characters). Page URLs are validated with the existing outbound URL guard before being sent to the provider's fixed endpoint. Research results include source URLs and are capped at 25,000 characters. Each call has a 15-second deadline and follows request cancellation. Failures are returned to the copilot without switching providers.
+
+Citizen chat is unaffected: it continues to use the approved knowledge base only. Existing `fetch_url` (including raw HTML), website harvesting, saved tenant settings, admin authorization, and knowledge-base search retain their behavior.
+
+#### Research turns cannot write
+
+Search results are attacker-controllable text, and the copilot holds tools that mutate tenant state (`save_protocols`, `manage_referrals`, `update_species_config`, …). Prompt wording is not the control here. `workers/src/lib/tools/research-guard.ts` enforces it structurally:
+
+> Once a turn calls `web_search` or `web_fetch`, every state-changing tool is withheld for the rest of that turn.
+
+Two layers, both driven by the same per-request flag:
+
+1. `prepareStep` narrows `activeTools` to the read-only allowlist, so after the research step the write tools are not offered to the model at all.
+2. Every tool's `execute` is wrapped and refuses with an explanation, which also covers a model that asks for research and a write in the *same* step (where the step's tool set is already fixed).
+
+The copilot therefore has to report what it found, cite URLs, and ask the operator. The operator's reply starts a fresh turn carrying no fetched page text — agent history persists user/assistant prose only, never tool results (`lib/agent-history.ts`) — so the edit runs on an explicit operator instruction rather than on instructions smuggled in through a web page.
+
+`RESEARCH_SAFE_TOOLS` is an allowlist of read-only tools. A tool added later is treated as a write tool until someone deliberately classifies it, so forgetting to update that list fails strict, never silently writable.
+
+Search terms and requested URLs are sent to the configured provider. Only use public research terms and public URLs; never include citizen details, private protocols, or private links. Public search results do not replace approved rescue guidance.

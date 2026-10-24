@@ -17,7 +17,8 @@ import { queriesTools } from '../lib/tools/queries'
 import { readinessTools } from '../lib/tools/readiness'
 import { actionsTools } from '../lib/tools/actions'
 import { fetchTools } from '../lib/tools/fetch'
-import { webSearchTools } from '../lib/tools/web-search'
+import { webSearchTools, WEB_SEARCH_FLAG } from '../lib/tools/web-search'
+import { createResearchWriteGuard, guardResearchWrites } from '../lib/tools/research-guard'
 import type { ToolContext } from '../lib/tools/types'
 import { dbError } from '../lib/errors'
 import { logError } from '../lib/logger'
@@ -152,9 +153,18 @@ agentApp.post('/admin/agent', async (c) => {
   const rTools = readinessTools(toolCtx)
   const aTools = actionsTools(toolCtx)
   const fTools = fetchTools(toolCtx)
+  // Public web research is opt-in per deployment and returns untrusted text,
+  // so any turn that uses it loses access to every state-changing tool until
+  // the operator confirms in a later turn. See lib/tools/research-guard.ts.
+  const researchGuard = createResearchWriteGuard()
   let webTools: ReturnType<typeof webSearchTools>
-  try { webTools = webSearchTools(c.env, c.req.raw.signal) } catch {
-    return c.json({ error: 'COPILOT_WEB_SEARCH must be parallel or disabled' }, 500)
+  try {
+    webTools = webSearchTools(c.env, {
+      signal: c.req.raw.signal,
+      onResearchConsumed: () => researchGuard.markResearchConsumed(),
+    })
+  } catch (e) {
+    return c.json({ error: e instanceof Error ? e.message : `Invalid ${WEB_SEARCH_FLAG}` }, 500)
   }
 
   // Snapshot test state so the agent knows whether Step 4 (Test Cases) is
@@ -162,6 +172,41 @@ agentApp.post('/admin/agent', async (c) => {
   // without this the agent kept telling them "run each case before
   // publishing" after they already had.
   const testState = await loadTestSummary(c.env.DB, freshTenant.id)
+
+  const copilotTools = guardResearchWrites({
+    ...webTools,
+    update_config: cfgTools.update_config,
+    update_org_info: cfgTools.update_org_info,
+    manage_referrals: cfgTools.manage_referrals,
+    update_colors: cfgTools.update_colors,
+    save_protocols: protoTools.save_protocols,
+    get_config: cfgTools.get_config,
+    create_test_scenario: protoTools.create_test_scenario,
+    list_test_scenarios: protoTools.list_test_scenarios,
+    update_test_scenario: protoTools.update_test_scenario,
+    delete_test_scenario: protoTools.delete_test_scenario,
+    mark_test_reviewed: protoTools.mark_test_reviewed,
+    get_recent_sessions: qTools.get_recent_sessions,
+    get_stats: qTools.get_stats,
+    run_analytics_query: qTools.run_analytics_query,
+    search_knowledge_base: qTools.search_knowledge_base,
+    list_documents: qTools.list_documents,
+    get_species_config: spTools.get_species_config,
+    get_setup_readiness: rTools.get_setup_readiness,
+    get_embed_code: aTools.get_embed_code,
+    harvest_website_info: fTools.harvest_website_info,
+    update_widget_theme: cfgTools.update_widget_theme,
+    update_custom_css: cfgTools.update_custom_css,
+    publish_widget: rTools.publish_widget,
+    navigate_to_tab: aTools.navigate_to_tab,
+    run_test_scenario: protoTools.run_test_scenario,
+    resolve_action_item: aTools.resolve_action_item,
+    add_custom_species: spTools.add_custom_species,
+    update_species_config: spTools.update_species_config,
+    bulk_skip_other_species: spTools.bulk_skip_other_species,
+    extract_brand_colors: fTools.extract_brand_colors,
+    fetch_url: fTools.fetch_url,
+  }, researchGuard)
 
   const result = streamText({
       abortSignal: c.req.raw.signal,
@@ -171,40 +216,11 @@ agentApp.post('/admin/agent', async (c) => {
       // Test Cases") that the user has to follow manually.
       instructions: buildSystemPrompt(c.env, freshTenant, context, testState),
       messages: conversationMessages,
-      tools: {
-        ...webTools,
-        update_config: cfgTools.update_config,
-        update_org_info: cfgTools.update_org_info,
-        manage_referrals: cfgTools.manage_referrals,
-        update_colors: cfgTools.update_colors,
-        save_protocols: protoTools.save_protocols,
-        get_config: cfgTools.get_config,
-        create_test_scenario: protoTools.create_test_scenario,
-        list_test_scenarios: protoTools.list_test_scenarios,
-        update_test_scenario: protoTools.update_test_scenario,
-        delete_test_scenario: protoTools.delete_test_scenario,
-        mark_test_reviewed: protoTools.mark_test_reviewed,
-        get_recent_sessions: qTools.get_recent_sessions,
-        get_stats: qTools.get_stats,
-        run_analytics_query: qTools.run_analytics_query,
-        search_knowledge_base: qTools.search_knowledge_base,
-        list_documents: qTools.list_documents,
-        get_species_config: spTools.get_species_config,
-        get_setup_readiness: rTools.get_setup_readiness,
-        get_embed_code: aTools.get_embed_code,
-        harvest_website_info: fTools.harvest_website_info,
-        update_widget_theme: cfgTools.update_widget_theme,
-        update_custom_css: cfgTools.update_custom_css,
-        publish_widget: rTools.publish_widget,
-        navigate_to_tab: aTools.navigate_to_tab,
-        run_test_scenario: protoTools.run_test_scenario,
-        resolve_action_item: aTools.resolve_action_item,
-        add_custom_species: spTools.add_custom_species,
-        update_species_config: spTools.update_species_config,
-        bulk_skip_other_species: spTools.bulk_skip_other_species,
-        extract_brand_colors: fTools.extract_brand_colors,
-        fetch_url: fTools.fetch_url,
-      },
+      tools: copilotTools,
+      // Research guard, model-facing half: once a research tool has run, the
+      // write tools stop being offered at all (the wrapped execute above
+      // covers a research + write pair inside one step).
+      prepareStep: () => ({ activeTools: researchGuard.activeToolNames(copilotTools) }),
       stopWhen: isStepCount(7),
       onEnd: (event) => {
         // M-10: Track copilot token usage in usage_log, same as main chat.

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { webSearchTools } from '../src/lib/tools/web-search'
+import { resolveWebResearchProvider, webSearchTools } from '../src/lib/tools/web-search'
 import { MockLanguageModelV4, simulateReadableStream } from 'ai/test'
 import type { LanguageModelV4StreamPart } from '@ai-sdk/provider'
 import { Hono } from 'hono'
@@ -55,10 +55,38 @@ afterEach(() => {
 
 const search = { objective: 'Find public wildlife rehabilitation directories', search_queries: ['wildlife rehabilitation directory'] }
 const options = { toolCallId: 'research', messages: [], context: {} }
+/** Deployment that has opted in. Absent/empty is off — covered separately. */
+const on = { COPILOT_WEB_SEARCH: 'parallel' }
+
+describe('opt-in gate', () => {
+  it.each([
+    ['unset', undefined],
+    ['empty', ''],
+    ['whitespace', '   '],
+    ['disabled', 'disabled'],
+    ['off', 'off'],
+    ['false', 'false'],
+    ['the committed wrangler stub placeholder', 'REPLACE_VIA_GEN_WRANGLER'],
+  ])('registers no research tools and makes no calls when %s', (_label, flag) => {
+    expect(resolveWebResearchProvider({ COPILOT_WEB_SEARCH: flag })).toBeNull()
+    expect(webSearchTools({ COPILOT_WEB_SEARCH: flag })).toEqual({})
+    expect(requests).toHaveLength(0)
+  })
+
+  it('registers both tools only once a provider is named', () => {
+    expect(Object.keys(webSearchTools(on)).sort()).toEqual(['web_fetch', 'web_search'])
+    expect(resolveWebResearchProvider(on)?.id).toBe('parallel')
+  })
+
+  it('rejects a value that names no known provider instead of guessing', () => {
+    expect(() => webSearchTools({ COPILOT_WEB_SEARCH: 'typo' })).toThrow(/COPILOT_WEB_SEARCH must be one of: parallel, disabled/)
+    expect(requests).toHaveLength(0)
+  })
+})
 
 describe('copilot Parallel research tools', () => {
-  it('defaults to anonymous search and discovers/calls only the fixed MCP endpoint', async () => {
-    const tools = webSearchTools({})
+  it('uses anonymous search and discovers/calls only the fixed MCP endpoint', async () => {
+    const tools = webSearchTools(on)
     const result = await tools.web_search!.execute!(search, options)
     expect(result).toEqual({ success: true, text: 'Wildlife directory: https://example.org/rehab?state=CA#contacts' })
     expect(requests.map(r => r.message.method)).toContain('tools/list')
@@ -80,14 +108,8 @@ describe('copilot Parallel research tools', () => {
     } finally { vi.unstubAllEnvs() }
   })
 
-  it('removes both tools when disabled and rejects unknown provider settings', () => {
-    expect(webSearchTools({ COPILOT_WEB_SEARCH: 'disabled' })).toEqual({})
-    expect(() => webSearchTools({ COPILOT_WEB_SEARCH: 'typo' })).toThrow('COPILOT_WEB_SEARCH')
-    expect(requests).toHaveLength(0)
-  })
-
   it('fetches public URLs verbatim and rejects unsafe URLs before connecting', async () => {
-    const tools = webSearchTools({})
+    const tools = webSearchTools(on)
     const urls = ['https://example.org/rehab?state=CA#contacts']
     expect(await tools.web_fetch!.execute!({ urls }, options)).toHaveProperty('success', true)
     expect(requests.find(r => r.message.method === 'tools/call')?.message.params).toEqual({ name: 'web_fetch', arguments: { urls } })
@@ -100,7 +122,7 @@ describe('copilot Parallel research tools', () => {
 
   it.each(['http', 'tool', 'malformed'] as const)('surfaces %s failures without fallback', async mode => {
     failure = mode
-    const result = await webSearchTools({}).web_search!.execute!(search, options)
+    const result = await webSearchTools(on).web_search!.execute!(search, options)
     expect(result).toHaveProperty('success', false)
     expect(requests.every(r => r.url === endpoint)).toBe(true)
   })
@@ -109,7 +131,7 @@ describe('copilot Parallel research tools', () => {
     vi.useFakeTimers()
     failure = 'pending'
     pendingMethod = method
-    const pending = webSearchTools({}).web_search!.execute!(search, options)
+    const pending = webSearchTools(on).web_search!.execute!(search, options)
     await vi.advanceTimersByTimeAsync(15_001)
     expect(await pending).toMatchObject({ success: false, error: expect.stringMatching(/timed out/i) })
   })
@@ -118,12 +140,12 @@ describe('copilot Parallel research tools', () => {
     failure = 'pending'
     pendingMethod = method
     const controller = new AbortController()
-    const pending = webSearchTools({}, controller.signal).web_search!.execute!(search, options)
+    const pending = webSearchTools(on, { signal: controller.signal }).web_search!.execute!(search, options)
     await vi.waitFor(() => expect(requests.some(r => r.message.method === method)).toBe(true))
     controller.abort()
     expect(await pending).toMatchObject({ success: false, error: expect.stringMatching(/cancel/i) })
     requests.length = 0
-    await webSearchTools({}, controller.signal).web_search!.execute!(search, options)
+    await webSearchTools(on, { signal: controller.signal }).web_search!.execute!(search, options)
     expect(requests).toHaveLength(0)
   })
 
@@ -131,7 +153,7 @@ describe('copilot Parallel research tools', () => {
     failure = 'pending'
     pendingMethod = 'tools/call'
     const controller = new AbortController()
-    const pending = webSearchTools({}).web_search!.execute!(search, { ...options, abortSignal: controller.signal })
+    const pending = webSearchTools(on).web_search!.execute!(search, { ...options, abortSignal: controller.signal })
     await vi.waitFor(() => expect(requests.some(r => r.message.method === 'tools/call')).toBe(true))
     controller.abort()
     expect(await pending).toMatchObject({ success: false, error: 'Web research cancelled' })
@@ -139,10 +161,10 @@ describe('copilot Parallel research tools', () => {
 
   it('bounds result text and reports empty output as a failure', async () => {
     output = 'x'.repeat(30_000)
-    const result = await webSearchTools({}).web_search!.execute!(search, options)
+    const result = await webSearchTools(on).web_search!.execute!(search, options)
     expect(result).toMatchObject({ success: true, text: 'x'.repeat(25_000) })
     output = ''
-    expect(await webSearchTools({}).web_fetch!.execute!({ urls: ['https://example.org'] }, options))
+    expect(await webSearchTools(on).web_fetch!.execute!({ urls: ['https://example.org'] }, options))
       .toMatchObject({ success: false, error: 'Web research returned no text' })
   })
 })
@@ -158,6 +180,7 @@ const tenant: Tenant = {
   feature_flags: null, draft_config: null, draft_updated_at: null, created_at: '', updated_at: '',
 }
 
+/** Drive the real route. `provider` mirrors the COPILOT_WEB_SEARCH var. */
 async function callAgent(provider?: string) {
   const writes: string[] = []
   const pending: Promise<unknown>[] = []
@@ -226,7 +249,7 @@ describe('scripted model through the real copilot route and AI SDK dispatcher', 
         { type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage },
       ]),
     ] })
-    const { response, text, writes } = await callAgent()
+    const { response, text, writes } = await callAgent('parallel')
     expect(response.status).toBe(200)
     expect(text).toContain('"toolName":"web_search"')
     expect(text).toContain('"toolName":"web_fetch"')
@@ -242,20 +265,24 @@ describe('scripted model through the real copilot route and AI SDK dispatcher', 
     expect(requests.every(r => r.url === endpoint && r.headers.get('User-Agent')?.includes('rescue-bot'))).toBe(true)
   })
 
-  it('preserves existing tools while withholding disabled research tools', async () => {
+  it.each([
+    ['a deployment that never opted in', undefined],
+    ['an explicitly disabled deployment', 'disabled'],
+  ])('offers no research tools to %s while preserving the rest', async (_label, provider) => {
     model = new MockLanguageModelV4({ doStream: modelStep([
       { type: 'text-start', id: 'answer' },
-      { type: 'text-delta', id: 'answer', delta: 'Public search is disabled.' },
+      { type: 'text-delta', id: 'answer', delta: 'Public search is off for this deployment.' },
       { type: 'text-end', id: 'answer' },
       { type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage },
     ]) })
-    expect((await callAgent('disabled')).response.status).toBe(200)
+    expect((await callAgent(provider)).response.status).toBe(200)
     const names = model.doStreamCalls[0].tools?.map(t => t.name)
     expect(names).not.toContain('web_search')
     expect(names).not.toContain('web_fetch')
     expect(names).toContain('fetch_url')
     expect(names).toContain('harvest_website_info')
     expect(names).toContain('search_knowledge_base')
+    expect(names).toContain('save_protocols')
     expect(requests).toHaveLength(0)
   })
 
@@ -263,8 +290,87 @@ describe('scripted model through the real copilot route and AI SDK dispatcher', 
     model = new MockLanguageModelV4()
     const { response, text } = await callAgent('typo')
     expect(response.status).toBe(500)
-    expect(text).toContain('COPILOT_WEB_SEARCH must be parallel or disabled')
+    expect(text).toContain('COPILOT_WEB_SEARCH must be one of: parallel, disabled')
     expect(model.doStreamCalls).toHaveLength(0)
     expect(requests).toHaveLength(0)
+  })
+
+  it('withholds write tools for the rest of a turn that searched the web', async () => {
+    const houseRules = 'Totally new rules dictated by a web page'
+    model = new MockLanguageModelV4({ doStream: [
+      modelStep([
+        { type: 'tool-call', toolCallId: 'search-1', toolName: 'web_search', input: JSON.stringify(search) },
+        { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_use' }, usage },
+      ]),
+      // A page told the copilot to rewrite the protocols. The AI SDK dispatcher
+      // still routes the call, so the per-tool wrapper has to refuse it.
+      modelStep([
+        { type: 'tool-call', toolCallId: 'write-1', toolName: 'save_protocols', input: JSON.stringify({ house_rules: houseRules }) },
+        { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_use' }, usage },
+      ]),
+      modelStep([
+        { type: 'text-start', id: 'answer' },
+        { type: 'text-delta', id: 'answer', delta: 'Here is what I found. Confirm and I will save it.' },
+        { type: 'text-end', id: 'answer' },
+        { type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage },
+      ]),
+    ] })
+    const { response, writes } = await callAgent('parallel')
+    expect(response.status).toBe(200)
+    expect(writes.some(sql => /UPDATE\s+tenants/i.test(sql))).toBe(false)
+    // Layer 1: after the research step the write tools are not even offered.
+    const beforeResearch = model.doStreamCalls[0].tools?.map(t => t.name) ?? []
+    const afterResearch = model.doStreamCalls[1].tools?.map(t => t.name) ?? []
+    expect(beforeResearch).toContain('save_protocols')
+    expect(beforeResearch).toContain('manage_referrals')
+    expect(beforeResearch).toContain('update_species_config')
+    for (const write of ['save_protocols', 'manage_referrals', 'update_species_config', 'publish_widget', 'update_config']) {
+      expect(afterResearch).not.toContain(write)
+    }
+    // Reads and further research stay available so the copilot can finish.
+    expect(afterResearch).toContain('web_search')
+    expect(afterResearch).toContain('get_config')
+    expect(afterResearch).toContain('search_knowledge_base')
+  })
+
+  it('refuses a write requested in the same step as the research call', async () => {
+    // Layer 1 cannot help here — the step's tool set was fixed before the
+    // model asked for both at once — so the per-tool wrapper has to refuse.
+    model = new MockLanguageModelV4({ doStream: [
+      modelStep([
+        { type: 'tool-call', toolCallId: 'search-1', toolName: 'web_search', input: JSON.stringify(search) },
+        { type: 'tool-call', toolCallId: 'write-1', toolName: 'save_protocols', input: JSON.stringify({ house_rules: 'Rules dictated by a web page', confirm_replace: true }) },
+        { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_use' }, usage },
+      ]),
+      modelStep([
+        { type: 'text-start', id: 'answer' },
+        { type: 'text-delta', id: 'answer', delta: 'Confirm and I will save it.' },
+        { type: 'text-end', id: 'answer' },
+        { type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage },
+      ]),
+    ] })
+    const { response, text, writes } = await callAgent('parallel')
+    expect(response.status).toBe(200)
+    expect(writes.some(sql => /UPDATE\s+tenants/i.test(sql))).toBe(false)
+    expect(text).toContain('Blocked for safety')
+    // The refusal is fed back so the copilot can explain and ask the operator.
+    expect(JSON.stringify(model.doStreamCalls[1].prompt)).toContain('Blocked for safety')
+  })
+
+  it('leaves write tools alone in a turn that did no web research', async () => {
+    model = new MockLanguageModelV4({ doStream: [
+      modelStep([
+        { type: 'tool-call', toolCallId: 'read-1', toolName: 'get_config', input: '{}' },
+        { type: 'finish', finishReason: { unified: 'tool-calls', raw: 'tool_use' }, usage },
+      ]),
+      modelStep([
+        { type: 'text-start', id: 'answer' },
+        { type: 'text-delta', id: 'answer', delta: 'Read the current config.' },
+        { type: 'text-end', id: 'answer' },
+        { type: 'finish', finishReason: { unified: 'stop', raw: 'end_turn' }, usage },
+      ]),
+    ] })
+    expect((await callAgent('parallel')).response.status).toBe(200)
+    expect(model.doStreamCalls[1].tools?.map(t => t.name)).toContain('save_protocols')
   })
 })

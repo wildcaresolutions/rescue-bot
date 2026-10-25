@@ -113,9 +113,11 @@ jobs:
           node-version: '22'
           cache: 'npm'
       - run: npm ci
-      # Self-contained: the spec boots its own HTTP server on a random port
-      # and points the embedded widget at the prod bundle. No wrangler dev
-      # needed. Just install Chromium and run.
+      # Embed tests exercise the live bundle; layout regressions exercise the
+      # candidate bundle against a local CMS fixture with stubbed chat data.
+      # Neither suite needs wrangler or writes production conversations.
+      - name: Install widget build dependencies
+        run: npm ci --prefix web
       - name: Install Playwright browsers (chromium only)
         run: npx playwright install --with-deps chromium
       - name: Run widget E2E

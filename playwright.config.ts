@@ -12,9 +12,9 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './e2e',
-  // Exclude the cross-origin widget spec — it runs under its own config
+  // Exclude the widget specs — they run under their own config
   // (playwright-widget.config.ts) because it has no wrangler dependency.
-  testIgnore: 'widget-embed.spec.ts',
+  testIgnore: ['widget-embed.spec.ts', 'widget-layout.spec.ts'],
   fullyParallel: false,             // single Wrangler dev server, no parallel writes
   forbidOnly: !!process.env.CI,
   retries: process.env.CI ? 1 : 0,

@@ -22,7 +22,7 @@
     "@types/node": "26.6.5",
     "pg": "^8.23.1",
     "typescript": "6.0.3",
-    "vitest": "^5.0.4",
+    "vitest": "^5.0.5",
     "wrangler": "^4.152.0"
   },
   "overrides": {

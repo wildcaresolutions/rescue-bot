@@ -55,6 +55,11 @@ export const PLACEHOLDERS = [
   'AI_GATEWAY_ID',
   'MAIN_CHAT_MODEL',
   'PHOTO_RECOGNIZER_MODEL',
+  // Opt-in for the admin copilot's public web research tools (web_search /
+  // web_fetch). Empty — the default for every fork — registers no research
+  // tools and makes no outbound research calls. Set to a provider id
+  // ("parallel") in org.env to turn it on. See lib/tools/web-search.ts.
+  'COPILOT_WEB_SEARCH',
   // Display name the SaaS presents to tenants (magic-link emails, /api/config
   // marketing payload, admin assistant system prompt). Empty falls back to
   // 'rescue-bot' via lib/platform.ts:getPlatformName. OSS forks set this in
@@ -85,6 +90,7 @@ const OPTIONAL_PLACEHOLDERS = new Set([
   'AI_GATEWAY_ID',
   'MAIN_CHAT_MODEL',
   'PHOTO_RECOGNIZER_MODEL',
+  'COPILOT_WEB_SEARCH',
   'PLATFORM_NAME',
   'PLATFORM_EMBED_HOST',
   'PLATFORM_ADMIN_EMAILS',

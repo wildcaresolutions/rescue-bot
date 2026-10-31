@@ -35,7 +35,7 @@ const DEFAULT_SUPPORT_EMAIL = 'support@example.com'
  * collapse to the OSS-friendly default. The result is safe to interpolate
  * into user-facing strings (emails, prompts, marketing copy).
  */
-export function getPlatformName(env: Env): string {
+export function getPlatformName(env: Pick<Env, 'PLATFORM_NAME'>): string {
   const raw = env.PLATFORM_NAME?.trim()
   if (!raw) return DEFAULT_PLATFORM_NAME
   if (raw === 'REPLACE_VIA_GEN_WRANGLER') return DEFAULT_PLATFORM_NAME
@@ -99,6 +99,6 @@ export function getAuthFromEmail(env: Env): string {
  * Stable across the codebase so site operators can recognize traffic in
  * their logs.
  */
-export function getOutboundUserAgent(env: Env): string {
+export function getOutboundUserAgent(env: Pick<Env, 'PLATFORM_NAME'>): string {
   return `${getPlatformName(env)}-Bot/1.0`
 }

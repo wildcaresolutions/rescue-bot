@@ -237,12 +237,16 @@ function applyPositionConfig(config) {
     // Apply to the pane itself with position:fixed so it escapes the
     // backdrop's flex layout. Without this, anchor coords like `top: 50%`
     // would re-position the fullscreen backdrop and clip the pane top.
-    rules.push(`.rbot-widget-pane { position: fixed !important; ${props} }`)
+    // These offsets describe the desktop floating pane. On mobile the pane
+    // fills the overlay's available space; keeping top/right offsets there
+    // moves a full-screen pane (and its controls) outside the viewport.
+    const paneRules = [`.rbot-widget-pane { position: fixed !important; ${props} }`]
     // When the pane is custom-positioned, the backdrop should not capture
     // clicks across the whole viewport (since the pane no longer centers
     // visually). Make it pass-through; the pane re-enables its own clicks.
-    rules.push('.rbot-widget-container { background: transparent !important; pointer-events: none !important; }')
-    rules.push('.rbot-widget-pane { pointer-events: auto !important; }')
+    paneRules.push('.rbot-widget-container { background: transparent !important; pointer-events: none !important; }')
+    paneRules.push('.rbot-widget-pane { pointer-events: auto !important; }')
+    rules.push(`@media (min-width: 769px) { ${paneRules.join('\n')} }`)
   }
   if (rules.length > 0) {
     const posStyles = document.createElement('style')

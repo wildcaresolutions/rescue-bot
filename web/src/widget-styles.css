@@ -92,7 +92,10 @@
   font-weight: 600;
   cursor: pointer;
   box-shadow: var(--rbot-shadow-button);
-  z-index: 10000;
+  /* CMS navigation and donation notifications use very high stacking levels.
+     Keep chat above those while leaving room for accessibility/checkout UI
+     at the maximum z-index and for native browser top-layer dialogs. */
+  z-index: 2147483645;
   transition: all 0.3s ease;
   font-family: var(--rbot-font);
 }
@@ -116,7 +119,7 @@
   height: 100vh;
   height: 100dvh;
   background: rgba(0, 0, 0, 0.5);
-  z-index: 10001;
+  z-index: 2147483646;
   display: none;
   /* `safe center` prevents the pane from overflowing the start edge when it
      is taller than the viewport — without it, flex centering pushes the
@@ -168,6 +171,7 @@
   display: flex;
   justify-content: space-between;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .rbot-widget-title {
@@ -179,6 +183,7 @@
   display: flex;
   gap: 0.5rem;
   align-items: center;
+  flex-shrink: 0;
 }
 
 .rbot-widget-new,
@@ -207,6 +212,7 @@
 
 .rbot-widget-messages {
   flex: 1;
+  min-height: 0;
   overflow-y: auto;
   padding: 1rem;
   background: var(--rbot-bg);
@@ -351,6 +357,7 @@
   display: flex;
   gap: 0.5rem;
   align-items: flex-end;
+  flex-shrink: 0;
 }
 
 .rbot-widget-attach {
@@ -378,6 +385,7 @@
 
 .rbot-widget-input {
   flex: 1;
+  min-width: 0;
   padding: 0.75rem 1rem;
   border: 2px solid var(--rbot-border);
   border-radius: var(--rbot-radius-input);
@@ -496,10 +504,14 @@
 /* Widget mobile styles */
 @media (max-width: 768px) {
   .rbot-widget-pane {
-    width: 100%;
+    /* Also override dimensions left inline by desktop drag-resizing. */
+    width: 100% !important;
     max-width: 100%;
-    height: 100%;
+    height: 100% !important;
     max-height: 100%;
+    min-width: 0;
+    min-height: 0;
+    resize: none;
     border-radius: 0;
   }
 

@@ -11,23 +11,24 @@
     "test:integration": "vitest run --config vitest.integration.config.ts"
   },
   "dependencies": {
-    "@ai-sdk/anthropic": "4.0.80",
+    "@ai-sdk/anthropic": "4.0.85",
     "@ai-sdk/mcp": "2.0.83",
-    "@ai-sdk/openai": "4.0.94",
-    "ai": "7.0.141",
+    "@ai-sdk/openai": "4.0.99",
+    "ai": "7.0.148",
     "hono": "4.13.13",
     "zod": "^4.6.7"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "5.20261015.1",
+    "@cloudflare/workers-types": "5.20261025.1",
     "@types/node": "26.6.5",
     "pg": "^8.23.1",
     "typescript": "6.0.3",
-    "vitest": "^5.0.4",
-    "wrangler": "^4.151.1"
+    "vitest": "^5.0.5",
+    "wrangler": "^4.152.0"
   },
   "overrides": {
     "esbuild": "^0.28.1",
-    "ws": "^8.20.1"
+    "ws": "^8.20.1",
+    "undici": "^7.30.1"
   }
 }

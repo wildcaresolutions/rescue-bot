@@ -12,10 +12,10 @@
   },
   "dependencies": {
     "@ai-sdk/anthropic": "4.0.102",
-    "@ai-sdk/mcp": "2.0.86",
+    "@ai-sdk/mcp": "2.0.97",
     "@ai-sdk/openai": "4.0.115",
-    "ai": "7.0.163",
-    "hono": "4.13.16",
+    "ai": "7.0.170",
+    "hono": "4.13.18",
     "zod": "^4.6.7"
   },
   "devDependencies": {
@@ -24,7 +24,7 @@
     "pg": "^8.23.1",
     "typescript": "6.0.3",
     "vitest": "^5.1.0",
-    "wrangler": "^4.160.1"
+    "wrangler": "^4.161.0"
   },
   "overrides": {
     "esbuild": "^0.28.1",

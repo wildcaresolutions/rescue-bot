@@ -30,7 +30,15 @@ type FullStreamPart =
   // The AI SDK emits other part types we ignore.
   | { type: string }
 
-export function buildAgentStream(fullStream: AsyncIterable<FullStreamPart>): Response {
+/**
+ * `includeUsage` (local-dev eval mode only — see lib/eval-overrides.ts) adds
+ * `totalUsage` to the `e:` line and emits `E:{error}` for stream errors so the
+ * copilot eval can score cost and catch provider failures.
+ */
+export function buildAgentStream(
+  fullStream: AsyncIterable<FullStreamPart>,
+  opts: { includeUsage?: boolean } = {},
+): Response {
   const encoder = new TextEncoder()
   const stream = new ReadableStream({
     async start(controller) {
@@ -49,7 +57,14 @@ export function buildAgentStream(fullStream: AsyncIterable<FullStreamPart>): Res
             const p = part as { toolCallId: string; toolName: string; output: unknown }
             line = `b:${JSON.stringify({ toolCallId: p.toolCallId, toolName: p.toolName, result: p.output })}`
           } else if (part.type === 'finish') {
-            line = `e:${JSON.stringify({ finishReason: (part as { finishReason: string }).finishReason })}`
+            const p = part as { finishReason: string; totalUsage?: unknown }
+            line = `e:${JSON.stringify({
+              finishReason: p.finishReason,
+              ...(opts.includeUsage ? { usage: p.totalUsage } : {}),
+            })}`
+          } else if (part.type === 'error' && opts.includeUsage) {
+            const err = (part as { error?: unknown }).error
+            line = `E:${JSON.stringify({ error: err instanceof Error ? err.message : String(err) })}`
           }
           if (line) {
             controller.enqueue(encoder.encode(line + '\n'))

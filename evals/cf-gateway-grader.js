@@ -8,7 +8,7 @@
  */
 
 const DEFAULT_GATEWAY_ID = 'default'
-const DEFAULT_MODEL = 'workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+const DEFAULT_MODEL = 'anthropic/claude-haiku-5-5'
 
 function clean(value) {
   const trimmed = typeof value === 'string' ? value.trim() : ''

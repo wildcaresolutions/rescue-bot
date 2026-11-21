@@ -16,7 +16,13 @@ export interface Env {
   AI_GATEWAY_ACCOUNT_ID: string
   AI_GATEWAY_ID: string
   AI_GATEWAY_TOKEN?: string
+  // Optional separate token for google/* models on the REST API; falls back
+  // to AI_GATEWAY_TOKEN (needs Workers AI permission). See lib/ai.ts.
+  CLOUDFLARE_AI_TOKEN?: string
   MAIN_CHAT_MODEL?: string
+  MAIN_CHAT_REASONING_EFFORT?: string
+  COPILOT_MODEL?: string
+  COPILOT_REASONING_EFFORT?: string
   EVAL_JUDGE_MODEL?: string
   PHOTO_RECOGNIZER_MODEL?: string
   COPILOT_WEB_SEARCH?: string

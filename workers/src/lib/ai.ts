@@ -4,17 +4,41 @@ import type { Env } from './types'
 import { logError } from './logger'
 
 export const DEFAULT_MAIN_CHAT_MODEL = 'anthropic/claude-sonnet-5'
-export const DEFAULT_EVAL_JUDGE_MODEL = 'workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast'
+export const DEFAULT_EVAL_JUDGE_MODEL = 'anthropic/claude-haiku-5-5'
 export const DEFAULT_PHOTO_RECOGNIZER_MODEL = 'openai/gpt-4.1-mini'
+export const DEFAULT_COPILOT_MODEL = 'anthropic/claude-sonnet-5'
 export const DEFAULT_AI_GATEWAY_ID = 'default'
+
+// OpenAI-style `reasoning_effort`, which /compat maps onto each provider's
+// own knob (Gemini 4 `thinking_level`, etc). Unset = the provider default —
+// for Gemini 4 Hydrogen that is `high`, the slowest/most expensive level.
+export const REASONING_EFFORTS = ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'] as const
+export type ReasoningEffort = typeof REASONING_EFFORTS[number]
 
 function clean(value: string | undefined | null): string {
   const trimmed = typeof value === 'string' ? value.trim() : ''
   return trimmed === 'REPLACE_VIA_GEN_WRANGLER' ? '' : trimmed
 }
 
+export function parseReasoningEffort(value: string | undefined | null): ReasoningEffort | undefined {
+  const v = clean(value).toLowerCase()
+  return (REASONING_EFFORTS as readonly string[]).includes(v) ? v as ReasoningEffort : undefined
+}
+
 export function getMainChatModelName(env: Env): string {
   return clean(env.MAIN_CHAT_MODEL) || DEFAULT_MAIN_CHAT_MODEL
+}
+
+export function getMainChatReasoningEffort(env: Env): ReasoningEffort | undefined {
+  return parseReasoningEffort(env.MAIN_CHAT_REASONING_EFFORT)
+}
+
+export function getCopilotModelName(env: Env): string {
+  return clean(env.COPILOT_MODEL) || DEFAULT_COPILOT_MODEL
+}
+
+export function getCopilotReasoningEffort(env: Env): ReasoningEffort | undefined {
+  return parseReasoningEffort(env.COPILOT_REASONING_EFFORT)
 }
 
 export function getEvalJudgeModelName(env: Env): string {
@@ -47,6 +71,90 @@ export function getAiGatewayProviderBaseURL(env: Env, provider: string): string 
     throw new Error('Cloudflare AI Gateway is not configured. Set AI_GATEWAY_ACCOUNT_ID.')
   }
   return `https://gateway.ai.cloudflare.com/v1/${accountId}/${getAiGatewayId(env)}/${provider}`
+}
+
+// ── Cloudflare REST API (Unified Billing catalog models) ────────────────────
+//
+// `google/*` models (Cloudflare catalog names, e.g. google/gemini-4-hydrogen)
+// are billed to the Cloudflare account via Unified Billing, but the legacy
+// /compat endpoint doesn't know them. They go to the REST API's
+// OpenAI-compatible /ai/v1/chat/completions instead, still through our AI
+// Gateway (cf-aig-gateway-id) so logging/caching/rate limits apply.
+//
+// `google-ai-studio/*` stays on /compat and bills the Google AI Studio project
+// behind the gateway — the REST path exists because that project's prepaid
+// credit can run dry independently of the Cloudflare account.
+const REST_API_PREFIXES = ['google/']
+
+export function usesCloudflareRestApi(model: string): boolean {
+  return REST_API_PREFIXES.some(p => model.startsWith(p))
+}
+
+// AI_GATEWAY_TOKEN is itself a Cloudflare API token, so granting it the
+// Workers AI permission lets one token cover both paths. CLOUDFLARE_AI_TOKEN
+// only exists to keep the permissions split if you prefer.
+export function getCloudflareAiToken(env: Env): string {
+  return clean(env.CLOUDFLARE_AI_TOKEN) || clean(env.AI_GATEWAY_TOKEN)
+}
+
+export function getCloudflareRestAiBaseURL(env: Env): string {
+  const accountId = clean(env.AI_GATEWAY_ACCOUNT_ID)
+  if (!accountId) {
+    throw new Error('Cloudflare AI Gateway is not configured. Set AI_GATEWAY_ACCOUNT_ID.')
+  }
+  return `https://api.cloudflare.com/client/v4/accounts/${accountId}/ai/v1`
+}
+
+/** Where to POST an OpenAI-format chat completion for `model`, with auth headers. */
+export function chatCompletionsTarget(env: Env, model: string): { url: string; headers: Record<string, string> } {
+  if (usesCloudflareRestApi(model)) {
+    const token = getCloudflareAiToken(env)
+    if (!token) {
+      throw new Error(`${model} needs AI_GATEWAY_TOKEN (or CLOUDFLARE_AI_TOKEN) with the Workers AI permission.`)
+    }
+    return {
+      url: `${getCloudflareRestAiBaseURL(env)}/chat/completions`,
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${token}`,
+        'cf-aig-gateway-id': getAiGatewayId(env),
+      },
+    }
+  }
+  const token = getAiGatewayToken(env)
+  if (!token) {
+    throw new Error('Cloudflare AI Gateway token is not configured. Set AI_GATEWAY_TOKEN.')
+  }
+  return {
+    url: `${getAiGatewayBaseURL(env)}/chat/completions`,
+    headers: {
+      'Content-Type': 'application/json',
+      'cf-aig-authorization': `Bearer ${token}`,
+    },
+  }
+}
+
+/**
+ * OpenAI-format AI SDK provider for `google/*` models on the Cloudflare REST
+ * API. Counterpart of createAiGatewayProvider (which targets /compat).
+ */
+export function createCloudflareRestAiProvider(env: Env, opts: { fetch?: typeof fetch } = {}) {
+  const token = getCloudflareAiToken(env)
+  if (!token) {
+    throw new Error('AI_GATEWAY_TOKEN / CLOUDFLARE_AI_TOKEN not configured (needed for google/* models).')
+  }
+  const baseFetch = opts.fetch ?? fetch
+  const gatewayId = getAiGatewayId(env)
+  return createOpenAI({
+    apiKey: token,
+    baseURL: getCloudflareRestAiBaseURL(env),
+    name: 'cloudflare-rest-ai',
+    fetch: (input, init) => {
+      const headers = new Headers(init?.headers)
+      headers.set('cf-aig-gateway-id', gatewayId)
+      return baseFetch(input, { ...init, headers })
+    },
+  })
 }
 
 async function getAiGatewayCompatBaseURL(env: Env): Promise<string> {
@@ -173,16 +281,10 @@ async function runGatewayRequest(env: Env, request: GatewayRunRequest): Promise<
 }
 
 async function runGatewayCompatRequest(env: Env, query: Record<string, unknown>): Promise<Record<string, any>> {
-  const token = getAiGatewayToken(env)
-  if (!token) {
-    throw new Error('Cloudflare AI Gateway token is not configured. Set AI_GATEWAY_TOKEN.')
-  }
-  const response = await fetch(`${getAiGatewayBaseURL(env)}/chat/completions`, {
+  const { url, headers } = chatCompletionsTarget(env, String(query.model ?? ''))
+  const response = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'cf-aig-authorization': `Bearer ${token}`,
-    },
+    headers,
     body: JSON.stringify(query),
   })
   return readGatewayResponse(response)
@@ -229,6 +331,7 @@ export async function runGatewayChatText(opts: {
   system?: string
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   maxOutputTokens?: number
+  reasoningEffort?: ReasoningEffort
 }): Promise<{ text: string; usage: unknown; raw: unknown }> {
   let result: Record<string, any>
   if (opts.model.startsWith('openai/') || opts.model.startsWith('anthropic/') || opts.model.startsWith('google/') || opts.model.startsWith('google-ai-studio/') || opts.model.startsWith('workers-ai/')) {
@@ -239,6 +342,7 @@ export async function runGatewayChatText(opts: {
       model: opts.model,
       messages: openAiMessages(opts.system, opts.messages),
       ...(opts.maxOutputTokens ? { max_tokens: opts.maxOutputTokens } : {}),
+      ...(opts.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
     })
   } else {
     throw new Error(`Unsupported AI Gateway model prefix: ${opts.model}`)
@@ -276,6 +380,7 @@ export async function openGatewayChatStream(opts: {
   system?: string
   messages: Array<{ role: 'user' | 'assistant'; content: string }>
   maxOutputTokens?: number
+  reasoningEffort?: ReasoningEffort
   onUsage?: (usage: unknown) => void
 }): Promise<ReadableStream<string>> {
   const supported = opts.model.startsWith('openai/')
@@ -287,22 +392,19 @@ export async function openGatewayChatStream(opts: {
     throw new Error(`Streaming not supported for model prefix: ${opts.model}`)
   }
 
-  const token = getAiGatewayToken(opts.env)
-  if (!token) {
-    throw new Error('Cloudflare AI Gateway token is not configured. Set AI_GATEWAY_TOKEN.')
-  }
-
-  const response = await fetch(`${getAiGatewayBaseURL(opts.env)}/chat/completions`, {
+  const target = chatCompletionsTarget(opts.env, opts.model)
+  const response = await fetch(target.url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'cf-aig-authorization': `Bearer ${token}`,
-    },
+    headers: target.headers,
     body: JSON.stringify({
       model: opts.model,
       messages: openAiMessages(opts.system, opts.messages),
       stream: true,
+      // Without this, OpenAI-format streams omit the final usage event and
+      // usage_log records nothing for the main chat.
+      stream_options: { include_usage: true },
       ...(opts.maxOutputTokens ? { max_tokens: opts.maxOutputTokens } : {}),
+      ...(opts.reasoningEffort ? { reasoning_effort: opts.reasoningEffort } : {}),
     }),
   })
 

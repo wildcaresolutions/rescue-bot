@@ -121,6 +121,9 @@ session.db*
 # Promptfoo eval framework
 .promptfoo/
 evals/promptfoo-results.json
+evals/reports/
+.promptfoo-compare-*.yaml
+site/.promptfoo-compare-*.yaml
 promptfoo-harvested.yaml
 
 # Photo eval corpus: keep harness/templates in git, keep real intake photos and

@@ -14,7 +14,7 @@
  * Both call sites import from THIS module to keep eval semantics single-sourced.
  */
 import type { Env, Tenant } from './types'
-import { getEvalJudgeModelName, getMainChatModelName, runGatewayChatText } from './ai'
+import { getEvalJudgeModelName, getMainChatModelName, getMainChatReasoningEffort, runGatewayChatText } from './ai'
 import { logWarn, logError } from './logger'
 import { extractJudgeJson } from './judge-parse'
 import { parseOrgConfig } from './tenant-loader'
@@ -203,6 +203,7 @@ export async function runEvalScenario(
         model: modelName,
         system: systemPrompt,
         messages: convo,
+        reasoningEffort: getMainChatReasoningEffort(env),
       })
       botResponse = botResult.text || '(no response)'
       convo.push({ role: 'assistant', content: botResponse })

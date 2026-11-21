@@ -11,6 +11,7 @@ import { photoUploadsEnabled } from '../lib/feature-flags'
 import { validateUploadKind } from '../lib/file-type'
 import {
   getMainChatModelName,
+  getMainChatReasoningEffort,
   getPhotoRecognizerModelName,
   openGatewayChatStream,
   runGatewayChatText,
@@ -28,6 +29,7 @@ import { dbError, badRequest, notFound, unauthorized, forbidden } from '../lib/e
 import { logWarn, logError } from '../lib/logger'
 import { overlayTenant } from '../lib/draft'
 import { resolveSession, tenantCookiePrefix } from '../lib/auth'
+import { EVAL_USAGE_MARKER, readEvalOverrides, resolveReasoningEffort } from '../lib/eval-overrides'
 
 /**
  * Draft preview: the admin preview iframe sends X-Preview-Draft so the operator
@@ -259,7 +261,9 @@ async function runMainChat(
   }
 
   const messageWithTime = `[Current time: ${pacificNowString()}]\n\n${opts.modelUserMessage ?? opts.visibleUserMessage}`
-  const modelName = getMainChatModelName(c.env)
+  const evalOverrides = readEvalOverrides(c.env, c.req.raw.headers)
+  const modelName = evalOverrides?.model ?? getMainChatModelName(c.env)
+  const reasoningEffort = resolveReasoningEffort(evalOverrides, getMainChatReasoningEffort(c.env))
 
   // Open the SSE stream against the gateway. If the upstream errors at this
   // step (auth failure, model not found, etc.) we return a clean 502 BEFORE
@@ -273,6 +277,7 @@ async function runMainChat(
       model: modelName,
       system: systemPrompt,
       messages: [...history, { role: 'user', content: messageWithTime }],
+      reasoningEffort,
       onUsage: (u: unknown) => { capturedUsage = u },
     })
   } catch (e) {
@@ -303,6 +308,13 @@ async function runMainChat(
         logError('chat/ai-gateway-stream-read-failed', { error: e })
       } finally {
         try { reader.releaseLock() } catch { /* already released */ }
+        if (evalOverrides?.reportUsage) {
+          controller.enqueue(encoder.encode(EVAL_USAGE_MARKER + JSON.stringify({
+            model: modelName,
+            reasoning_effort: reasoningEffort ?? 'default',
+            usage: capturedUsage,
+          })))
+        }
         controller.close()
       }
 

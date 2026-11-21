@@ -1,6 +1,18 @@
 import { Hono } from 'hono'
-import { streamText, isStepCount } from 'ai'
+import { streamText, isStepCount, type LanguageModel } from 'ai'
+import type { SharedV4ProviderOptions } from '@ai-sdk/provider'
 import type { Env, Tenant, Variables } from '../lib/types'
+import {
+  createAiGatewayProvider,
+  createCloudflareRestAiProvider,
+  usesCloudflareRestApi,
+  getCopilotModelName,
+  getCopilotReasoningEffort,
+  type ReasoningEffort,
+} from '../lib/ai'
+import { createToolCallExtrasFetch } from '../lib/tool-call-extras'
+import { readEvalOverrides, resolveReasoningEffort } from '../lib/eval-overrides'
+import { logUsage } from '../lib/usage-log'
 import { invalidateTenantCache } from '../lib/cache'
 import { BrandExtractor } from '../lib/brand-extract'
 import { buildAnthropicProvider } from '../lib/ai-gateway-anthropic'
@@ -23,31 +35,41 @@ import type { ToolContext } from '../lib/tools/types'
 import { dbError } from '../lib/errors'
 import { logError } from '../lib/logger'
 
-// M-10: Log copilot token usage the same way chat.ts does for main-chat.
-function copilotUsageTokens(usage: unknown): { promptTokens: number; completionTokens: number } {
-  const u = usage as Record<string, number | undefined> | undefined
-  return {
-    promptTokens: u?.promptTokens ?? u?.inputTokens ?? 0,
-    completionTokens: u?.completionTokens ?? u?.outputTokens ?? 0,
+const AGENT_HISTORY_LIMIT = 20
+
+type CopilotModel =
+  | { ok: true; model: LanguageModel; providerOptions?: SharedV4ProviderOptions }
+  | { ok: false; status: 500 | 503; body: { error: string; code?: string } }
+
+/**
+ * `anthropic/*` keeps the native Anthropic endpoint on the gateway (the
+ * long-standing default). Anything else goes through the gateway's
+ * OpenAI-compatible /compat endpoint, same as the public chat bot.
+ */
+async function buildCopilotModel(
+  env: Env,
+  modelName: string,
+  reasoningEffort: ReasoningEffort | undefined,
+): Promise<CopilotModel> {
+  if (modelName.startsWith('anthropic/')) {
+    const provider = buildAnthropicProvider(env)
+    if (!provider.ok) return { ok: false, status: provider.status as 500 | 503, body: provider.body }
+    return { ok: true, model: provider.anthropic(modelName.slice('anthropic/'.length)) }
+  }
+  try {
+    const extrasFetch = createToolCallExtrasFetch()
+    const gateway = usesCloudflareRestApi(modelName)
+      ? createCloudflareRestAiProvider(env, { fetch: extrasFetch })
+      : await createAiGatewayProvider(env, { fetch: extrasFetch })
+    return {
+      ok: true,
+      model: gateway.chat(modelName),
+      providerOptions: reasoningEffort ? { openai: { reasoningEffort } } : undefined,
+    }
+  } catch (e) {
+    return { ok: false, status: 500, body: { error: e instanceof Error ? e.message : 'AI Gateway not configured' } }
   }
 }
-
-async function logCopilotUsage(
-  env: Env,
-  tenantId: string,
-  model: string,
-  usage: unknown,
-): Promise<void> {
-  const { promptTokens, completionTokens } = copilotUsageTokens(usage)
-  const today = new Date().toISOString().slice(0, 10)
-  await env.DB.prepare(
-    `INSERT INTO usage_log (tenant_id, date, model, prompt_tokens, completion_tokens, request_count)
-     VALUES (?, ?, ?, ?, ?, 1)`,
-  ).bind(tenantId, today, model, promptTokens, completionTokens).run()
-}
-
-const AGENT_MODEL = 'claude-sonnet-5'
-const AGENT_HISTORY_LIMIT = 20
 
 const agentApp = new Hono<{ Bindings: Env; Variables: Variables }>()
 
@@ -128,9 +150,14 @@ agentApp.post('/admin/agent', async (c) => {
   // Reload fresh tenant config for the system prompt
   const freshTenant = (await loadTenantById(c.env.DB, tenant.id)) ?? tenant
 
-  const provider = buildAnthropicProvider(c.env)
-  if (!provider.ok) return c.json(provider.body, provider.status as 500 | 503)
-  const { anthropic } = provider
+  const evalOverrides = readEvalOverrides(c.env, c.req.raw.headers)
+  const modelName = evalOverrides?.model ?? getCopilotModelName(c.env)
+  const copilotModel = await buildCopilotModel(
+    c.env,
+    modelName,
+    resolveReasoningEffort(evalOverrides, getCopilotReasoningEffort(c.env)),
+  )
+  if (!copilotModel.ok) return c.json(copilotModel.body, copilotModel.status)
 
   // Build tools — each uses D1 directly
   const tenantId = tenant.id
@@ -210,7 +237,8 @@ agentApp.post('/admin/agent', async (c) => {
 
   const result = streamText({
       abortSignal: c.req.raw.signal,
-      model: anthropic(AGENT_MODEL),
+      model: copilotModel.model,
+      providerOptions: copilotModel.providerOptions,
       // Pass the active view so the agent knows which tab the user is on —
       // it can navigate proactively instead of giving instructions ("go to
       // Test Cases") that the user has to follow manually.
@@ -225,7 +253,7 @@ agentApp.post('/admin/agent', async (c) => {
       onEnd: (event) => {
         // M-10: Track copilot token usage in usage_log, same as main chat.
         c.executionCtx.waitUntil(
-          logCopilotUsage(c.env, tenantId, AGENT_MODEL, event.usage).catch(e =>
+          logUsage(c.env, tenantId, modelName, event.usage).catch(e =>
             logError('agent/copilot-usage-log-failed', { error: e }),
           ),
         )
@@ -238,7 +266,7 @@ agentApp.post('/admin/agent', async (c) => {
         const err = event.error
         const msg = err instanceof Error ? err.message : String(err)
         logError('agent/streamtext-error', { message: msg,
-          model: AGENT_MODEL,
+          model: modelName,
           isApiKeyError: /x-api-key|api key|unauthor/i.test(msg),
           isRateLimit: /rate limit|429/i.test(msg),
         })
@@ -252,7 +280,7 @@ agentApp.post('/admin/agent', async (c) => {
     }),
   )
 
-  return buildAgentStream(result.stream)
+  return buildAgentStream(result.stream, { includeUsage: evalOverrides?.reportUsage === true })
 })
 
 // ── Agent conversation history ───────────────────────────────────────────────

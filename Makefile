@@ -5,7 +5,7 @@
         cf-push-secrets cf-push-secrets-test cf-push-secrets-watchdog \
         cf-init-config cf-init-org cf-render-config cf-render-watchdog-config cf-verify-stub \
         op-doctor secrets-doctor \
-        eval eval-site eval-photo eval-photo-dry eval-photo-ingest
+        eval eval-site eval-compare eval-copilot eval-photo eval-photo-dry eval-photo-ingest
 
 # ── Secrets loading ───────────────────────────────────────────────────────────
 # Three supported paths, auto-detected by file presence:
@@ -54,7 +54,7 @@ STATE_DIR     := .wrangler/state-$(WORKTREE_HASH)
 DEV_PORT      ?= $(shell cat workers/.dev.port 2>/dev/null || echo 8787)
 DEV_URL       := http://localhost:$(DEV_PORT)
 EVAL_GRADER   ?= file://evals/cf-gateway-grader.js
-EVAL_JUDGE_MODEL ?= workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast
+EVAL_JUDGE_MODEL ?= anthropic/claude-haiku-5-5
 
 # Default target
 help:
@@ -94,6 +94,8 @@ help:
 	@echo "Evaluations (requires make cf-dev running in another terminal):"
 	@echo "  make eval              Run generic safety/accuracy tests"
 	@echo "  make eval-site         Run org-specific tests (site/promptfooconfig.yaml)"
+	@echo "  make eval-compare      Score models side by side: pass rate + cost + latency (EVAL_MODELS, EVAL_CONFIG)"
+	@echo "  make eval-copilot      Score copilot models on multi-step tool flows (COPILOT_EVAL_MODELS)"
 	@echo "  make eval-photo-ingest PHOTO_SRC=/path/to/downloaded/email/photos"
 	@echo "                         Copy emailed photos into the ignored photo corpus"
 	@echo "  make eval-photo-dry    Validate photo corpus labels without model calls"
@@ -574,6 +576,29 @@ eval-site: _check-dev-running _check-eval-gateway _check-eval-deps
 	EVAL_JUDGE_MODEL="$(EVAL_JUDGE_MODEL)" \
 		$(SECRETS) ./evals/node_modules/.bin/promptfoo eval -c site/promptfooconfig.yaml --grader $(EVAL_GRADER)
 	@echo "View results: ./evals/node_modules/.bin/promptfoo view"
+
+# Compare chat models / thinking levels on one suite against the running dev
+# worker (per-request override; local dev only). Reports pass rate, $/conversation
+# and latency per variant to evals/reports/. EVAL_CONFIG=site/promptfooconfig.yaml
+# for the org suite; EVAL_MODELS="provider/model[@effort],..." to pick variants.
+eval-compare: _check-dev-running _check-eval-gateway _check-eval-deps
+	@echo "Comparing models against $(DEV_URL) [secrets: $(SECRETS_SRC)]..."
+	@CLOUDFLARE_ACCOUNT_ID=$${CLOUDFLARE_ACCOUNT_ID:-$${ACCOUNT_ID:-$$(grep "^ACCOUNT_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
+	CLOUDFLARE_GATEWAY_ID=$${CLOUDFLARE_GATEWAY_ID:-$${AI_GATEWAY_ID:-$$(grep "^AI_GATEWAY_ID=" org.env 2>/dev/null | cut -d= -f2-)}}; \
+	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=$${AI_GATEWAY_ANTHROPIC_BYOK_ALIAS:-$$(grep "^AI_GATEWAY_ANTHROPIC_BYOK_ALIAS=" org.env 2>/dev/null | cut -d= -f2-)}; \
+	AI_GATEWAY_ANTHROPIC_BYOK_ALIAS="$$AI_GATEWAY_ANTHROPIC_BYOK_ALIAS" \
+	CLOUDFLARE_ACCOUNT_ID="$$CLOUDFLARE_ACCOUNT_ID" \
+	CLOUDFLARE_GATEWAY_ID="$${CLOUDFLARE_GATEWAY_ID:-default}" \
+	WORKERS_BASE="$(DEV_URL)" \
+	EVAL_ORIGIN="$(DEV_URL)" \
+	EVAL_JUDGE_MODEL="$(EVAL_JUDGE_MODEL)" \
+	EVAL_CONFIG="$(EVAL_CONFIG)" \
+	EVAL_MODELS="$(EVAL_MODELS)" \
+		$(SECRETS) node evals/compare.mjs -- --grader $(EVAL_GRADER)
+
+# Compare copilot models on read-only multi-step tool flows (local dev only).
+eval-copilot: _check-dev-running
+	@WORKERS_BASE="$(DEV_URL)" COPILOT_EVAL_MODELS="$(COPILOT_EVAL_MODELS)" node evals/copilot-eval.mjs
 
 # Validate the local photo corpus without making model calls. The working
 # labels file is intentionally gitignored; fall back to the committed example

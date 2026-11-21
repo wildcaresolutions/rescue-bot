@@ -187,6 +187,9 @@ jobs:
           # would lock every platform admin out, so it MUST be passed here.
           PLATFORM_ADMIN_EMAILS: ${{ secrets.PLATFORM_ADMIN_EMAILS }}
           MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
+          MAIN_CHAT_REASONING_EFFORT: ${{ secrets.MAIN_CHAT_REASONING_EFFORT }}
+          COPILOT_MODEL: ${{ secrets.COPILOT_MODEL }}
+          COPILOT_REASONING_EFFORT: ${{ secrets.COPILOT_REASONING_EFFORT }}
           PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
       # No smoke tests on the test env — smoke runs against prod only (after
       # deploy-prod on main). PR deploys rely on widget-e2e + unit tests.
@@ -224,6 +227,9 @@ jobs:
           # would lock every platform admin out, so it MUST be passed here.
           PLATFORM_ADMIN_EMAILS: ${{ secrets.PLATFORM_ADMIN_EMAILS }}
           MAIN_CHAT_MODEL: ${{ secrets.MAIN_CHAT_MODEL }}
+          MAIN_CHAT_REASONING_EFFORT: ${{ secrets.MAIN_CHAT_REASONING_EFFORT }}
+          COPILOT_MODEL: ${{ secrets.COPILOT_MODEL }}
+          COPILOT_REASONING_EFFORT: ${{ secrets.COPILOT_REASONING_EFFORT }}
           PHOTO_RECOGNIZER_MODEL: ${{ secrets.PHOTO_RECOGNIZER_MODEL }}
           # Lets deploy-embed.js purge the embed CDN's rolling keys (v1.js /
           # widget.js) so a freshly deployed widget isn't masked by the edge

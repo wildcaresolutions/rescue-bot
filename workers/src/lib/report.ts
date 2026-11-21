@@ -57,7 +57,7 @@ export async function analyzeSession(
   try {
     const result = await runGatewayChatText({
       env,
-      model: 'anthropic/claude-haiku-4-5',
+      model: 'anthropic/claude-haiku-5-5',
       messages: [{ role: 'user', content: ANALYSIS_PROMPT + sessionText }],
       maxOutputTokens: 300,
     })

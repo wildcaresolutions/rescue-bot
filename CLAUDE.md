@@ -218,9 +218,10 @@ CLOUDFLARE_API_TOKEN=...         # For deployment
 
 Optional:
 ```bash
+CLOUDFLARE_AI_TOKEN=...          # Optional. google/* models (Gemini via CF REST API) use this, else AI_GATEWAY_TOKEN — whichever is used needs the Workers AI permission
 SIGNING_SECRET=...               # HMAC secret for token signing
 REPORT_FROM_EMAIL=...            # Report sender
-EVAL_JUDGE_MODEL=workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast
+EVAL_JUDGE_MODEL=anthropic/claude-haiku-5-5
 ```
 
 Daily report recipients are configured per tenant in the admin dashboard.
@@ -309,7 +310,7 @@ Features:
 - Playbook: structured org config (species_config, custom_species, triage rules, bot overrides) — internal tab id is still `kb`
 - Check your bot (internal tab id `test`): ask the bot caller questions, read the answer, give it 👍/👎. The human verdict (`review_status`) is authoritative; the LLM auto-grade is an advisory hint and NEVER blocks publishing. Operators can edit/delete scenarios freely.
 - Reports: daily report with stats overview and timeseries
-- Copilot: AI admin assistant (Claude Sonnet) with tool use, accessible from any tab
+- Copilot: AI admin assistant with tool use, accessible from any tab. Model = `COPILOT_MODEL` (default `anthropic/claude-sonnet-5`; `anthropic/*` uses the gateway's native Anthropic endpoint, anything else goes via `/compat` with Gemini thought signatures preserved by `lib/tool-call-extras.ts`)
 - All sessions with message counts, timestamps, feedback ratings
 - Infinite scroll
 
@@ -442,7 +443,17 @@ Uses Promptfoo with llm-rubric assertions through Cloudflare AI Gateway.
 make eval              # Generic safety/accuracy tests
 make eval-site         # Org-specific tests
 npx promptfoo view     # View results
+
+# Model comparison (local dev only — per-request override, see lib/eval-overrides.ts)
+make eval-compare                                   # pass rate + $/conversation + latency per model
+EVAL_CONFIG=site/promptfooconfig.yaml make eval-compare
+EVAL_MODELS="anthropic/claude-sonnet-5,google/gemini-4-hydrogen@low" make eval-compare
+make eval-copilot                                   # copilot multi-step tool flows per model
 ```
+
+Reports land in `evals/reports/` (gitignored). Prices live in `evals/model-pricing.js`.
+Model knobs (org.env / .env): `MAIN_CHAT_MODEL`, `MAIN_CHAT_REASONING_EFFORT`, `COPILOT_MODEL`,
+`COPILOT_REASONING_EFFORT` (`none|minimal|low|medium|high|xhigh`; unset = provider default).
 
 ## Daily Reports
 

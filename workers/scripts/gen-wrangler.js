@@ -54,6 +54,9 @@ export const PLACEHOLDERS = [
   'AI_GATEWAY_ACCOUNT_ID',
   'AI_GATEWAY_ID',
   'MAIN_CHAT_MODEL',
+  'MAIN_CHAT_REASONING_EFFORT',
+  'COPILOT_MODEL',
+  'COPILOT_REASONING_EFFORT',
   'PHOTO_RECOGNIZER_MODEL',
   // Opt-in for the admin copilot's public web research tools (web_search /
   // web_fetch). Empty — the default for every fork — registers no research
@@ -89,6 +92,9 @@ const OPTIONAL_PLACEHOLDERS = new Set([
   'AI_GATEWAY_ACCOUNT_ID',
   'AI_GATEWAY_ID',
   'MAIN_CHAT_MODEL',
+  'MAIN_CHAT_REASONING_EFFORT',
+  'COPILOT_MODEL',
+  'COPILOT_REASONING_EFFORT',
   'PHOTO_RECOGNIZER_MODEL',
   'COPILOT_WEB_SEARCH',
   'PLATFORM_NAME',

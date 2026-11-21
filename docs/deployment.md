@@ -60,6 +60,9 @@ Optional:
 
 ```
 MAIN_CHAT_MODEL=workers-ai/@cf/meta/llama-3.3-70b-instruct-fp8-fast
+MAIN_CHAT_REASONING_EFFORT=low                 # thinking models only; unset = provider default
+COPILOT_MODEL=google/gemini-4-hydrogen   # google/* needs Workers AI permission on AI_GATEWAY_TOKEN  # default anthropic/claude-sonnet-5
+COPILOT_REASONING_EFFORT=medium
 PHOTO_RECOGNIZER_MODEL=openai/gpt-4.1-mini   # vision; routed through gateway
 PLATFORM_NAME=My Rehab Platform               # appears in emails + admin UI
 PLATFORM_SUPPORT_EMAIL=support@myrehab.org    # bot's "email this when stuck"

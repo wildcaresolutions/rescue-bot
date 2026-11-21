@@ -5,12 +5,30 @@
  */
 import type { Env } from './types'
 
-function usageTokens(usage: unknown): { promptTokens: number; completionTokens: number } {
-  const u = usage as Record<string, number | undefined> | undefined
-  return {
-    promptTokens: u?.promptTokens ?? u?.inputTokens ?? 0,
-    completionTokens: u?.completionTokens ?? u?.outputTokens ?? 0,
+type UsageShape = Record<string, unknown> | null | undefined
+
+function num(value: unknown): number | undefined {
+  return typeof value === 'number' && Number.isFinite(value) ? value : undefined
+}
+
+/**
+ * Normalizes the usage shapes we see — AI SDK (`inputTokens`/`outputTokens`),
+ * legacy camelCase, and OpenAI-format `/compat` (`prompt_tokens`/
+ * `completion_tokens`/`total_tokens`) — into billable prompt/completion counts.
+ *
+ * Thinking models (Gemini 4) bill thinking tokens as output; some providers
+ * leave them out of `completion_tokens` but include them in `total_tokens`, so
+ * completion is taken as `total - prompt` when that is larger.
+ */
+export function usageTokens(usage: unknown): { promptTokens: number; completionTokens: number } {
+  const u = usage as UsageShape
+  const promptTokens = num(u?.promptTokens) ?? num(u?.inputTokens) ?? num(u?.prompt_tokens) ?? 0
+  let completionTokens = num(u?.completionTokens) ?? num(u?.outputTokens) ?? num(u?.completion_tokens) ?? 0
+  const total = num(u?.totalTokens) ?? num(u?.total_tokens)
+  if (total !== undefined && total - promptTokens > completionTokens) {
+    completionTokens = total - promptTokens
   }
+  return { promptTokens, completionTokens }
 }
 
 export async function logUsage(

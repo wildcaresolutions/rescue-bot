@@ -68,6 +68,12 @@
   --site-secondary: var(--rbot-secondary);
 }
 
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
 /* Typing animation */
 @keyframes typing {
   0%, 60%, 100% { opacity: 0.3; transform: translateY(0); }
@@ -386,14 +392,16 @@
 .rbot-widget-input {
   flex: 1;
   min-width: 0;
-  padding: 0.75rem 1rem;
+  padding: 0.625rem 0.875rem;
   border: 2px solid var(--rbot-border);
   border-radius: var(--rbot-radius-input);
   font-size: var(--rbot-font-size);
+  line-height: 1.35;
   font-family: inherit;
-  resize: vertical;
+  resize: none;
   min-height: 44px;
   max-height: 120px;
+  overflow-y: auto;
   transition: border-color 0.2s;
 }
 
@@ -407,13 +415,17 @@
   color: var(--rbot-surface);
   border: none;
   border-radius: var(--rbot-radius-input);
-  padding: 0.75rem 1.25rem;
+  padding: 0.625rem 1.25rem;
   font-size: var(--rbot-font-size);
+  line-height: 1.35;
   font-weight: 600;
   cursor: pointer;
   transition: all 0.2s;
   white-space: nowrap;
   min-height: 44px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .rbot-widget-send:hover:not(:disabled) {

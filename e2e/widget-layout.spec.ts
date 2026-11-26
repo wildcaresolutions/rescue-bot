@@ -153,3 +153,30 @@ test('switching to mobile overrides dimensions from desktop drag-resizing', asyn
   await expectUnobstructed(page.locator('.rbot-widget-close'))
   await expectUnobstructed(page.locator('.rbot-widget-send'))
 })
+
+test('input textarea and send button have matching single-line height', async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 1000 })
+  await openChat(page)
+  const input = page.locator('.rbot-widget-input')
+  const send = page.locator('.rbot-widget-send')
+
+  const initialInput = await input.boundingBox()
+  const initialSend = await send.boundingBox()
+  expect(initialInput).not.toBeNull()
+  expect(initialSend).not.toBeNull()
+  // Both use border-box with 44px min-height so the Send button aligns with
+  // the single-line input instead of sitting ~halfway up a 72px content-box textarea.
+  expect(Math.abs(initialInput!.height - initialSend!.height)).toBeLessThanOrEqual(2)
+  expect(initialInput!.height).toBeLessThanOrEqual(48)
+
+  // Typing a short single-line message keeps the height matched.
+  await input.fill('Found a squirrel')
+  const typedInput = await input.boundingBox()
+  expect(Math.abs(typedInput!.height - initialSend!.height)).toBeLessThanOrEqual(2)
+
+  // Multi-line text grows smoothly up to max-height (120px).
+  await input.fill('Line 1\nLine 2\nLine 3\nLine 4')
+  const multiInput = await input.boundingBox()
+  expect(multiInput!.height).toBeGreaterThan(initialInput!.height)
+  expect(multiInput!.height).toBeLessThanOrEqual(120)
+})

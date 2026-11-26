@@ -643,7 +643,8 @@ function createWidgetUI() {
   const input = container.querySelector('#rbot-widget-input')
   input.addEventListener('input', () => {
     input.style.height = 'auto'
-    input.style.height = Math.min(input.scrollHeight, 120) + 'px'
+    const borderY = input.offsetHeight - input.clientHeight
+    input.style.height = Math.min(input.scrollHeight + borderY, 120) + 'px'
   })
 
   // Send on Enter (Shift+Enter for newline)

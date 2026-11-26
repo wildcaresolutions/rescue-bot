@@ -268,11 +268,13 @@ Critical: respond with ONLY a single JSON object on one line, no prose before or
       let parsed: ReturnType<typeof extractJudgeJson> = null
       let lastText = ''
       for (let attempt = 0; attempt < 2 && !parsed; attempt++) {
+        // claude-haiku-5-5 counts internal thinking tokens against max_tokens;
+        // 300 tokens starved it into empty/truncated verdicts.
         const judgeResult = await runGatewayChatText({
           env,
           model: getEvalJudgeModelName(env),
           messages: [{ role: 'user', content: judgePrompt }],
-          maxOutputTokens: 300,
+          maxOutputTokens: 2048,
         })
         lastText = judgeResult.text ?? ''
         parsed = extractJudgeJson(lastText)

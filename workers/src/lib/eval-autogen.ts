@@ -54,7 +54,8 @@ Each scenario should have:
       env,
       model: getEvalJudgeModelName(env),
       messages: [{ role: 'user', content: prompt }],
-      maxOutputTokens: 2000,
+      // claude-haiku-5-5 counts internal thinking tokens against max_tokens
+      maxOutputTokens: 4096,
     })
     const text = result.text ?? ''
     const match = text.match(/\[[\s\S]*\]/)

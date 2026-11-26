@@ -49,28 +49,59 @@ const ANALYSIS_PROMPT = `Analyze this wildlife rescue chat session and return ON
 Session:
 `
 
+const REPORT_ANALYSIS_MAX_TOKENS = 2048
+
+type UrgencyBucket = 'critical' | 'urgent' | 'moderate' | 'none'
+type OutcomeBucket = 'bringing_in' | 'resolved' | 'redirected' | 'abandoned' | 'unknown'
+
+function normalizeUrgency(value: unknown): UrgencyBucket | null {
+  if (typeof value !== 'string') return null
+  const v = value.trim().toLowerCase()
+  if (v === 'critical' || v === 'urgent' || v === 'moderate' || v === 'none') return v
+  if (v === 'info' || v === 'low') return 'none'
+  return null
+}
+
+function normalizeOutcome(value: unknown): OutcomeBucket {
+  if (typeof value !== 'string') return 'unknown'
+  const v = value.trim().toLowerCase()
+  if (v === 'bringing_in' || v === 'resolved' || v === 'redirected' || v === 'abandoned' || v === 'unknown') return v
+  return 'unknown'
+}
+
+function extractFinishReason(raw: unknown): string | undefined {
+  const r = raw as { choices?: Array<{ finish_reason?: string }> } | null
+  return r?.choices?.[0]?.finish_reason
+}
+
 export async function analyzeSession(
   env: Env,
   messages: Array<{ role: string; content: string }>,
 ): Promise<Record<string, unknown>> {
   const sessionText = messages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n\n')
   try {
+    // claude-haiku-5-5 is a thinking model whose internal reasoning tokens count
+    // against max_tokens (and AI Gateway /compat does not disable thinking via
+    // reasoning_effort). Keep maxOutputTokens generous so thinking + JSON never
+    // truncates with finish_reason="length" (300 tokens starved nearly every
+    // real session into empty/truncated output).
     const result = await runGatewayChatText({
       env,
       model: 'anthropic/claude-haiku-5-5',
       messages: [{ role: 'user', content: ANALYSIS_PROMPT + sessionText }],
-      maxOutputTokens: 300,
+      maxOutputTokens: REPORT_ANALYSIS_MAX_TOKENS,
     })
     const text = result.text ?? ''
+    const finishReason = extractFinishReason(result.raw)
     const match = text.match(/\{[\s\S]*\}/)
     if (!match) {
-      logWarn('report/analyze-session-no-json', { textPreview: text.slice(0, 200) })
+      logWarn('report/analyze-session-no-json', { finishReason, textPreview: text.slice(0, 200) })
       return { error: 'parse failed' }
     }
     try {
       return JSON.parse(match[0])
     } catch (parseErr) {
-      logWarn('report/analyze-session-parse-failed', { error: parseErr })
+      logWarn('report/analyze-session-parse-failed', { finishReason, error: parseErr })
       return { error: 'parse failed' }
     }
   } catch (e) {
@@ -125,27 +156,54 @@ export async function generateReport(env: Env, tenantId: string, dryRun = false,
       ORDER BY timestamp ASC
     `).bind(session_id, tenantId).all() as { results: Array<{ role: string; content: string }> }
     if (!msgs.length) continue
-    const analysis = await analyzeSession(env, msgs)
+    let analysis = await analyzeSession(env, msgs)
+    if (analysis.error) {
+      // Fall back to the regex triage row written during live chat so a
+      // transient LLM/gateway failure doesn't produce an all-zero report.
+      const fallback = await env.DB.prepare(
+        `SELECT urgency, outcome, animal, situation, in_service_area
+         FROM session_analysis WHERE session_id = ? AND tenant_id = ? LIMIT 1`,
+      ).bind(session_id, tenantId).first<{
+        urgency: string | null
+        outcome: string | null
+        animal: string | null
+        situation: string | null
+        in_service_area: number | null
+      }>()
+      if (fallback) {
+        analysis = {
+          urgency: normalizeUrgency(fallback.urgency) ?? 'none',
+          outcome: normalizeOutcome(fallback.outcome),
+          animal: fallback.animal,
+          situation: fallback.situation,
+          in_service_area: fallback.in_service_area === 1,
+          fallback: 'session_analysis',
+        }
+      }
+    }
     sessionData.push({ sessionId: session_id, messages: msgs, analysis })
   }
 
-  const count = (key: string, value: string) => sessionData.filter(s => s.analysis?.[key] === value).length
+  const countUrgency = (value: UrgencyBucket) =>
+    sessionData.filter(s => normalizeUrgency(s.analysis?.urgency) === value).length
+  const countOutcome = (value: OutcomeBucket) =>
+    sessionData.filter(s => normalizeOutcome(s.analysis?.outcome) === value).length
   const stats: ReportStats = {
     period_start: periodStart.toISOString(),
     period_end: periodEnd.toISOString(),
     total_sessions: sessionData.length,
     by_urgency: {
-      critical: count('urgency', 'critical'),
-      urgent: count('urgency', 'urgent'),
-      moderate: count('urgency', 'moderate'),
-      none: count('urgency', 'none'),
+      critical: countUrgency('critical'),
+      urgent: countUrgency('urgent'),
+      moderate: countUrgency('moderate'),
+      none: countUrgency('none'),
     },
     by_outcome: {
-      bringing_in: count('outcome', 'bringing_in'),
-      resolved: count('outcome', 'resolved'),
-      redirected: count('outcome', 'redirected'),
-      abandoned: count('outcome', 'abandoned'),
-      unknown: count('outcome', 'unknown'),
+      bringing_in: countOutcome('bringing_in'),
+      resolved: countOutcome('resolved'),
+      redirected: countOutcome('redirected'),
+      abandoned: countOutcome('abandoned'),
+      unknown: countOutcome('unknown'),
     },
   }
 
@@ -201,6 +259,12 @@ export function buildReportHtml(
 ) {
   const urgency = stats.by_urgency as Record<string, number>
   const outcome = stats.by_outcome as Record<string, number>
+  const analyzedUrgencyTotal =
+    (urgency.critical ?? 0) + (urgency.urgent ?? 0) + (urgency.moderate ?? 0) + (urgency.none ?? 0)
+  const unanalyzedUrgency = Math.max(0, stats.total_sessions - analyzedUrgencyTotal)
+  const unanalyzedRow = unanalyzedUrgency > 0
+    ? `\n  <tr><td style="padding:4px 12px 4px 0;color:#666">Unanalyzed</td><td>${unanalyzedUrgency}</td></tr>`
+    : ''
 
   const sessionRows = sessions.map(s => {
     const a = s.analysis
@@ -235,7 +299,7 @@ export function buildReportHtml(
   <tr><td style="padding:4px 12px 4px 0;color:#d32f2f;font-weight:bold">Critical</td><td>${urgency.critical}</td></tr>
   <tr><td style="padding:4px 12px 4px 0;color:#f57c00;font-weight:bold">Urgent</td><td>${urgency.urgent}</td></tr>
   <tr><td style="padding:4px 12px 4px 0;color:#1976d2">Moderate</td><td>${urgency.moderate}</td></tr>
-  <tr><td style="padding:4px 12px 4px 0;color:#388e3c">No urgency</td><td>${urgency.none}</td></tr>
+  <tr><td style="padding:4px 12px 4px 0;color:#388e3c">No urgency</td><td>${urgency.none}</td></tr>${unanalyzedRow}
 </table>
 
 <table style="border-collapse:collapse;margin-bottom:24px">

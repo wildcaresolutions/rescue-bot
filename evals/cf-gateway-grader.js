@@ -65,7 +65,8 @@ class CloudflareGatewayGrader {
         headers,
         body: JSON.stringify({
           model: this.model,
-          max_tokens: 1024,
+          // claude-haiku-5-5 counts internal thinking tokens against max_tokens
+          max_tokens: 2048,
           messages: [{ role: 'user', content: prompt }],
         }),
       })

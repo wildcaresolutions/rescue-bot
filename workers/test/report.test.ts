@@ -199,6 +199,22 @@ describe('buildReportHtml', () => {
     expect(typeof html).toBe('string')
     expect(html.length).toBeGreaterThan(50)
   })
+
+  it('shows an Unanalyzed urgency row when total_sessions exceeds categorized urgency counts', () => {
+    const stats: ReportStats = {
+      ...SAMPLE_STATS,
+      total_sessions: 2,
+      by_urgency: { critical: 0, urgent: 1, moderate: 0, none: 0 },
+      by_outcome: { bringing_in: 1, resolved: 0, redirected: 0, abandoned: 0, unknown: 1 },
+    }
+    const html = buildReportHtml(stats, [], 'WildCare')
+    expect(html).toMatch(/Unanalyzed.*?1/s)
+  })
+
+  it('omits Unanalyzed urgency row when all sessions are categorized', () => {
+    const html = buildReportHtml(SAMPLE_STATS, [], 'WildCare')
+    expect(html).not.toContain('Unanalyzed')
+  })
 })
 
 // ── analyzeSession ────────────────────────────────────────────────────────────
@@ -243,6 +259,17 @@ describe('analyzeSession', () => {
     ])
     expect(result.urgency).toBe('critical')
     expect(result.animal).toBe('hawk')
+  })
+
+  it('requests enough maxOutputTokens for thinking models like claude-haiku-5-5', async () => {
+    vi.mocked(runGatewayChatText).mockResolvedValueOnce({
+      text: '{"urgency":"none","animal":null,"situation":"test","outcome":"unknown","in_service_area":true}',
+    } as never)
+    await analyzeSession(makeEnv(makeEmptyReportDb()), [
+      { role: 'user', content: 'test' },
+    ])
+    const call = vi.mocked(runGatewayChatText).mock.calls[0]?.[0]
+    expect(call?.maxOutputTokens).toBeGreaterThanOrEqual(2048)
   })
 })
 
@@ -289,6 +316,41 @@ describe('generateReport — dryRun=true', () => {
     expect(result.stats.total_sessions).toBe(1)
     expect(result.stats.by_urgency.critical).toBe(1)
     expect(result.stats.by_outcome.bringing_in).toBe(1)
+  })
+
+  it('falls back to session_analysis row when AI analysis fails', async () => {
+    vi.mocked(runGatewayChatText).mockResolvedValueOnce({ text: '' } as never)
+    const db = makeOneSessionDb().on('FROM session_analysis WHERE session_id', {
+      first: () => ({
+        urgency: 'info',
+        outcome: 'bringing_in',
+        animal: 'coyote',
+        situation: 'Standing in road',
+        in_service_area: 1,
+      }),
+    })
+    const result = await generateReport(makeEnv(db), 'tenant-1', true)
+    expect(result.stats.total_sessions).toBe(1)
+    expect(result.stats.by_urgency.none).toBe(1)
+    expect(result.stats.by_outcome.bringing_in).toBe(1)
+    expect(result.sessions?.[0]?.analysis.animal).toBe('coyote')
+  })
+
+  it('counts failed analysis without session_analysis fallback under unknown outcome instead of dropping it', async () => {
+    vi.mocked(runGatewayChatText).mockResolvedValueOnce({ text: '' } as never)
+    const result = await generateReport(makeEnv(makeOneSessionDb()), 'tenant-1', true)
+    expect(result.stats.total_sessions).toBe(1)
+    expect(result.stats.by_outcome.unknown).toBe(1)
+    expect(result.stats.by_urgency.critical + result.stats.by_urgency.urgent + result.stats.by_urgency.moderate + result.stats.by_urgency.none).toBe(0)
+  })
+
+  it('normalizes mixed-case urgency and outcome labels from AI analysis', async () => {
+    vi.mocked(runGatewayChatText).mockResolvedValueOnce({
+      text: '{"urgency":"Moderate","animal":"wild turkey","situation":"email inquiry","outcome":"Unknown","in_service_area":true}',
+    } as never)
+    const result = await generateReport(makeEnv(makeOneSessionDb()), 'tenant-1', true)
+    expect(result.stats.by_urgency.moderate).toBe(1)
+    expect(result.stats.by_outcome.unknown).toBe(1)
   })
 
   it('email_sent is false in dry-run regardless of recipients', async () => {

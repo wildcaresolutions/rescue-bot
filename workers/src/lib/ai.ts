@@ -1,7 +1,7 @@
 import { createOpenAI } from '@ai-sdk/openai'
 import { z } from 'zod'
 import type { Env } from './types'
-import { logError } from './logger'
+import { logWarn, logError } from './logger'
 
 export const DEFAULT_MAIN_CHAT_MODEL = 'anthropic/claude-sonnet-5'
 export const DEFAULT_EVAL_JUDGE_MODEL = 'anthropic/claude-haiku-5-5'
@@ -358,10 +358,11 @@ export async function runGatewayChatText(opts: {
 // ── Streaming variant ─────────────────────────────────────────────────────────
 //
 // Typed interface for OpenAI-compatible SSE stream events.
-// Matches the shape emitted by the Cloudflare AI Gateway /compat endpoint.
+// Matches the shape emitted by the Cloudflare AI Gateway /compat and REST endpoints.
 interface OpenAIStreamEvent {
-  choices?: Array<{ delta?: { content?: string } }>
+  choices?: Array<{ delta?: { content?: string }; finish_reason?: string | null }>
   usage?: { prompt_tokens?: number; completion_tokens?: number }
+  error?: { message?: string; code?: string | number; type?: string } | string
 }
 
 // Opens an SSE chat-completions stream against /compat with `stream: true`,
@@ -424,42 +425,181 @@ export async function openGatewayChatStream(opts: {
     async start(controller) {
       const reader = upstream.getReader()
       let buffer = ''
+      let emittedText = false
+      let lastFinishReason: string | null = null
+      let sawError: string | null = null
+
+      const processLine = (rawLine: string): 'done' | 'error' | 'continue' => {
+        const line = rawLine.trim()
+        if (!line.startsWith('data:')) return 'continue'
+        const data = line.slice(5).trim()
+        if (data === '[DONE]') return 'done'
+        try {
+          const ev = JSON.parse(data) as OpenAIStreamEvent
+          if (ev.error) {
+            const rawMsg = typeof ev.error === 'string'
+              ? ev.error
+              : (ev.error.message ?? JSON.stringify(ev.error))
+            sawError = redactSensitive(rawMsg).slice(0, 500)
+            logError('ai/sse-stream-inline-error', { model: opts.model, error: sawError })
+            if (!emittedText) {
+              controller.error(new Error(`Gateway stream error: ${sawError}`))
+              return 'error'
+            }
+            return 'done'
+          }
+          const choice = ev.choices?.[0]
+          if (choice?.finish_reason) lastFinishReason = choice.finish_reason
+          const delta = choice?.delta?.content
+          if (typeof delta === 'string' && delta.length > 0) {
+            emittedText = true
+            controller.enqueue(delta)
+          }
+          if (ev.usage && onUsage) onUsage(ev.usage)
+        } catch {
+          // Skip malformed SSE event — providers sometimes send keepalives
+        }
+        return 'continue'
+      }
+
       try {
-        while (true) {
+        let ended = false
+        while (!ended) {
           const { done, value } = await reader.read()
           if (done) break
           buffer += decoder.decode(value, { stream: true })
           let nlIdx
           while ((nlIdx = buffer.indexOf('\n')) !== -1) {
-            const line = buffer.slice(0, nlIdx).trim()
+            const rawLine = buffer.slice(0, nlIdx)
             buffer = buffer.slice(nlIdx + 1)
-            if (!line.startsWith('data:')) continue
-            const data = line.slice(5).trim()
-            if (data === '[DONE]') {
-              controller.close()
-              return
-            }
-            try {
-              const ev = JSON.parse(data) as OpenAIStreamEvent
-              const delta = ev.choices?.[0]?.delta?.content
-              if (typeof delta === 'string' && delta.length > 0) {
-                controller.enqueue(delta)
-              }
-              if (ev.usage && onUsage) onUsage(ev.usage)
-            } catch {
-              // Skip malformed SSE event — providers sometimes send keepalives
+            const status = processLine(rawLine)
+            if (status === 'error') return
+            if (status === 'done') {
+              ended = true
+              break
             }
           }
         }
+        if (!ended) {
+          buffer += decoder.decode()
+          if (buffer.trim()) {
+            const status = processLine(buffer)
+            if (status === 'error') return
+          }
+        }
+        if (!emittedText) {
+          logWarn('ai/sse-stream-empty', {
+            model: opts.model,
+            finishReason: lastFinishReason,
+            sawError,
+          })
+        }
         controller.close()
       } catch (e) {
-        logError('ai/sse-stream-error', { error: redactSensitive(String(e)) })
-        controller.close()
+        const msg = redactSensitive(String(e))
+        logError('ai/sse-stream-error', { model: opts.model, error: msg })
+        if (!emittedText) {
+          controller.error(new Error(`Gateway stream read error: ${msg}`))
+        } else {
+          controller.close()
+        }
       } finally {
         try { reader.releaseLock() } catch { /* already released */ }
       }
     },
   })
+}
+
+export type PrimedChatStream = {
+  firstChunk: string
+  reader: ReadableStreamDefaultReader<string>
+  model: string
+  reasoningEffort?: ReasoningEffort
+  usedFallback: boolean
+}
+
+async function primeTextStream(
+  stream: ReadableStream<string>,
+  model: string,
+): Promise<{ firstChunk: string; reader: ReadableStreamDefaultReader<string> }> {
+  const reader = stream.getReader()
+  try {
+    const { done, value } = await reader.read()
+    if (done || !value) {
+      reader.releaseLock()
+      throw new Error(`Gateway stream for ${model} closed without emitting any text`)
+    }
+    return { firstChunk: value, reader }
+  } catch (e) {
+    try { reader.releaseLock() } catch { /* already released */ }
+    throw e
+  }
+}
+
+/**
+ * Open a main-chat SSE stream and verify at least one text delta arrives before
+ * returning. If the primary model fails at HTTP time, emits an inline SSE error
+ * before text, or closes with zero text chunks — and a distinct `fallbackModel`
+ * is provided — automatically fails over to `fallbackModel` before the caller
+ * commits HTTP 200 headers to the browser.
+ */
+export async function openChatStreamWithFallback(opts: {
+  env: Env
+  model: string
+  fallbackModel?: string
+  system?: string
+  messages: Array<{ role: 'user' | 'assistant'; content: string }>
+  maxOutputTokens?: number
+  reasoningEffort?: ReasoningEffort
+  onUsage?: (usage: unknown) => void
+  onResetUsage?: () => void
+}): Promise<PrimedChatStream> {
+  try {
+    const stream = await openGatewayChatStream({
+      env: opts.env,
+      model: opts.model,
+      system: opts.system,
+      messages: opts.messages,
+      maxOutputTokens: opts.maxOutputTokens,
+      reasoningEffort: opts.reasoningEffort,
+      onUsage: opts.onUsage,
+    })
+    const primed = await primeTextStream(stream, opts.model)
+    return {
+      ...primed,
+      model: opts.model,
+      reasoningEffort: opts.reasoningEffort,
+      usedFallback: false,
+    }
+  } catch (primaryErr) {
+    const fallback = opts.fallbackModel && opts.fallbackModel !== opts.model
+      ? opts.fallbackModel
+      : null
+    if (!fallback) throw primaryErr
+    logWarn('ai/chat-stream-fallback', {
+      primaryModel: opts.model,
+      fallbackModel: fallback,
+      error: errorMessage(primaryErr),
+    })
+    opts.onResetUsage?.()
+    // Don't forward primary-model reasoningEffort to the fallback model (e.g.
+    // Gemini Hydrogen's "low" effort doesn't apply to Claude Sonnet).
+    const stream = await openGatewayChatStream({
+      env: opts.env,
+      model: fallback,
+      system: opts.system,
+      messages: opts.messages,
+      maxOutputTokens: opts.maxOutputTokens,
+      onUsage: opts.onUsage,
+    })
+    const primed = await primeTextStream(stream, fallback)
+    return {
+      ...primed,
+      model: fallback,
+      reasoningEffort: undefined,
+      usedFallback: true,
+    }
+  }
 }
 
 function bytesToBase64(bytes: Uint8Array): string {

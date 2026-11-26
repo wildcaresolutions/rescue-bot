@@ -10,12 +10,14 @@ import { mintSessionToken, validateSessionToken } from '../lib/photo-auth'
 import { photoUploadsEnabled } from '../lib/feature-flags'
 import { validateUploadKind } from '../lib/file-type'
 import {
+  DEFAULT_MAIN_CHAT_MODEL,
   getMainChatModelName,
   getMainChatReasoningEffort,
   getPhotoRecognizerModelName,
-  openGatewayChatStream,
+  openChatStreamWithFallback,
   runGatewayChatText,
   runGatewayImageObject,
+  type PrimedChatStream,
 } from '../lib/ai'
 import {
   buildPhotoMetadataSchema,
@@ -264,85 +266,117 @@ async function runMainChat(
   const evalOverrides = readEvalOverrides(c.env, c.req.raw.headers)
   const modelName = evalOverrides?.model ?? getMainChatModelName(c.env)
   const reasoningEffort = resolveReasoningEffort(evalOverrides, getMainChatReasoningEffort(c.env))
+  // Never silently fail over during local model benchmarks (X-Eval-Model) so a
+  // failing candidate model isn't graded on the fallback model's answers.
+  const fallbackModel = evalOverrides?.model ? undefined : DEFAULT_MAIN_CHAT_MODEL
 
-  // Open the SSE stream against the gateway. If the upstream errors at this
-  // step (auth failure, model not found, etc.) we return a clean 502 BEFORE
-  // any response body has been sent to the client — the widget's catch path
-  // then shows the friendly "having trouble connecting" message.
+  // Open + prime the SSE stream against the gateway before committing HTTP 200
+  // headers. If the primary model fails at HTTP time, emits an inline SSE error,
+  // or closes empty, openChatStreamWithFallback transparently fails over to
+  // DEFAULT_MAIN_CHAT_MODEL. If all attempts fail, we return a clean 502 so the
+  // widget shows its error + direct-phone fallback message.
   let capturedUsage: unknown = null
-  let textStream: ReadableStream<string>
+  let primed: PrimedChatStream
   try {
-    textStream = await openGatewayChatStream({
+    primed = await openChatStreamWithFallback({
       env: c.env,
       model: modelName,
+      fallbackModel,
       system: systemPrompt,
       messages: [...history, { role: 'user', content: messageWithTime }],
       reasoningEffort,
       onUsage: (u: unknown) => { capturedUsage = u },
+      onResetUsage: () => { capturedUsage = null },
     })
   } catch (e) {
-    logError('chat/ai-gateway-stream-open-failed', { error: e })
+    logError('chat/ai-gateway-stream-open-failed', { model: modelName, fallbackModel, error: e })
     return new Response('Assistant temporarily unavailable', { status: 502 })
   }
 
-  // Forward each text delta to the client as it arrives. Accumulate the full
-  // text so we can persist + analyze after the stream closes. waitUntil keeps
-  // the worker alive past the response so the post-stream DB writes complete.
+  const activeModel = primed.model
+  const activeReasoningEffort = primed.reasoningEffort
   const encoder = new TextEncoder()
-  let fullText = ''
   const sessionId = opts.sessionId
   const tenantId = opts.tenantId
   const ua = c.req.header('User-Agent') || ''
 
+  // Decouple upstream draining + D1 persistence from client disconnects:
+  // register the pump with waitUntil BEFORE returning the Response. If the
+  // visitor closes the tab mid-stream, outStream.cancel() stops enqueuing to
+  // the HTTP body while the pump finishes reading, saves the assistant reply,
+  // runs triage analysis, and logs token usage.
+  const streamState: {
+    controller: ReadableStreamDefaultController<Uint8Array> | null
+    clientClosed: boolean
+  } = { controller: null, clientClosed: false }
   const outStream = new ReadableStream<Uint8Array>({
-    async start(controller) {
-      const reader = textStream.getReader()
-      try {
-        while (true) {
-          const { done, value } = await reader.read()
-          if (done) break
-          fullText += value
-          controller.enqueue(encoder.encode(value))
-        }
-      } catch (e) {
-        logError('chat/ai-gateway-stream-read-failed', { error: e })
-      } finally {
-        try { reader.releaseLock() } catch { /* already released */ }
-        if (evalOverrides?.reportUsage) {
-          controller.enqueue(encoder.encode(EVAL_USAGE_MARKER + JSON.stringify({
-            model: modelName,
-            reasoning_effort: reasoningEffort ?? 'default',
-            usage: capturedUsage,
-          })))
-        }
-        controller.close()
-      }
-
-      // Persist the assistant message + run the regex triage analyzer once
-      // streaming is done. Using waitUntil so this completes even if the
-      // client disconnects mid-stream.
-      if (fullText) {
-        c.executionCtx.waitUntil((async () => {
-          const msgId = `msg-${crypto.randomUUID()}`
-          try {
-            await c.env.DB.prepare(
-              `INSERT INTO messages (session_id, message_id, role, content, timestamp, message_type, tenant_id)
-               VALUES (?, ?, 'assistant', ?, ?, 'chat', ?) ON CONFLICT (message_id) DO NOTHING`,
-            ).bind(sessionId, msgId, fullText.slice(0, MAX_CONTENT_LEN), Date.now(), tenantId).run()
-            const deviceType = /Mobile|Android|iPhone|iPad/i.test(ua)
-              ? (/iPad|Tablet/i.test(ua) ? 'tablet' : 'mobile') : 'desktop'
-            await quickAnalyzeSession(c.env.DB, tenantId, sessionId, deviceType)
-          } catch (e) {
-            logError('chat/persist-assistant-message-failed', { error: e })
-          }
-          if (capturedUsage) {
-            await logUsage(c.env, tenantId, modelName, capturedUsage).catch(e =>
-              logError('chat/log-usage-failed', { error: e }))
-          }
-        })())
-      }
+    start(controller) {
+      streamState.controller = controller
+    },
+    cancel() {
+      streamState.clientClosed = true
+      streamState.controller = null
     },
   })
+
+  const safeEnqueue = (chunk: Uint8Array) => {
+    if (streamState.clientClosed || !streamState.controller) return
+    try {
+      streamState.controller.enqueue(chunk)
+    } catch {
+      streamState.clientClosed = true
+      streamState.controller = null
+    }
+  }
+
+  const pump = (async () => {
+    let fullText = primed.firstChunk
+    const reader = primed.reader
+    try {
+      safeEnqueue(encoder.encode(primed.firstChunk))
+      while (true) {
+        const { done, value } = await reader.read()
+        if (done) break
+        fullText += value
+        safeEnqueue(encoder.encode(value))
+      }
+    } catch (e) {
+      logError('chat/ai-gateway-stream-read-failed', { model: activeModel, error: e })
+    } finally {
+      try { reader.releaseLock() } catch { /* already released */ }
+      if (evalOverrides?.reportUsage) {
+        safeEnqueue(encoder.encode(EVAL_USAGE_MARKER + JSON.stringify({
+          model: activeModel,
+          reasoning_effort: activeReasoningEffort ?? 'default',
+          usage: capturedUsage,
+        })))
+      }
+      if (!streamState.clientClosed && streamState.controller) {
+        try { streamState.controller.close() } catch { /* already closed */ }
+      }
+    }
+
+    if (fullText) {
+      const msgId = `msg-${crypto.randomUUID()}`
+      try {
+        await c.env.DB.prepare(
+          `INSERT INTO messages (session_id, message_id, role, content, timestamp, message_type, tenant_id)
+           VALUES (?, ?, 'assistant', ?, ?, 'chat', ?) ON CONFLICT (message_id) DO NOTHING`,
+        ).bind(sessionId, msgId, fullText.slice(0, MAX_CONTENT_LEN), Date.now(), tenantId).run()
+        const deviceType = /Mobile|Android|iPhone|iPad/i.test(ua)
+          ? (/iPad|Tablet/i.test(ua) ? 'tablet' : 'mobile') : 'desktop'
+        await quickAnalyzeSession(c.env.DB, tenantId, sessionId, deviceType)
+      } catch (e) {
+        logError('chat/persist-assistant-message-failed', { error: e })
+      }
+      if (capturedUsage) {
+        await logUsage(c.env, tenantId, activeModel, capturedUsage).catch(e =>
+          logError('chat/log-usage-failed', { error: e }))
+      }
+    }
+  })()
+
+  c.executionCtx.waitUntil(pump)
 
   return new Response(outStream, {
     headers: { 'Content-Type': 'text/plain; charset=utf-8' },

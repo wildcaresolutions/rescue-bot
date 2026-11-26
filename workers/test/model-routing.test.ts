@@ -2,11 +2,13 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { generateText } from 'ai'
 import {
   DEFAULT_COPILOT_MODEL,
+  DEFAULT_MAIN_CHAT_MODEL,
   chatCompletionsTarget,
   createCloudflareRestAiProvider,
   getCopilotModelName,
   getCopilotReasoningEffort,
   getMainChatReasoningEffort,
+  openChatStreamWithFallback,
   openGatewayChatStream,
   parseReasoningEffort,
 } from '../src/lib/ai'
@@ -59,6 +61,176 @@ describe('model + reasoning config', () => {
     await stream.getReader().read()
     expect(body.stream_options).toEqual({ include_usage: true })
     expect(body.reasoning_effort).toBe('low')
+  })
+
+  it('errors pre-first-token when SSE emits an inline error event', async () => {
+    const sse = 'data: {"error":{"message":"upstream overloaded"}}\n\n'
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(sse, { headers: { 'content-type': 'text/event-stream' } }),
+    ))
+    const stream = await openGatewayChatStream({
+      env: env(),
+      model: 'google/gemini-4-hydrogen',
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    await expect(stream.getReader().read()).rejects.toThrow(/upstream overloaded/)
+  })
+
+  it('preserves partial text when an inline SSE error arrives after text deltas', async () => {
+    const sse = [
+      'data: {"choices":[{"delta":{"content":"Hello "}}]}',
+      'data: {"error":{"message":"connection reset"}}',
+      '',
+    ].join('\n')
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(sse, { headers: { 'content-type': 'text/event-stream' } }),
+    ))
+    const stream = await openGatewayChatStream({
+      env: env(),
+      model: 'google/gemini-4-hydrogen',
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    const reader = stream.getReader()
+    const first = await reader.read()
+    expect(first).toEqual({ done: false, value: 'Hello ' })
+    const second = await reader.read()
+    expect(second.done).toBe(true)
+  })
+
+  it('flushes a trailing SSE data line without a final newline', async () => {
+    const sse = 'data: {"choices":[{"delta":{"content":"tail"}}]}'
+    vi.stubGlobal('fetch', vi.fn(async () =>
+      new Response(sse, { headers: { 'content-type': 'text/event-stream' } }),
+    ))
+    const stream = await openGatewayChatStream({
+      env: env(),
+      model: 'google/gemini-4-hydrogen',
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    const reader = stream.getReader()
+    expect(await reader.read()).toEqual({ done: false, value: 'tail' })
+    expect((await reader.read()).done).toBe(true)
+  })
+})
+
+describe('openChatStreamWithFallback', () => {
+  async function drain(primed: { firstChunk: string; reader: ReadableStreamDefaultReader<string> }) {
+    let text = primed.firstChunk
+    while (true) {
+      const { done, value } = await primed.reader.read()
+      if (done) break
+      text += value
+    }
+    return text
+  }
+
+  it('fails over to fallbackModel on HTTP 503 and drops primary reasoningEffort', async () => {
+    const calls: Array<{ url: string; body: Record<string, unknown> }> = []
+    vi.stubGlobal('fetch', vi.fn(async (url: string, init: RequestInit) => {
+      const body = JSON.parse(String(init.body))
+      calls.push({ url, body })
+      if (calls.length === 1) {
+        return new Response('service unavailable', { status: 503 })
+      }
+      const sse = [
+        'data: {"choices":[{"delta":{"content":"Help is "}}]}',
+        'data: {"choices":[{"delta":{"content":"here."}}],"usage":{"prompt_tokens":10,"completion_tokens":5}}',
+        'data: [DONE]',
+        '',
+      ].join('\n')
+      return new Response(sse, { headers: { 'content-type': 'text/event-stream' } })
+    }))
+
+    let usage: unknown = null
+    let resets = 0
+    const primed = await openChatStreamWithFallback({
+      env: env(),
+      model: 'google/gemini-4-hydrogen',
+      fallbackModel: DEFAULT_MAIN_CHAT_MODEL,
+      messages: [{ role: 'user', content: 'hi' }],
+      reasoningEffort: 'low',
+      onUsage: (u) => { usage = u },
+      onResetUsage: () => { resets++; usage = null },
+    })
+
+    expect(primed.usedFallback).toBe(true)
+    expect(primed.model).toBe(DEFAULT_MAIN_CHAT_MODEL)
+    expect(primed.reasoningEffort).toBeUndefined()
+    expect(resets).toBe(1)
+    expect(await drain(primed)).toBe('Help is here.')
+    expect(usage).toEqual({ prompt_tokens: 10, completion_tokens: 5 })
+    expect(calls[0].body.model).toBe('google/gemini-4-hydrogen')
+    expect(calls[0].body.reasoning_effort).toBe('low')
+    expect(calls[1].body.model).toBe(DEFAULT_MAIN_CHAT_MODEL)
+    expect(calls[1].body.reasoning_effort).toBeUndefined()
+  })
+
+  it('fails over when primary returns HTTP 200 with an empty SSE stream', async () => {
+    let attempt = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      attempt++
+      if (attempt === 1) {
+        return new Response('data: {"choices":[{"delta":{"content":""}}]}\ndata: [DONE]\n\n', {
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }
+      return new Response('data: {"choices":[{"delta":{"content":"Fallback ok"}}]}\ndata: [DONE]\n\n', {
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }))
+
+    const primed = await openChatStreamWithFallback({
+      env: env(),
+      model: 'google/gemini-4-hydrogen',
+      fallbackModel: DEFAULT_MAIN_CHAT_MODEL,
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    expect(primed.usedFallback).toBe(true)
+    expect(await drain(primed)).toBe('Fallback ok')
+  })
+
+  it('fails over when primary returns HTTP 200 with an inline SSE error', async () => {
+    let attempt = 0
+    vi.stubGlobal('fetch', vi.fn(async () => {
+      attempt++
+      if (attempt === 1) {
+        return new Response('data: {"error":{"message":"quota exceeded"}}\n\n', {
+          headers: { 'content-type': 'text/event-stream' },
+        })
+      }
+      return new Response('data: {"choices":[{"delta":{"content":"Recovered"}}]}\ndata: [DONE]\n\n', {
+        headers: { 'content-type': 'text/event-stream' },
+      })
+    }))
+
+    const primed = await openChatStreamWithFallback({
+      env: env(),
+      model: 'google/gemini-4-hydrogen',
+      fallbackModel: DEFAULT_MAIN_CHAT_MODEL,
+      messages: [{ role: 'user', content: 'hi' }],
+    })
+    expect(primed.usedFallback).toBe(true)
+    expect(await drain(primed)).toBe('Recovered')
+  })
+
+  it('does not fail over when fallbackModel is omitted or matches primary', async () => {
+    const fetchMock = vi.fn(async () => new Response('boom', { status: 502 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await expect(openChatStreamWithFallback({
+      env: env(),
+      model: 'google/gemini-4-hydrogen',
+      messages: [{ role: 'user', content: 'hi' }],
+    })).rejects.toThrow(/502/)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await expect(openChatStreamWithFallback({
+      env: env(),
+      model: DEFAULT_MAIN_CHAT_MODEL,
+      fallbackModel: DEFAULT_MAIN_CHAT_MODEL,
+      messages: [{ role: 'user', content: 'hi' }],
+    })).rejects.toThrow(/502/)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })
 
